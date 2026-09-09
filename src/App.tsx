@@ -43,7 +43,7 @@ import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
 import { AuthModal } from './components/AuthModal';
 import { NotificationsCenterModal } from './components/NotificationsCenterModal';
 import { RateDoctorModal } from './components/RateDoctorModal';
-import { translations } from './i18n/translations';
+import { translations, getTranslations } from './i18n/translations';
 
 export default function App() {
   // Multilingual & Theme with localStorage persistence to prevent falling back to English
@@ -94,7 +94,7 @@ export default function App() {
   // Toast alert
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  const t = translations[lang];
+  const t = getTranslations(lang);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);

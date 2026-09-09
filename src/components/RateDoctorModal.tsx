@@ -117,11 +117,11 @@ export const RateDoctorModal: React.FC<RateDoctorModalProps> = ({
                 })}
               </div>
               <div className="text-xs font-bold text-amber-600 dark:text-amber-400">
-                {stars === 5 && '⭐⭐⭐⭐⭐ Exceptional Guidance'}
-                {stars === 4 && '⭐⭐⭐⭐ Very Good Consultation'}
-                {stars === 3 && '⭐⭐⭐ Helpful Guidance'}
-                {stars === 2 && '⭐⭐ Adequate'}
-                {stars === 1 && '⭐ Needs Improvement'}
+                {stars === 5 && t.star5Desc}
+                {stars === 4 && t.star4Desc}
+                {stars === 3 && t.star3Desc}
+                {stars === 2 && t.star2Desc}
+                {stars === 1 && t.star1Desc}
               </div>
             </div>
 
@@ -134,7 +134,7 @@ export const RateDoctorModal: React.FC<RateDoctorModalProps> = ({
                 rows={3}
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
-                placeholder="How helpful and clear was this specialist's consultation advice?"
+                placeholder={t.ratingPlaceholder}
                 className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
               />
             </div>

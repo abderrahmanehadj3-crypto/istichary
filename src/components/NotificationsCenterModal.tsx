@@ -87,8 +87,8 @@ export const NotificationsCenterModal: React.FC<NotificationsCenterModalProps> =
               </h3>
               <p className="text-[11px] text-slate-500 dark:text-slate-400">
                 {unreadCount > 0
-                  ? `${unreadCount} unread alert${unreadCount > 1 ? 's' : ''}`
-                  : 'All notifications caught up'}
+                  ? `${unreadCount} ${t.unreadAlertsCount}`
+                  : t.allNotificationsRead}
               </p>
             </div>
           </div>
@@ -221,7 +221,7 @@ export const NotificationsCenterModal: React.FC<NotificationsCenterModalProps> =
 
                   <div className="pl-8 flex items-center justify-between text-[10px] text-slate-400 pt-1">
                     <span className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-1">
-                      View details <ExternalLink size={10} />
+                      {t.viewDetails} <ExternalLink size={10} />
                     </span>
                     {!notif.isRead && (
                       <span className="w-2 h-2 rounded-full bg-sky-500"></span>

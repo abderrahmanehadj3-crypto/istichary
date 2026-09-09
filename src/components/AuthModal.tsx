@@ -89,7 +89,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg('');
 
     if (!loginIdentifier.trim() || !loginPassword.trim()) {
-      setErrorMsg('Please enter your username or registered email and password.');
+      setErrorMsg(t.authEnterCredentials);
       return;
     }
 
@@ -146,12 +146,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg('');
 
     if (!username.trim() || !email.trim() || !password) {
-      setErrorMsg('Please complete all required fields.');
+      setErrorMsg(t.authRequiredFields);
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMsg('Passwords do not match.');
+      setErrorMsg(t.authPasswordsDoNotMatch);
       return;
     }
 
@@ -159,7 +159,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     // Check unique username
     if (existingUsers.some((u) => u.username.toLowerCase() === cleanUsername.toLowerCase())) {
-      setErrorMsg('Username already taken. Please choose a unique handle.');
+      setErrorMsg(t.authUsernameTaken);
       return;
     }
 
@@ -183,24 +183,24 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setErrorMsg('');
 
     if (!username.trim() || !email.trim() || !password) {
-      setErrorMsg('Please complete all required fields.');
+      setErrorMsg(t.authRequiredFields);
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMsg('Passwords do not match.');
+      setErrorMsg(t.authPasswordsDoNotMatch);
       return;
     }
 
     if (!licenseNumber.trim()) {
-      setErrorMsg('Medical Board License Number is required.');
+      setErrorMsg(t.authLicenseRequired);
       return;
     }
 
     const cleanUsername = normalizeUsername(username);
 
     if (existingUsers.some((u) => u.username.toLowerCase() === cleanUsername.toLowerCase())) {
-      setErrorMsg('Doctor username handle is already in use.');
+      setErrorMsg(t.authDoctorHandleTaken);
       return;
     }
 

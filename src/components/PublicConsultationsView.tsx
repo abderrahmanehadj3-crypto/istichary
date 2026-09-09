@@ -31,7 +31,7 @@ import {
   SpecializationId,
   DoctorProfile,
 } from '../types';
-import { translations } from '../i18n/translations';
+import { translations, getSpecialtyLabel, getUrgencyLabel } from '../i18n/translations';
 import { SPECIALIZATIONS, MOCK_DOCTORS } from '../data/mockData';
 import { RoleAvatar } from './RoleAvatar';
 import { evaluateContent, checkUserCanPost } from '../utils/moderation';
@@ -118,7 +118,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
     }
 
     if (!postTitle.trim() || !postDescription.trim()) {
-      setFormError('Please provide both an inquiry title and symptom description.');
+      setFormError(t.fillRequiredFields);
       return;
     }
 
@@ -288,7 +288,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 
             <div>
               <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Inquiry Summary / Primary Symptom
+                {t.inquirySummaryLabel}
               </label>
               <input
                 id="input-post-title"
@@ -313,7 +313,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                 >
                   {SPECIALIZATIONS.filter((s) => s.id !== 'all').map((s) => (
                     <option key={s.id} value={s.id}>
-                      {s.name}
+                      {getSpecialtyLabel(s.id, t)}
                     </option>
                   ))}
                 </select>
@@ -321,7 +321,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 
               <div>
                 <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Symptom Urgency Level
+                  {t.urgencyLevelLabel}
                 </label>
                 <div className="flex gap-1.5">
                   {(['low', 'medium', 'high'] as const).map((urg) => (
@@ -339,7 +339,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                           : 'bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
                       }`}
                     >
-                      {urg}
+                      {getUrgencyLabel(urg, t)}
                     </button>
                   ))}
                 </div>
@@ -348,7 +348,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 
             <div>
               <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
-                Detailed Medical Inquiry Description
+                {t.inquiryDetailsLabel}
               </label>
               <textarea
                 id="input-post-description"
@@ -418,7 +418,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                 : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
             }`}
           >
-            {spec.name}
+            {getSpecialtyLabel(spec.id, t)}
           </button>
         ))}
       </div>

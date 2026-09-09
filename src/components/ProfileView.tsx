@@ -118,7 +118,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setEmailMessage(null);
 
     if (!newEmail.trim() || !newEmail.includes('@')) {
-      setEmailMessage({ text: 'Please enter a valid email address.', isError: true });
+      setEmailMessage({ text: t.validEmailRequired, isError: true });
       return;
     }
 
@@ -138,12 +138,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setPasswordMessage(null);
 
     if (!newPassword || newPassword.length < 6) {
-      setPasswordMessage({ text: 'Password must be at least 6 characters long.', isError: true });
+      setPasswordMessage({ text: t.passwordMinLength, isError: true });
       return;
     }
 
     if (newPassword !== confirmNewPassword) {
-      setPasswordMessage({ text: 'New password and confirmation do not match.', isError: true });
+      setPasswordMessage({ text: t.passwordsDoNotMatch, isError: true });
       return;
     }
 
@@ -561,7 +561,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
             <p className="font-semibold">{t.patientsCannotAddClinics}</p>
             <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-1">
-              To guarantee clinical validity, patient accounts have zero access to create or edit medical locations.
+              {t.patientNoClinicPermissionDesc}
             </p>
           </div>
         )}
@@ -569,9 +569,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         {/* If user is Doctor but Pending: Show pending message */}
         {isDoctor && currentUser.verificationStatus !== 'verified' && (
           <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
-            <p className="font-semibold">Verification Required to Publish Clinic Location</p>
+            <p className="font-semibold">{t.verificationRequiredForClinic}</p>
             <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-1">
-              Your license is currently under board review. Once approved, you will be able to publish and update your clinic practice address for nearby patients.
+              {t.verificationPendingClinicDesc}
             </p>
           </div>
         )}
@@ -779,7 +779,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       {/* 5. THEME & PREFERENCES */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3">
         <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-          Appearance & Language
+          {t.appearanceAndLanguage}
         </h4>
 
         <div className="flex items-center justify-between text-xs py-1">
@@ -831,10 +831,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-2 text-xs">
         <div className="flex items-center justify-between">
           <span className="font-bold text-slate-900 dark:text-white">
-            12-Month Inactivity Protection Policy
+            {t.inactivityProtectionPolicy}
           </span>
           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-            Active
+            {t.accountActive}
           </span>
         </div>
         <p className="text-slate-500 dark:text-slate-400 text-[11px] leading-relaxed">
@@ -845,7 +845,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             onClick={onSimulateInactivity}
             className="text-[11px] text-slate-500 hover:text-amber-600 underline font-medium"
           >
-            Simulate 12-Month Inactivity Deactivation
+            {t.simulateInactivity}
           </button>
         </div>
       </div>

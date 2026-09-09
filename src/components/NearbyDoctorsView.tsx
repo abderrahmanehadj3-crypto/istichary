@@ -180,7 +180,7 @@ export const NearbyDoctorsView: React.FC<NearbyDoctorsViewProps> = ({
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by doctor name, specialty, or clinic address..."
+            placeholder={t.searchNearbyPlaceholder}
             className="w-full px-3.5 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-sky-500"
           />
         </div>
@@ -212,7 +212,7 @@ export const NearbyDoctorsView: React.FC<NearbyDoctorsViewProps> = ({
               }}
               className="text-xs text-sky-600 dark:text-sky-400 font-bold hover:underline"
             >
-              Reset filters
+              {t.resetFilters}
             </button>
           </div>
         ) : (
@@ -331,7 +331,7 @@ export const NearbyDoctorsView: React.FC<NearbyDoctorsViewProps> = ({
                 <div className="flex items-center justify-between pt-1 text-xs">
                   <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold">
                     <ShieldCheck size={14} />
-                    <span>Board Verified License #{doctor.medicalLicenseNumber}</span>
+                    <span>{t.boardVerifiedLicense}{doctor.medicalLicenseNumber}</span>
                   </div>
 
                   {/* Rate Doctor Button (Patients can rate verified doctors) */}

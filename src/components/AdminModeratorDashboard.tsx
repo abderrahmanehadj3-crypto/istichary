@@ -73,19 +73,19 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
           <Lock size={32} />
         </div>
         <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-          Restricted Medical Verification Dashboard
+          {t.restrictedDashboardTitle}
         </h2>
         <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 leading-relaxed text-start space-y-2">
           <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300">
             <ShieldAlert size={16} />
-            <span>Strict Healthcare Privacy Policy</span>
+            <span>{t.strictHealthcarePrivacyPolicy}</span>
           </div>
           <p>
             {t.restrictedReviewNotice}
           </p>
         </div>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Only the Super Administrator and authorized review moderators possess cryptographic credentials to view doctor medical diplomas and licensing records.
+          {t.adminSecurityNotice}
         </p>
         {!currentUser ? (
           <button
@@ -97,7 +97,7 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
           </button>
         ) : (
           <div className="text-xs text-slate-400">
-            Logged in as: <span className="font-semibold text-slate-700 dark:text-slate-300">{currentUser.username}</span> ({currentUser.role})
+            {t.loggedInAs} <span className="font-semibold text-slate-700 dark:text-slate-300">{currentUser.username}</span> ({currentUser.role})
           </div>
         )}
       </div>
