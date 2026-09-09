@@ -245,4 +245,22 @@ export const frTranslations: Translations = {
   strictHealthcarePrivacyPolicy: 'Politique Stricte de Confidentialité des Données de Santé',
   adminSecurityNotice: 'Seuls le Super Administrateur et les modérateurs agréés disposent des autorisations d’accès aux diplômes et licences des médecins.',
   loggedInAs: 'Connecté en tant que :',
+
+  // Post & Comment Management (Edit & Delete)
+  editPost: 'Modifier la consultation',
+  deletePost: 'Supprimer la consultation',
+  editComment: 'Modifier la réponse',
+  deleteComment: 'Supprimer la réponse',
+  saveChanges: 'Enregistrer les modifications',
+  editedBadge: 'Modifié',
+  deletePostConfirmTitle: 'Supprimer cette consultation ?',
+  deletePostConfirmDesc: 'Êtes-vous certain de vouloir supprimer définitivement cette consultation médicale et toutes les réponses associées ? Cette action est irréversible.',
+  deleteCommentConfirmTitle: 'Supprimer cette réponse ?',
+  deleteCommentConfirmDesc: 'Êtes-vous certain de vouloir retirer cette réponse du fil de discussion médical ?',
+  confirmDelete: 'Oui, supprimer',
+  postUpdatedSuccess: 'Consultation médicale mise à jour avec succès.',
+  postDeletedSuccess: 'Consultation médicale supprimée.',
+  commentUpdatedSuccess: 'Réponse modifiée avec succès.',
+  commentDeletedSuccess: 'Réponse supprimée.',
+  doctorAuthorBadge: 'Médecin Auteur',
 };

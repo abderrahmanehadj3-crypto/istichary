@@ -292,6 +292,72 @@ export default function App() {
     showToast(t.inquiryPublishedSuccess);
   };
 
+  // Edit Consultation Post (Allowed for post author - doctor or patient)
+  const handleEditPost = (postId: string, updatedData: Partial<ConsultationPost>) => {
+    setPosts((prev) =>
+      prev.map((p) => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            ...updatedData,
+            isEdited: true,
+            updatedAt: 'Just now',
+          };
+        }
+        return p;
+      })
+    );
+    showToast(t.postUpdatedSuccess);
+  };
+
+  // Delete Consultation Post (Allowed for post author)
+  const handleDeletePost = (postId: string) => {
+    setPosts((prev) => prev.filter((p) => p.id !== postId));
+    showToast(t.postDeletedSuccess);
+  };
+
+  // Edit Comment / Reply (Allowed for comment author)
+  const handleEditComment = (postId: string, commentId: string, newContent: string) => {
+    setPosts((prev) =>
+      prev.map((p) => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            comments: p.comments.map((c) => {
+              if (c.id === commentId) {
+                return {
+                  ...c,
+                  content: newContent,
+                  isEdited: true,
+                  updatedAt: 'Just now',
+                };
+              }
+              return c;
+            }),
+          };
+        }
+        return p;
+      })
+    );
+    showToast(t.commentUpdatedSuccess);
+  };
+
+  // Delete Comment / Reply (Allowed for comment author)
+  const handleDeleteComment = (postId: string, commentId: string) => {
+    setPosts((prev) =>
+      prev.map((p) => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            comments: p.comments.filter((c) => c.id !== commentId),
+          };
+        }
+        return p;
+      })
+    );
+    showToast(t.commentDeletedSuccess);
+  };
+
   // Add Comment / Doctor Response to a Post with Notification Alert
   const handleAddComment = (postId: string, newComment: ConsultationComment) => {
     setPosts((prev) =>
@@ -619,7 +685,11 @@ export default function App() {
               followedDoctorIds={currentUser?.followingDoctorIds || []}
               onToggleFollowDoctor={handleToggleFollowDoctor}
               onAddPost={handleAddPost}
+              onEditPost={handleEditPost}
+              onDeletePost={handleDeletePost}
               onAddComment={handleAddComment}
+              onEditComment={handleEditComment}
+              onDeleteComment={handleDeleteComment}
               onApplyPenalty={handleApplyPenalty}
               onRequestAuth={() => setIsAuthModalOpen(true)}
               doctors={doctors}

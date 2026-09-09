@@ -122,6 +122,8 @@ export interface ConsultationComment {
   authorDoctorId?: string;
   content: string;
   timestamp: string;
+  isEdited?: boolean;
+  updatedAt?: string;
   isDoctorRecommendation?: boolean;
   likesCount?: number;
   likedByUserIds?: string[];
@@ -131,12 +133,16 @@ export interface ConsultationPost {
   id: string;
   authorId: string;
   authorUsername: string;
-  authorRole: 'patient';
+  authorRole?: UserRole;
+  authorRealName?: string;
+  authorSpecialty?: string;
   title: string;
   specializationId: SpecializationId;
   description: string;
   urgency: 'low' | 'medium' | 'high';
   createdAt: string;
+  isEdited?: boolean;
+  updatedAt?: string;
   comments: ConsultationComment[];
   isClosed?: boolean;
   likesCount?: number;

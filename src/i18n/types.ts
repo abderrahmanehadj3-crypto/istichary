@@ -243,4 +243,22 @@ export interface Translations {
   strictHealthcarePrivacyPolicy: string;
   adminSecurityNotice: string;
   loggedInAs: string;
+
+  // Post & Comment Management (Edit & Delete)
+  editPost: string;
+  deletePost: string;
+  editComment: string;
+  deleteComment: string;
+  saveChanges: string;
+  editedBadge: string;
+  deletePostConfirmTitle: string;
+  deletePostConfirmDesc: string;
+  deleteCommentConfirmTitle: string;
+  deleteCommentConfirmDesc: string;
+  confirmDelete: string;
+  postUpdatedSuccess: string;
+  postDeletedSuccess: string;
+  commentUpdatedSuccess: string;
+  commentDeletedSuccess: string;
+  doctorAuthorBadge: string;
 }

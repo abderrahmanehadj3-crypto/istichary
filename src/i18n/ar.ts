@@ -245,4 +245,22 @@ export const arTranslations: Translations = {
   strictHealthcarePrivacyPolicy: 'سياسة سرية وأمان البيانات الصحية الصارمة',
   adminSecurityNotice: 'يحق حصرياً للمشرف العام وفريق المراجعة المعتمدين الاطلاع على الوثائق والتراخيص الطبية.',
   loggedInAs: 'مسجل الدخول كـ:',
+
+  // Post & Comment Management (Edit & Delete)
+  editPost: 'تعديل الاستشارة',
+  deletePost: 'حذف الاستشارة',
+  editComment: 'تعديل الرد',
+  deleteComment: 'حذف الرد',
+  saveChanges: 'حفظ التعديلات',
+  editedBadge: 'مُعدّل',
+  deletePostConfirmTitle: 'حذف الاستشارة الطبية؟',
+  deletePostConfirmDesc: 'هل أنت متأكد من رغبتك في حذف هذه الاستشارة نهائياً مع كافة الردود الطبية المرتبطة بها؟ لا يمكن التراجع عن هذا الإجراء.',
+  deleteCommentConfirmTitle: 'حذف الرد الطبي؟',
+  deleteCommentConfirmDesc: 'هل أنت متأكد من رغبتك في حذف هذا الرد من المحادثة الطبية؟',
+  confirmDelete: 'نعم، احذف',
+  postUpdatedSuccess: 'تم تحديث الاستشارة الطبية بنجاح.',
+  postDeletedSuccess: 'تم حذف الاستشارة الطبية.',
+  commentUpdatedSuccess: 'تم تعديل الرد بنجاح.',
+  commentDeletedSuccess: 'تم حذف الرد.',
+  doctorAuthorBadge: 'طبيب كاتب',
 };

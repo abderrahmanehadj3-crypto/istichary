@@ -245,4 +245,22 @@ export const enTranslations: Translations = {
   strictHealthcarePrivacyPolicy: 'Strict Healthcare Privacy Policy',
   adminSecurityNotice: 'Only the Super Administrator and authorized review moderators possess cryptographic credentials to view doctor medical diplomas and licensing records.',
   loggedInAs: 'Logged in as:',
+
+  // Post & Comment Management (Edit & Delete)
+  editPost: 'Edit Inquiry',
+  deletePost: 'Delete Inquiry',
+  editComment: 'Edit Reply',
+  deleteComment: 'Delete Reply',
+  saveChanges: 'Save Changes',
+  editedBadge: 'Edited',
+  deletePostConfirmTitle: 'Delete Consultation Post?',
+  deletePostConfirmDesc: 'Are you sure you want to permanently delete this medical inquiry and all its specialist replies? This action cannot be undone.',
+  deleteCommentConfirmTitle: 'Delete Reply?',
+  deleteCommentConfirmDesc: 'Are you sure you want to delete this reply from the clinical thread?',
+  confirmDelete: 'Yes, Delete',
+  postUpdatedSuccess: 'Medical inquiry updated successfully.',
+  postDeletedSuccess: 'Medical inquiry deleted.',
+  commentUpdatedSuccess: 'Reply updated.',
+  commentDeletedSuccess: 'Reply deleted.',
+  doctorAuthorBadge: 'Physician Author',
 };

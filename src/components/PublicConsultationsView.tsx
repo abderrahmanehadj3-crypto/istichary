@@ -22,6 +22,9 @@ import {
   MessageCircle,
   Share2,
   Star,
+  Pencil,
+  Trash2,
+  Check,
 } from 'lucide-react';
 import {
   ConsultationPost,
@@ -43,7 +46,11 @@ interface PublicConsultationsViewProps {
   followedDoctorIds: string[];
   onToggleFollowDoctor: (doctorId: string) => void;
   onAddPost: (post: ConsultationPost) => void;
+  onEditPost?: (postId: string, updatedData: Partial<ConsultationPost>) => void;
+  onDeletePost?: (postId: string) => void;
   onAddComment: (postId: string, comment: ConsultationComment) => void;
+  onEditComment?: (postId: string, commentId: string, newContent: string) => void;
+  onDeleteComment?: (postId: string, commentId: string) => void;
   onApplyPenalty: (penaltyType: 'banned' | 'restricted_48h', reason: string) => void;
   onRequestAuth: () => void;
   doctors?: DoctorProfile[];
@@ -58,7 +65,11 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
   followedDoctorIds,
   onToggleFollowDoctor,
   onAddPost,
+  onEditPost,
+  onDeletePost,
   onAddComment,
+  onEditComment,
+  onDeleteComment,
   onApplyPenalty,
   onRequestAuth,
   doctors = MOCK_DOCTORS,
@@ -82,6 +93,127 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
   // Per-post reply inputs
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
   const [replyErrors, setReplyErrors] = useState<Record<string, string>>({});
+
+  // Post Edit State
+  const [editingPostId, setEditingPostId] = useState<string | null>(null);
+  const [editPostTitle, setEditPostTitle] = useState('');
+  const [editPostSpecialty, setEditPostSpecialty] = useState<SpecializationId>('general');
+  const [editPostUrgency, setEditPostUrgency] = useState<'low' | 'medium' | 'high'>('medium');
+  const [editPostDescription, setEditPostDescription] = useState('');
+  const [editPostError, setEditPostError] = useState('');
+
+  // Post Delete Confirmation State
+  const [confirmDeletePostId, setConfirmDeletePostId] = useState<string | null>(null);
+
+  // Comment Edit State
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [editingCommentError, setEditingCommentError] = useState('');
+
+  // Comment Delete Confirmation State
+  const [confirmDeleteCommentId, setConfirmDeleteCommentId] = useState<string | null>(null);
+
+  const startEditingPost = (post: ConsultationPost) => {
+    setEditingPostId(post.id);
+    setEditPostTitle(post.title);
+    setEditPostSpecialty(post.specializationId);
+    setEditPostUrgency(post.urgency);
+    setEditPostDescription(post.description);
+    setEditPostError('');
+    setConfirmDeletePostId(null);
+  };
+
+  const cancelEditingPost = () => {
+    setEditingPostId(null);
+    setEditPostError('');
+  };
+
+  const handleSavePostEdit = (postId: string) => {
+    setEditPostError('');
+    if (!editPostTitle.trim() || !editPostDescription.trim()) {
+      setEditPostError(t.fillRequiredFields);
+      return;
+    }
+
+    const moderation = evaluateContent(`${editPostTitle} ${editPostDescription}`);
+    if (!moderation.allowed) {
+      if (moderation.penaltyType === 'banned') {
+        onApplyPenalty('banned', moderation.reason);
+        setEditPostError(moderation.reason);
+        return;
+      } else if (moderation.penaltyType === 'restricted_48h') {
+        onApplyPenalty('restricted_48h', moderation.reason);
+        setEditPostError(moderation.reason);
+        return;
+      } else {
+        setEditPostError(`Content moderation alert: ${moderation.reason}`);
+        return;
+      }
+    }
+
+    onEditPost?.(postId, {
+      title: editPostTitle.trim(),
+      specializationId: editPostSpecialty,
+      urgency: editPostUrgency,
+      description: editPostDescription.trim(),
+    });
+    setEditingPostId(null);
+  };
+
+  const handleConfirmDeletePost = (postId: string) => {
+    onDeletePost?.(postId);
+    setConfirmDeletePostId(null);
+    if (editingPostId === postId) {
+      setEditingPostId(null);
+    }
+  };
+
+  const startEditingComment = (comment: ConsultationComment) => {
+    setEditingCommentId(comment.id);
+    setEditingCommentText(comment.content);
+    setEditingCommentError('');
+    setConfirmDeleteCommentId(null);
+  };
+
+  const cancelEditingComment = () => {
+    setEditingCommentId(null);
+    setEditingCommentError('');
+  };
+
+  const handleSaveCommentEdit = (postId: string, commentId: string) => {
+    setEditingCommentError('');
+    if (!editingCommentText.trim()) {
+      setEditingCommentError(t.fillRequiredFields);
+      return;
+    }
+
+    const moderation = evaluateContent(editingCommentText);
+    if (!moderation.allowed) {
+      if (moderation.penaltyType === 'banned') {
+        onApplyPenalty('banned', moderation.reason);
+        setEditingCommentError(moderation.reason);
+        return;
+      } else if (moderation.penaltyType === 'restricted_48h') {
+        onApplyPenalty('restricted_48h', moderation.reason);
+        setEditingCommentError(moderation.reason);
+        return;
+      } else {
+        setEditingCommentError(`Content moderation alert: ${moderation.reason}`);
+        return;
+      }
+    }
+
+    onEditComment?.(postId, commentId, editingCommentText.trim());
+    setEditingCommentId(null);
+  };
+
+  const handleConfirmDeleteComment = (postId: string, commentId: string) => {
+    onDeleteComment?.(postId, commentId);
+    setConfirmDeleteCommentId(null);
+    if (editingCommentId === commentId) {
+      setEditingCommentId(null);
+    }
+  };
 
   const toggleExpandPost = (postId: string) => {
     setExpandedPostIds((prev) => ({
@@ -143,7 +275,9 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
       id: `post-${Date.now()}`,
       authorId: currentUser.id,
       authorUsername: currentUser.username,
-      authorRole: 'patient',
+      authorRole: currentUser.role,
+      authorRealName: currentUser.role === 'doctor' && currentUser.showRealName ? currentUser.realName : undefined,
+      authorSpecialty: currentUser.role === 'doctor' ? currentUser.specialty : undefined,
       title: postTitle.trim(),
       specializationId: postSpecialty,
       description: postDescription.trim(),
@@ -440,7 +574,9 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
         ) : (
           filteredPosts.map((post) => {
             const isExpanded = !!expandedPostIds[post.id];
-            const isPostAuthor = currentUser && post.authorId === currentUser.id;
+            const isPostAuthor = Boolean(
+              currentUser && (post.authorId === currentUser.id || post.authorUsername === currentUser.username)
+            );
             const isDoctor = currentUser?.role === 'doctor';
             const isVerifiedDoc = isDoctor && currentUser?.verificationStatus === 'verified';
             const canReply = isPostAuthor || isVerifiedDoc;
@@ -451,27 +587,69 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                 id={`consultation-post-${post.id}`}
                 className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3.5"
               >
-                {/* Post Top Row: Author, Time, Urgency */}
+                {/* Post Top Row: Author, Time, Urgency, and Post Owner Action Buttons */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2.5">
-                    <RoleAvatar role="patient" size="sm" />
+                    <RoleAvatar role={post.authorRole || 'patient'} size="sm" />
                     <div>
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-bold text-slate-900 dark:text-white">
-                          {post.authorUsername}
+                          {post.authorRealName || post.authorUsername}
                         </span>
-                        <span className="px-1.5 py-0.2 rounded-md bg-slate-100 dark:bg-slate-700 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
-                          {t.patientAuthorBadge}
-                        </span>
+                        {post.authorRole === 'doctor' ? (
+                          <span className="px-1.5 py-0.2 rounded-md bg-sky-100 dark:bg-sky-950 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+                            {t.doctorAuthorBadge}
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.2 rounded-md bg-slate-100 dark:bg-slate-700 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                            {t.patientAuthorBadge}
+                          </span>
+                        )}
+                        {post.authorRole === 'doctor' && post.authorSpecialty && (
+                          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                            ({post.authorSpecialty})
+                          </span>
+                        )}
                       </div>
                       <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                         <Clock size={11} />
                         <span>{post.createdAt}</span>
+                        {post.isEdited && (
+                          <span className="text-[10px] text-slate-400 font-medium italic">
+                            ({t.editedBadge})
+                          </span>
+                        )}
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    {/* Post Owner Edit & Delete Buttons */}
+                    {isPostAuthor && (
+                      <div className="flex items-center gap-1 mr-1">
+                        <button
+                          id={`btn-edit-post-${post.id}`}
+                          type="button"
+                          onClick={() => startEditingPost(post)}
+                          className="px-2 py-1 rounded-xl text-[11px] font-semibold bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 flex items-center gap-1 transition cursor-pointer"
+                          title={t.editPost}
+                        >
+                          <Pencil size={11} />
+                          <span>{t.editPost}</span>
+                        </button>
+                        <button
+                          id={`btn-delete-post-${post.id}`}
+                          type="button"
+                          onClick={() => setConfirmDeletePostId(post.id)}
+                          className="px-2 py-1 rounded-xl text-[11px] font-semibold bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 dark:hover:bg-rose-900/80 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900 flex items-center gap-1 transition cursor-pointer"
+                          title={t.deletePost}
+                        >
+                          <Trash2 size={11} />
+                          <span>{t.deletePost}</span>
+                        </button>
+                      </div>
+                    )}
+
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
                         post.urgency === 'high'
@@ -481,24 +659,163 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                           : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900'
                       }`}
                     >
-                      {post.urgency}
+                      {getUrgencyLabel(post.urgency, t)}
                     </span>
 
                     <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 dark:bg-sky-950/80 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800 capitalize">
-                      {post.specializationId}
+                      {getSpecialtyLabel(post.specializationId, t)}
                     </span>
                   </div>
                 </div>
 
-                {/* Post Title & Description */}
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
-                    {post.title}
-                  </h3>
-                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
-                    {post.description}
-                  </p>
-                </div>
+                {/* Confirm Delete Post Prompt */}
+                {confirmDeletePostId === post.id && (
+                  <div
+                    id={`post-delete-confirm-${post.id}`}
+                    className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 space-y-2 text-xs"
+                  >
+                    <div className="flex items-center gap-2 font-bold text-rose-800 dark:text-rose-200">
+                      <AlertTriangle size={15} className="text-rose-600 dark:text-rose-400 shrink-0" />
+                      <span>{t.deletePostConfirmTitle}</span>
+                    </div>
+                    <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
+                      {t.deletePostConfirmDesc}
+                    </p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        id={`btn-confirm-delete-post-${post.id}`}
+                        type="button"
+                        onClick={() => handleConfirmDeletePost(post.id)}
+                        className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs transition cursor-pointer"
+                      >
+                        {t.confirmDelete}
+                      </button>
+                      <button
+                        id={`btn-cancel-delete-post-${post.id}`}
+                        type="button"
+                        onClick={() => setConfirmDeletePostId(null)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold text-xs transition cursor-pointer"
+                      >
+                        {t.cancel}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Edit Post Form Mode */}
+                {editingPostId === post.id ? (
+                  <div
+                    id={`post-edit-form-${post.id}`}
+                    className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/70 border border-sky-200 dark:border-sky-800/60 space-y-3"
+                  >
+                    {editPostError && (
+                      <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+                        {editPostError}
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        {t.inquirySummaryLabel}
+                      </label>
+                      <input
+                        id={`input-edit-post-title-${post.id}`}
+                        type="text"
+                        value={editPostTitle}
+                        onChange={(e) => setEditPostTitle(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          {t.selectSpecialty}
+                        </label>
+                        <select
+                          id={`select-edit-post-specialty-${post.id}`}
+                          value={editPostSpecialty}
+                          onChange={(e) => setEditPostSpecialty(e.target.value as SpecializationId)}
+                          className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none"
+                        >
+                          {SPECIALIZATIONS.filter((s) => s.id !== 'all').map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {getSpecialtyLabel(s.id, t)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                          {t.urgencyLevelLabel}
+                        </label>
+                        <div className="flex gap-1.5">
+                          {(['low', 'medium', 'high'] as const).map((urg) => (
+                            <button
+                              key={urg}
+                              type="button"
+                              onClick={() => setEditPostUrgency(urg)}
+                              className={`flex-1 py-1.5 rounded-xl text-xs font-semibold capitalize border transition cursor-pointer ${
+                                editPostUrgency === urg
+                                  ? urg === 'high'
+                                    ? 'bg-rose-500 text-white border-rose-600'
+                                    : urg === 'medium'
+                                    ? 'bg-amber-500 text-white border-amber-600'
+                                    : 'bg-emerald-500 text-white border-emerald-600'
+                                  : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'
+                              }`}
+                            >
+                              {getUrgencyLabel(urg, t)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                        {t.inquiryDetailsLabel}
+                      </label>
+                      <textarea
+                        id={`textarea-edit-post-desc-${post.id}`}
+                        rows={3}
+                        value={editPostDescription}
+                        onChange={(e) => setEditPostDescription(e.target.value)}
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        id={`btn-cancel-edit-post-${post.id}`}
+                        type="button"
+                        onClick={cancelEditingPost}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-xs font-semibold transition cursor-pointer"
+                      >
+                        {t.cancel}
+                      </button>
+                      <button
+                        id={`btn-save-edit-post-${post.id}`}
+                        type="button"
+                        onClick={() => handleSavePostEdit(post.id)}
+                        className="px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Check size={13} />
+                        <span>{t.saveChanges}</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Post Title & Description */
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-snug">
+                      {post.title}
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 mt-1.5 leading-relaxed">
+                      {post.description}
+                    </p>
+                  </div>
+                )}
 
                 {/* Discussion Thread Stats / Expand Toggle */}
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-700/60 text-xs">
@@ -543,6 +860,9 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                       <div className="space-y-2.5">
                         {post.comments.map((comment) => {
                           const isDocComment = comment.authorRole === 'doctor';
+                          const isCommentAuthor = Boolean(
+                            currentUser && (comment.authorId === currentUser.id || comment.authorUsername === currentUser.username)
+                          );
                           const docProfile = isDocComment
                             ? (doctors || MOCK_DOCTORS).find(
                                 (d) =>
@@ -623,11 +943,40 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                                     <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
                                       <Clock size={10} />
                                       <span>{comment.timestamp}</span>
+                                      {comment.isEdited && (
+                                        <span className="text-[10px] text-slate-400 font-medium italic">
+                                          ({t.editedBadge})
+                                        </span>
+                                      )}
                                     </div>
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  {/* Author Edit & Delete Comment Buttons */}
+                                  {isCommentAuthor && (
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        id={`btn-edit-comment-${comment.id}`}
+                                        type="button"
+                                        onClick={() => startEditingComment(comment)}
+                                        className="p-1 rounded-lg text-slate-400 hover:text-sky-600 dark:hover:text-sky-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                                        title={t.editComment}
+                                      >
+                                        <Pencil size={12} />
+                                      </button>
+                                      <button
+                                        id={`btn-delete-comment-${comment.id}`}
+                                        type="button"
+                                        onClick={() => setConfirmDeleteCommentId(comment.id)}
+                                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition cursor-pointer"
+                                        title={t.deleteComment}
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+
                                   {/* 1. RATE DOCTOR BUTTON */}
                                   {isDocComment && docProfile && onOpenRatingModal && (
                                     <button
@@ -682,10 +1031,73 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                                 </div>
                               </div>
 
-                              {/* Comment Content */}
-                              <div className="text-slate-700 dark:text-slate-200 leading-relaxed pl-1">
-                                {comment.content}
-                              </div>
+                              {/* Comment Content / Confirm Delete / Inline Edit */}
+                              {confirmDeleteCommentId === comment.id ? (
+                                <div
+                                  id={`comment-delete-confirm-${comment.id}`}
+                                  className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900 space-y-1.5 text-xs"
+                                >
+                                  <p className="font-semibold text-rose-800 dark:text-rose-200 text-[11px]">
+                                    {t.deleteCommentConfirmDesc}
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      id={`btn-confirm-delete-comment-${comment.id}`}
+                                      type="button"
+                                      onClick={() => handleConfirmDeleteComment(post.id, comment.id)}
+                                      className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold text-[11px] transition cursor-pointer"
+                                    >
+                                      {t.confirmDelete}
+                                    </button>
+                                    <button
+                                      id={`btn-cancel-delete-comment-${comment.id}`}
+                                      type="button"
+                                      onClick={() => setConfirmDeleteCommentId(null)}
+                                      className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-semibold text-[11px] transition cursor-pointer"
+                                    >
+                                      {t.cancel}
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : editingCommentId === comment.id ? (
+                                <div id={`comment-edit-form-${comment.id}`} className="space-y-2 pt-1">
+                                  {editingCommentError && (
+                                    <div className="p-2 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-[11px] text-rose-700 dark:text-rose-300">
+                                      {editingCommentError}
+                                    </div>
+                                  )}
+                                  <textarea
+                                    id={`textarea-edit-comment-${comment.id}`}
+                                    rows={2}
+                                    value={editingCommentText}
+                                    onChange={(e) => setEditingCommentText(e.target.value)}
+                                    className="w-full px-3 py-2 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
+                                  />
+                                  <div className="flex items-center justify-end gap-2">
+                                    <button
+                                      id={`btn-cancel-edit-comment-${comment.id}`}
+                                      type="button"
+                                      onClick={cancelEditingComment}
+                                      className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-[11px] font-semibold transition cursor-pointer"
+                                    >
+                                      {t.cancel}
+                                    </button>
+                                    <button
+                                      id={`btn-save-edit-comment-${comment.id}`}
+                                      type="button"
+                                      onClick={() => handleSaveCommentEdit(post.id, comment.id)}
+                                      className="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold shadow-xs transition flex items-center gap-1 cursor-pointer"
+                                    >
+                                      <Check size={11} />
+                                      <span>{t.saveChanges}</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-slate-700 dark:text-slate-200 leading-relaxed pl-1">
+                                  {comment.content}
+                                </div>
+                              )}
 
                               {comment.isDoctorRecommendation && (
                                 <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1 pt-1 border-t border-sky-100 dark:border-slate-800">
