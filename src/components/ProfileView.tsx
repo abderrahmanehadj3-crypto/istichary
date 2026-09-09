@@ -47,6 +47,13 @@ interface ProfileViewProps {
   onUnfollowDoctor: (doctorId: string) => void;
   onSimulateInactivity: () => void;
   onClearModerationPenalty: () => void;
+  onUpdateClinicLocation?: (clinicData: {
+    hospitalOrClinic: string;
+    clinicCity: string;
+    clinicAddress: string;
+    clinicWorkingHours: string;
+    clinicPhone: string;
+  }) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -65,6 +72,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onUnfollowDoctor,
   onSimulateInactivity,
   onClearModerationPenalty,
+  onUpdateClinicLocation,
 }) => {
   const t = translations[lang];
 
@@ -81,6 +89,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [passwordMessage, setPasswordMessage] = useState<{ text: string; isError: boolean } | null>(null);
   const [resetEmailSimulated, setResetEmailSimulated] = useState(false);
+
+  // Clinic Practice Location State (Strictly Verified Doctors Only)
+  const [isEditingClinic, setIsEditingClinic] = useState(false);
+  const [clinicName, setClinicName] = useState(currentUser?.hospitalOrClinic || '');
+  const [clinicCity, setClinicCity] = useState(currentUser?.clinicCity || '');
+  const [clinicAddress, setClinicAddress] = useState(currentUser?.clinicAddress || '');
+  const [clinicHours, setClinicHours] = useState(currentUser?.clinicWorkingHours || '');
+  const [clinicPhone, setClinicPhone] = useState(currentUser?.clinicPhone || '');
+  const [clinicSaveSuccess, setClinicSaveSuccess] = useState(false);
 
   // Account Deletion State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -504,7 +521,207 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         )}
       </div>
 
-      {/* 4. FOLLOWED SPECIALISTS MANAGEMENT */}
+      {/* 4. CLINIC PRACTICE & LOCATION MANAGEMENT (STRICT PERMISSION RESTRICTION) */}
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Building2 size={16} className="text-sky-600 dark:text-sky-400" />
+            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+              {t.practiceDetails}
+            </h4>
+          </div>
+          {isDoctor && currentUser.verificationStatus === 'verified' && (
+            <button
+              id="btn-toggle-edit-clinic"
+              type="button"
+              onClick={() => {
+                setIsEditingClinic(!isEditingClinic);
+                setClinicSaveSuccess(false);
+              }}
+              className="text-xs font-bold text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              <Edit2 size={12} />
+              <span>{isEditingClinic ? t.cancel : t.save}</span>
+            </button>
+          )}
+        </div>
+
+        {/* STRICT PERMISSION NOTICE */}
+        <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-xs leading-relaxed space-y-1">
+          <div className="flex items-start gap-2">
+            <Shield className="text-sky-600 shrink-0 mt-0.5" size={15} />
+            <p className="text-slate-600 dark:text-slate-300 text-[11px]">
+              {t.onlyVerifiedDoctorsCanSetLocation}
+            </p>
+          </div>
+        </div>
+
+        {/* If user is Patient: Show zero-permission message */}
+        {currentUser.role === 'patient' && (
+          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+            <p className="font-semibold">{t.patientsCannotAddClinics}</p>
+            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-1">
+              To guarantee clinical validity, patient accounts have zero access to create or edit medical locations.
+            </p>
+          </div>
+        )}
+
+        {/* If user is Doctor but Pending: Show pending message */}
+        {isDoctor && currentUser.verificationStatus !== 'verified' && (
+          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-300">
+            <p className="font-semibold">Verification Required to Publish Clinic Location</p>
+            <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-1">
+              Your license is currently under board review. Once approved, you will be able to publish and update your clinic practice address for nearby patients.
+            </p>
+          </div>
+        )}
+
+        {/* If user is Verified Doctor: Allow editing clinic details */}
+        {isDoctor && currentUser.verificationStatus === 'verified' && (
+          <div className="space-y-3 pt-1">
+            {clinicSaveSuccess && (
+              <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2 font-medium">
+                <CheckCircle2 size={14} />
+                <span>{t.clinicUpdatedSuccess}</span>
+              </div>
+            )}
+
+            {isEditingClinic ? (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (onUpdateClinicLocation) {
+                    onUpdateClinicLocation({
+                      hospitalOrClinic: clinicName.trim() || 'Specialty Medical Clinic',
+                      clinicCity: clinicCity.trim() || 'Paris',
+                      clinicAddress: clinicAddress.trim(),
+                      clinicWorkingHours: clinicHours.trim() || 'Mon - Fri: 09:00 - 17:00',
+                      clinicPhone: clinicPhone.trim(),
+                    });
+                  }
+                  setClinicSaveSuccess(true);
+                  setIsEditingClinic(false);
+                }}
+                className="space-y-3"
+              >
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Clinic / Center Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={clinicName}
+                    onChange={(e) => setClinicName(e.target.value)}
+                    placeholder={t.clinicNamePlaceholder}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      City / Region
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={clinicCity}
+                      onChange={(e) => setClinicCity(e.target.value)}
+                      placeholder={t.clinicCityPlaceholder}
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Phone Number (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={clinicPhone}
+                      onChange={(e) => setClinicPhone(e.target.value)}
+                      placeholder="+33 1 42 68 00 24"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {t.clinicAddress}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={clinicAddress}
+                    onChange={(e) => setClinicAddress(e.target.value)}
+                    placeholder={t.clinicAddressPlaceholder}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {t.workingHours}
+                  </label>
+                  <input
+                    type="text"
+                    value={clinicHours}
+                    onChange={(e) => setClinicHours(e.target.value)}
+                    placeholder={t.clinicHoursPlaceholder}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingClinic(false)}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-400"
+                  >
+                    {t.cancel}
+                  </button>
+                  <button
+                    id="btn-save-clinic-location"
+                    type="submit"
+                    className="px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-xs"
+                  >
+                    {t.updateClinicLocation}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="space-y-2 text-xs">
+                <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
+                    <span>{currentUser.hospitalOrClinic || 'Primary Practice Clinic'}</span>
+                    {currentUser.clinicCity && (
+                      <span className="text-sky-600 dark:text-sky-400 text-[11px]">
+                        📍 {currentUser.clinicCity}
+                      </span>
+                    )}
+                  </div>
+                  {currentUser.clinicAddress && (
+                    <div className="text-slate-600 dark:text-slate-400 flex items-center gap-1.5">
+                      <MapPin size={13} className="text-rose-500" />
+                      <span>{currentUser.clinicAddress}</span>
+                    </div>
+                  )}
+                  {currentUser.clinicWorkingHours && (
+                    <div className="text-slate-500 text-[11px] flex items-center gap-1.5">
+                      <Clock size={12} />
+                      <span>{currentUser.clinicWorkingHours}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 5. FOLLOWED SPECIALISTS MANAGEMENT */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">

@@ -13,6 +13,7 @@ import {
   CheckCheck,
   ChevronDown,
   UserCheck,
+  Bell,
 } from 'lucide-react';
 import { UserAccount, Language, ThemeMode } from '../types';
 import { translations } from '../i18n/translations';
@@ -27,6 +28,8 @@ interface HeaderProps {
   onRequestAuth: () => void;
   onSwitchUser?: (user: UserAccount) => void;
   availableUsers?: UserAccount[];
+  unreadNotificationsCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,6 +41,8 @@ export const Header: React.FC<HeaderProps> = ({
   onRequestAuth,
   onSwitchUser,
   availableUsers = [],
+  unreadNotificationsCount = 0,
+  onOpenNotifications,
 }) => {
   const t = translations[lang];
   const [isRolePickerOpen, setIsRolePickerOpen] = useState(false);
@@ -188,6 +193,22 @@ export const Header: React.FC<HeaderProps> = ({
               FR
             </button>
           </div>
+
+          {/* Notifications Center Bell */}
+          <button
+            id="header-notifications-btn"
+            type="button"
+            onClick={onOpenNotifications}
+            className="relative p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
+            title={t.notificationsTitle}
+          >
+            <Bell size={15} />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-rose-500 text-white rounded-full text-[9px] font-extrabold flex items-center justify-center ring-2 ring-white dark:ring-slate-900 animate-pulse">
+                {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+              </span>
+            )}
+          </button>
 
           {/* Theme toggle */}
           <button

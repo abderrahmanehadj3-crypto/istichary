@@ -1,9 +1,9 @@
 import React from 'react';
-import { MessageSquare, User, ShieldCheck, Heart } from 'lucide-react';
+import { MessageSquare, User, ShieldCheck, Heart, MapPin } from 'lucide-react';
 import { Language, UserAccount } from '../types';
 import { translations } from '../i18n/translations';
 
-export type NavTab = 'consultations' | 'followed' | 'profile' | 'admin';
+export type NavTab = 'consultations' | 'nearby' | 'followed' | 'profile' | 'admin';
 
 interface BottomNavProps {
   activeTab: NavTab;
@@ -35,6 +35,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       badge: consultationsBadge,
     },
     {
+      id: 'nearby',
+      label: t.navNearby,
+      icon: MapPin,
+      badge: 0,
+    },
+    {
       id: 'followed',
       label: t.navFollowed,
       icon: Heart,
@@ -61,7 +67,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     <nav
       id="bottom-navigation-bar"
       aria-label="Main Navigation"
-      className="fixed sm:sticky bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-4 py-2 shadow-lg"
+      className="fixed sm:sticky bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 shadow-lg"
     >
       <div className="max-w-md mx-auto flex items-center justify-around">
         {tabs.map((tab) => {
@@ -74,7 +80,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               id={`nav-tab-${tab.id}`}
               type="button"
               onClick={() => onSelectTab(tab.id)}
-              className={`relative flex flex-col items-center justify-center py-1 px-3 rounded-2xl transition-all duration-150 cursor-pointer ${
+              className={`relative flex flex-col items-center justify-center py-1 px-2.5 sm:px-3 rounded-2xl transition-all duration-150 cursor-pointer ${
                 isActive
                   ? 'text-sky-600 dark:text-sky-400 font-bold'
                   : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
@@ -100,7 +106,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               </div>
 
               <span
-                className={`text-[11px] tracking-tight mt-0.5 transition-all ${
+                className={`text-[10px] sm:text-[11px] tracking-tight mt-0.5 whitespace-nowrap transition-all ${
                   isActive
                     ? 'font-bold text-sky-700 dark:text-sky-400'
                     : 'font-medium text-slate-500 dark:text-slate-400'

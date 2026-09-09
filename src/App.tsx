@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   Heart,
   MessageSquare,
+  MapPin,
+  Star,
 } from 'lucide-react';
 import {
   UserAccount,
@@ -22,11 +24,13 @@ import {
   DoctorProfile,
   ConsultationPost,
   ConsultationComment,
+  AppNotification,
 } from './types';
 import {
   MOCK_USERS,
   MOCK_DOCTORS,
   MOCK_POSTS,
+  INITIAL_NOTIFICATIONS,
   mockPatientUser,
 } from './data/mockData';
 import { Header } from './components/Header';
@@ -34,14 +38,30 @@ import { BottomNav, NavTab } from './components/BottomNav';
 import { PublicConsultationsView } from './components/PublicConsultationsView';
 import { FollowedView } from './components/FollowedView';
 import { ProfileView } from './components/ProfileView';
+import { NearbyDoctorsView } from './components/NearbyDoctorsView';
 import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
 import { AuthModal } from './components/AuthModal';
+import { NotificationsCenterModal } from './components/NotificationsCenterModal';
+import { RateDoctorModal } from './components/RateDoctorModal';
 import { translations } from './i18n/translations';
 
 export default function App() {
-  // Multilingual & Theme
-  const [lang, setLang] = useState<Language>('en');
-  const [theme, setTheme] = useState<ThemeMode>('light');
+  // Multilingual & Theme with localStorage persistence to prevent falling back to English
+  const [lang, setLang] = useState<Language>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_lang');
+      if (saved === 'en' || saved === 'ar' || saved === 'fr') return saved;
+    } catch (e) {}
+    return 'en';
+  });
+
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch (e) {}
+    return 'light';
+  });
 
   // Navigation State
   const [activeTab, setActiveTab] = useState<NavTab>('consultations');
@@ -54,6 +74,19 @@ export default function App() {
   // Doctors and Public Consultations
   const [doctors, setDoctors] = useState<DoctorProfile[]>(MOCK_DOCTORS);
   const [posts, setPosts] = useState<ConsultationPost[]>(MOCK_POSTS);
+
+  // Notifications State
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_notifications');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return INITIAL_NOTIFICATIONS;
+  });
+  const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
+
+  // Doctor Star Rating Modal State
+  const [ratingModalDoctor, setRatingModalDoctor] = useState<DoctorProfile | null>(null);
 
   // Responsive Frame toggle for desktop preview
   const [isPhoneFrame, setIsPhoneFrame] = useState(true);
@@ -68,14 +101,27 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Sync HTML direction attribute for Arabic (RTL)
+  // Sync HTML direction attribute for Arabic (RTL) and French/English (LTR)
   useEffect(() => {
     if (lang === 'ar') {
       document.documentElement.dir = 'rtl';
+      document.documentElement.lang = 'ar';
+    } else if (lang === 'fr') {
+      document.documentElement.dir = 'ltr';
+      document.documentElement.lang = 'fr';
     } else {
       document.documentElement.dir = 'ltr';
+      document.documentElement.lang = 'en';
     }
   }, [lang]);
+
+  // Persist language
+  const handleLanguageChange = (newLang: Language) => {
+    setLang(newLang);
+    try {
+      localStorage.setItem('istichary_lang', newLang);
+    } catch (e) {}
+  };
 
   // Sync Dark class to document element
   useEffect(() => {
@@ -84,14 +130,53 @@ export default function App() {
     } else {
       document.documentElement.classList.remove('dark');
     }
+    try {
+      localStorage.setItem('istichary_theme', theme);
+    } catch (e) {}
   }, [theme]);
+
+  // Sync notifications to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('istichary_notifications', JSON.stringify(notifications));
+    } catch (e) {}
+  }, [notifications]);
 
   // Toggle Theme
   const handleThemeToggle = () => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
-  // Follow / Unfollow Doctor
+  // Unread Notifications Count
+  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
+
+  const handleMarkAllNotificationsAsRead = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    showToast(t.markAllAsRead);
+  };
+
+  const handleClearAllNotifications = () => {
+    setNotifications([]);
+    showToast(t.clearAllNotifications);
+  };
+
+  const handleSelectNotification = (notif: AppNotification) => {
+    // Mark this specific notification as read
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
+    );
+    setIsNotificationsModalOpen(false);
+
+    if (notif.postId) {
+      setActiveTab('consultations');
+    } else if (notif.type === 'follow') {
+      setActiveTab('followed');
+    } else if (notif.targetDoctorId) {
+      setActiveTab('nearby');
+    }
+  };
+
+  // Follow / Unfollow Doctor with Notification Creation
   const handleToggleFollowDoctor = (doctorId: string) => {
     if (!currentUser) {
       setIsAuthModalOpen(true);
@@ -107,7 +192,21 @@ export default function App() {
       showToast('Specialist unfollowed.');
     } else {
       updatedFollowed = [...currentFollowed, doctorId];
-      showToast('Specialist followed! You will see their answers highlighted.');
+      const doc = doctors.find((d) => d.id === doctorId);
+      showToast(`Now following Dr. ${doc?.realName || doc?.username} (${doc?.specialty})`);
+
+      // Alert in Notifications Center
+      const newNotif: AppNotification = {
+        id: `notif-follow-${Date.now()}`,
+        type: 'follow',
+        actorUsername: currentUser.username,
+        actorRole: currentUser.role,
+        targetDoctorId: doctorId,
+        message: `You started following Dr. ${doc?.realName || doc?.username} (${doc?.specialty}).`,
+        timestamp: 'Just now',
+        isRead: false,
+      };
+      setNotifications((prev) => [newNotif, ...prev]);
     }
 
     const updatedUser: UserAccount = {
@@ -119,13 +218,81 @@ export default function App() {
     setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
   };
 
+  // Doctor Star Rating Submission
+  const handleSubmitDoctorRating = (doctorId: string, stars: number, feedback?: string) => {
+    setDoctors((prev) =>
+      prev.map((doc) => {
+        if (doc.id === doctorId) {
+          const oldTotal = doc.rating * doc.reviewCount;
+          const newReviewCount = doc.reviewCount + 1;
+          const newRating = Number(((oldTotal + stars) / newReviewCount).toFixed(1));
+          return {
+            ...doc,
+            rating: newRating,
+            reviewCount: newReviewCount,
+          };
+        }
+        return doc;
+      })
+    );
+
+    const doc = doctors.find((d) => d.id === doctorId);
+    showToast(t.ratingSuccess);
+
+    // Track interaction notification in Notifications Center
+    const newNotif: AppNotification = {
+      id: `notif-rate-${Date.now()}`,
+      type: 'rating',
+      actorUsername: currentUser?.username || 'Patient',
+      actorRole: currentUser?.role || 'patient',
+      targetDoctorId: doctorId,
+      stars,
+      message: `Verified consultation rating: ${stars} Stars submitted for Dr. ${
+        doc?.realName || doc?.username
+      } (${doc?.specialty}). ${feedback ? `"${feedback}"` : ''}`,
+      timestamp: 'Just now',
+      isRead: false,
+    };
+    setNotifications((prev) => [newNotif, ...prev]);
+  };
+
+  // Like / Heart Consultation Post with Interaction Notification
+  const handleLikePost = (postId: string) => {
+    setPosts((prev) =>
+      prev.map((p) => {
+        if (p.id === postId) {
+          return {
+            ...p,
+            likesCount: (p.likesCount || 0) + 1,
+          };
+        }
+        return p;
+      })
+    );
+
+    const post = posts.find((p) => p.id === postId);
+    showToast('Consultation inquiry upvoted.');
+
+    const newNotif: AppNotification = {
+      id: `notif-like-${Date.now()}`,
+      type: 'like',
+      actorUsername: currentUser?.username || 'Patient',
+      actorRole: currentUser?.role || 'patient',
+      postId,
+      message: `Someone appreciated clinical inquiry: "${post?.title ? post.title.slice(0, 35) + '...' : 'Medical Post'}"`,
+      timestamp: 'Just now',
+      isRead: false,
+    };
+    setNotifications((prev) => [newNotif, ...prev]);
+  };
+
   // Add Consultation Post
   const handleAddPost = (newPost: ConsultationPost) => {
     setPosts((prev) => [newPost, ...prev]);
     showToast(t.inquiryPublishedSuccess);
   };
 
-  // Add Comment / Doctor Response to a Post
+  // Add Comment / Doctor Response to a Post with Notification Alert
   const handleAddComment = (postId: string, newComment: ConsultationComment) => {
     setPosts((prev) =>
       prev.map((p) => {
@@ -138,19 +305,82 @@ export default function App() {
         return p;
       })
     );
+
     showToast(newComment.authorRole === 'doctor' ? t.doctorReplySentSuccess : 'Reply submitted.');
+
+    // Alert in Notifications Center for doctor replies
+    if (newComment.authorRole === 'doctor') {
+      const newNotif: AppNotification = {
+        id: `notif-reply-${Date.now()}`,
+        type: 'reply',
+        actorUsername: newComment.authorUsername,
+        actorRealName: newComment.authorRealName,
+        actorRole: newComment.authorRole,
+        actorSpecialty: newComment.authorSpecialty,
+        postId,
+        message: `Certified specialist Dr. ${
+          newComment.authorRealName || newComment.authorUsername
+        } (${newComment.authorSpecialty || 'Specialist'}) published medical guidance.`,
+        timestamp: 'Just now',
+        isRead: false,
+      };
+      setNotifications((prev) => [newNotif, ...prev]);
+    }
+  };
+
+  // STRICT RULE: ONLY VERIFIED DOCTORS CAN SET CLINIC LOCATION
+  const handleUpdateClinicLocation = (clinicData: {
+    hospitalOrClinic: string;
+    clinicCity: string;
+    clinicAddress: string;
+    clinicWorkingHours: string;
+    clinicPhone: string;
+  }) => {
+    if (!currentUser || currentUser.role !== 'doctor' || currentUser.verificationStatus !== 'verified') {
+      showToast(t.onlyVerifiedDoctorsCanSetLocation);
+      return;
+    }
+
+    const updatedUser: UserAccount = {
+      ...currentUser,
+      hospitalOrClinic: clinicData.hospitalOrClinic,
+      clinicCity: clinicData.clinicCity,
+      clinicAddress: clinicData.clinicAddress,
+      clinicWorkingHours: clinicData.clinicWorkingHours,
+      clinicPhone: clinicData.clinicPhone,
+    };
+
+    setCurrentUser(updatedUser);
+    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+
+    // Sync into doctors catalog so nearby filter immediately reflects it
+    setDoctors((prev) =>
+      prev.map((d) => {
+        if (d.userId === currentUser.id || d.username === currentUser.username) {
+          return {
+            ...d,
+            hospitalOrClinic: clinicData.hospitalOrClinic,
+            clinicCity: clinicData.clinicCity,
+            clinicAddress: clinicData.clinicAddress,
+            clinicWorkingHours: clinicData.clinicWorkingHours,
+            clinicPhone: clinicData.clinicPhone,
+          };
+        }
+        return d;
+      })
+    );
+
+    showToast(t.clinicUpdatedSuccess);
   };
 
   // Update Email with strict privacy
   const handleUpdateEmail = (newEmail: string, passwordConfirm: string) => {
     if (!currentUser) return { success: false, error: 'User not signed in.' };
 
-    // Validate current password if password exists
     if (currentUser.password && currentUser.password !== passwordConfirm) {
       return { success: false, error: 'Incorrect password confirmation.' };
     }
 
-    // Check email uniqueness
     const exists = users.some(
       (u) => u.id !== currentUser.id && u.email.toLowerCase() === newEmail.toLowerCase()
     );
@@ -200,7 +430,6 @@ export default function App() {
     setUsers((prev) => prev.filter((u) => u.id !== userId));
     setDoctors((prev) => prev.filter((d) => d.userId !== userId && d.id !== userId));
 
-    // Anonymize user comments & posts
     setPosts((prev) =>
       prev.map((p) => ({
         ...p,
@@ -230,7 +459,6 @@ export default function App() {
     setCurrentUser(updatedUser);
     setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
 
-    // Also update doctors mock profile
     setDoctors((prev) =>
       prev.map((d) => (d.userId === currentUser.id ? { ...d, showRealName: show } : d))
     );
@@ -363,14 +591,16 @@ export default function App() {
           </div>
         )}
 
-        {/* Clean Header */}
+        {/* Clean Header with Language Switcher and Notifications Bell */}
         <Header
           currentUser={currentUser}
           lang={lang}
           theme={theme}
-          onLanguageChange={setLang}
+          onLanguageChange={handleLanguageChange}
           onThemeToggle={handleThemeToggle}
           onRequestAuth={() => setIsAuthModalOpen(true)}
+          unreadNotificationsCount={unreadNotificationsCount}
+          onOpenNotifications={() => setIsNotificationsModalOpen(true)}
           onSwitchUser={(user) => {
             setCurrentUser(user);
             showToast(`Switched to test user: ${user.username} (${user.role})`);
@@ -392,10 +622,27 @@ export default function App() {
               onAddComment={handleAddComment}
               onApplyPenalty={handleApplyPenalty}
               onRequestAuth={() => setIsAuthModalOpen(true)}
+              doctors={doctors}
+              onOpenRatingModal={setRatingModalDoctor}
+              onLikePost={handleLikePost}
             />
           )}
 
-          {/* TAB 2: Followed Doctors & Specialists */}
+          {/* TAB 2: Strictly Restricted Nearby Doctors (Verified clinic locations only) */}
+          {activeTab === 'nearby' && (
+            <NearbyDoctorsView
+              doctors={doctors}
+              currentUser={currentUser}
+              lang={lang}
+              followedDoctorIds={currentUser?.followingDoctorIds || []}
+              onToggleFollow={handleToggleFollowDoctor}
+              onOpenRatingModal={setRatingModalDoctor}
+              onNavigateToProfileClinic={() => setActiveTab('profile')}
+              onRequestAuth={() => setIsAuthModalOpen(true)}
+            />
+          )}
+
+          {/* TAB 3: Followed Doctors & Specialists */}
           {activeTab === 'followed' && (
             <FollowedView
               followedDoctorIds={currentUser?.followingDoctorIds || []}
@@ -409,14 +656,14 @@ export default function App() {
             />
           )}
 
-          {/* TAB 3: Profile & Account Management */}
+          {/* TAB 4: Profile & Account Management */}
           {activeTab === 'profile' && (
             <ProfileView
               currentUser={currentUser}
               doctors={doctors}
               lang={lang}
               theme={theme}
-              onLanguageChange={setLang}
+              onLanguageChange={handleLanguageChange}
               onThemeToggle={handleThemeToggle}
               onSignOut={() => {
                 setCurrentUser(null);
@@ -430,10 +677,11 @@ export default function App() {
               onUnfollowDoctor={handleToggleFollowDoctor}
               onSimulateInactivity={handleSimulateInactivity}
               onClearModerationPenalty={handleClearModerationPenalty}
+              onUpdateClinicLocation={handleUpdateClinicLocation}
             />
           )}
 
-          {/* TAB 4: Admin & Moderator Verification Governance */}
+          {/* TAB 5: Admin & Moderator Verification Governance */}
           {activeTab === 'admin' && (
             <AdminModeratorDashboard
               currentUser={currentUser}
@@ -453,6 +701,26 @@ export default function App() {
           currentUser={currentUser}
           consultationsBadge={posts.length}
           pendingVerifBadge={pendingDocsCount}
+        />
+
+        {/* Notifications & Interactions Center Modal */}
+        <NotificationsCenterModal
+          isOpen={isNotificationsModalOpen}
+          onClose={() => setIsNotificationsModalOpen(false)}
+          notifications={notifications}
+          lang={lang}
+          onMarkAllAsRead={handleMarkAllNotificationsAsRead}
+          onClearAll={handleClearAllNotifications}
+          onNotificationClick={handleSelectNotification}
+        />
+
+        {/* Doctor Star Rating Modal */}
+        <RateDoctorModal
+          isOpen={ratingModalDoctor !== null}
+          doctor={ratingModalDoctor}
+          lang={lang}
+          onClose={() => setRatingModalDoctor(null)}
+          onSubmitRating={handleSubmitDoctorRating}
         />
 
         {/* Authentication Modal */}
@@ -479,6 +747,8 @@ export default function App() {
               reviewCount: 0,
               experienceYears: docDetails.experienceYears || 5,
               hospitalOrClinic: newDocUser.hospitalOrClinic || 'Health Center',
+              clinicCity: newDocUser.clinicCity || 'Paris',
+              clinicAddress: newDocUser.clinicAddress || '',
               medicalLicenseNumber: newDocUser.medicalLicenseNumber || 'PENDING',
               verificationStatus: 'pending',
               about: docDetails.about || 'Specialist physician.',

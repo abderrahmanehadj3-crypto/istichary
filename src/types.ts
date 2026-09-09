@@ -33,6 +33,14 @@ export interface UserAccount {
   verificationStatus?: VerificationStatus;
   medicalLicenseNumber?: string;
   hospitalOrClinic?: string;
+  
+  // Strictly restricted clinic location fields (ONLY editable by verified doctors)
+  clinicCity?: string;
+  clinicAddress?: string;
+  clinicRegion?: string;
+  clinicWorkingHours?: string;
+  clinicPhone?: string;
+
   verificationDocuments?: VerificationDocument[]; // Accessible ONLY by Super Admin & Moderators
   rejectionReason?: string;
   
@@ -76,14 +84,29 @@ export interface DoctorProfile {
   verificationStatus: VerificationStatus;
   medicalLicenseNumber: string;
   hospitalOrClinic: string;
+  clinicCity?: string;
+  clinicAddress?: string;
+  clinicRegion?: string;
+  clinicWorkingHours?: string;
+  clinicPhone?: string;
   experienceYears: number;
   about: string;
   education?: string;
-  rating: number;
+  rating: number; // Star rating (1 to 5)
   reviewCount: number;
   followersCount?: number;
   verificationDocuments?: VerificationDocument[];
   rejectionReason?: string;
+}
+
+export interface DoctorRating {
+  id: string;
+  doctorId: string;
+  patientId: string;
+  patientUsername: string;
+  stars: number; // 1 to 5
+  feedback?: string;
+  createdAt: string;
 }
 
 export interface ConsultationComment {
@@ -100,6 +123,8 @@ export interface ConsultationComment {
   content: string;
   timestamp: string;
   isDoctorRecommendation?: boolean;
+  likesCount?: number;
+  likedByUserIds?: string[];
 }
 
 export interface ConsultationPost {
@@ -114,6 +139,8 @@ export interface ConsultationPost {
   createdAt: string;
   comments: ConsultationComment[];
   isClosed?: boolean;
+  likesCount?: number;
+  likedByUserIds?: string[];
 }
 
 export interface ModerationResult {
@@ -121,4 +148,24 @@ export interface ModerationResult {
   penaltyType: 'none' | 'restricted_48h' | 'banned';
   reason: string;
   matchedCategory?: 'abusive_language' | 'off_topic' | 'spam';
+}
+
+export type NotificationType = 'follow' | 'reply' | 'rating' | 'like' | 'moderation';
+
+export interface AppNotification {
+  id: string;
+  recipientUserId?: string;
+  type: NotificationType;
+  actorUsername: string;
+  actorRealName?: string;
+  actorRole: UserRole;
+  actorSpecialty?: string;
+  title?: string;
+  message: string;
+  targetPostId?: string;
+  postId?: string;
+  targetDoctorId?: string;
+  stars?: number;
+  timestamp: string;
+  isRead: boolean;
 }

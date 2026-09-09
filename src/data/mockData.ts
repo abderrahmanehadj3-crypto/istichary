@@ -4,6 +4,7 @@ import {
   ConsultationPost,
   UserAccount,
   VerificationDocument,
+  AppNotification,
 } from '../types';
 
 export const SPECIALIZATIONS: Specialization[] = [
@@ -77,6 +78,11 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'verified',
     medicalLicenseNumber: 'MD-8392-CARD',
     hospitalOrClinic: 'Metropolitan Heart & Vascular Institute',
+    clinicCity: 'Paris',
+    clinicAddress: '18 Boulevard Saint-Germain, 75005 Paris',
+    clinicRegion: 'Île-de-France',
+    clinicWorkingHours: 'Mon - Fri: 08:30 - 17:00',
+    clinicPhone: '+33 1 42 68 00 24',
     experienceYears: 14,
     rating: 4.9,
     reviewCount: 328,
@@ -115,6 +121,11 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'verified',
     medicalLicenseNumber: 'MD-4109-NEUR',
     hospitalOrClinic: 'Neurological Clinical Institute',
+    clinicCity: 'Lyon',
+    clinicAddress: '42 Avenue Jean Jaurès, 69007 Lyon',
+    clinicRegion: 'Auvergne-Rhône-Alpes',
+    clinicWorkingHours: 'Tue - Sat: 09:00 - 18:00',
+    clinicPhone: '+33 4 78 52 11 90',
     experienceYears: 18,
     rating: 4.95,
     reviewCount: 284,
@@ -144,6 +155,11 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'verified',
     medicalLicenseNumber: 'MD-1198-DERM',
     hospitalOrClinic: 'Pavilion of Clinical Dermatology',
+    clinicCity: 'Paris',
+    clinicAddress: '5 Place de l’Opéra, 75009 Paris',
+    clinicRegion: 'Île-de-France',
+    clinicWorkingHours: 'Mon - Thu: 09:00 - 17:30',
+    clinicPhone: '+33 1 47 42 09 88',
     experienceYears: 15,
     rating: 4.92,
     reviewCount: 390,
@@ -173,21 +189,26 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'verified',
     medicalLicenseNumber: 'MD-6671-PED',
     hospitalOrClinic: 'Children Health Pediatric Center',
+    clinicCity: 'Algiers',
+    clinicAddress: '12 Rue Didouche Mourad, Alger Centre',
+    clinicRegion: 'Algiers Province',
+    clinicWorkingHours: 'Sun - Thu: 08:30 - 16:30',
+    clinicPhone: '+213 21 73 44 20',
     experienceYears: 12,
     rating: 4.88,
     reviewCount: 412,
     followersCount: 1250,
     about: 'Compassionate pediatrician providing clinical guidance for infant health, childhood fever triage, developmental milestones, and pediatric immunology.',
-    education: 'Faculty of Medicine • Necker Enfants Malades Fellowship',
+    education: 'Algiers Faculty of Medicine • Pediatric Teaching Hospital',
     verificationDocuments: [
       {
         id: 'doc-verif-5',
-        title: 'Pediatric Medical Practitioner Board License',
+        title: 'National Pediatric Order Certificate',
         type: 'medical_license',
         fileName: 'License_Mansouri_MD6671.pdf',
         fileSize: '1.9 MB',
-        uploadedAt: '2024-03-12',
-        previewNote: 'Verified Active Specialist • Pediatric Board',
+        uploadedAt: '2024-02-18',
+        previewNote: 'Official Certified Pediatric Board Registration',
       },
     ],
   },
@@ -202,6 +223,11 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'verified',
     medicalLicenseNumber: 'MD-9023-GP',
     hospitalOrClinic: 'Family Internal Medicine Clinic',
+    clinicCity: 'Casablanca',
+    clinicAddress: '88 Boulevard d’Anfa, Casablanca',
+    clinicRegion: 'Casablanca-Settat',
+    clinicWorkingHours: 'Mon - Fri: 09:00 - 18:00',
+    clinicPhone: '+212 522 39 40 50',
     experienceYears: 16,
     rating: 4.91,
     reviewCount: 520,
@@ -231,6 +257,10 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'pending',
     medicalLicenseNumber: 'MD-5542-ORTH',
     hospitalOrClinic: 'National Orthopedic Hospital',
+    clinicCity: 'Marseille',
+    clinicAddress: '27 Rue de la République, 13002 Marseille',
+    clinicRegion: 'Provence-Alpes-Côte d’Azur',
+    clinicWorkingHours: 'Mon - Thu: 08:00 - 16:00',
     experienceYears: 9,
     rating: 0,
     reviewCount: 0,
@@ -269,6 +299,10 @@ export const MOCK_DOCTORS: DoctorProfile[] = [
     verificationStatus: 'pending',
     medicalLicenseNumber: 'MD-7821-PSYC',
     hospitalOrClinic: 'Center for Behavioral Health',
+    clinicCity: 'Tunis',
+    clinicAddress: '15 Avenue Habib Bourguiba, Tunis',
+    clinicRegion: 'Tunis Governorate',
+    clinicWorkingHours: 'Mon - Fri: 09:30 - 17:00',
     experienceYears: 11,
     rating: 0,
     reviewCount: 0,
@@ -303,6 +337,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
       'For the past 4 days, I have experienced brief fluttering in my chest approximately 20 minutes after drinking coffee and starting my light treadmill walk. No acute chest pain or dizziness, but pulse jumps to ~115 bpm. Should I withhold caffeine immediately and what diagnostic test is prioritized?',
     urgency: 'medium',
     createdAt: '2 hours ago',
+    likesCount: 14,
+    likedByUserIds: ['user-patient-2', 'user-doc-5'],
     comments: [
       {
         id: 'comm-1',
@@ -319,6 +355,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
           'Hello @sarah_k. As a board-certified cardiologist, I advise you to temporarily eliminate caffeine and avoid high-intensity workouts until you obtain a resting 12-lead ECG. Palpitations during post-caffeine exertion can be benign premature ventricular contractions (PVCs) or supraventricular tachycardias. Please monitor if symptoms occur alongside lightheadedness, chest tightness, or shortness of breath.',
         timestamp: '1 hour ago',
         isDoctorRecommendation: true,
+        likesCount: 28,
+        likedByUserIds: ['user-patient-1', 'user-patient-2', 'user-patient-3'],
       },
       {
         id: 'comm-2',
@@ -329,6 +367,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
         content:
           'Thank you Dr. Chen. I do not have shortness of breath or dizziness, but I will withhold coffee completely starting today and book a resting 12-lead ECG at my local clinic as you suggested.',
         timestamp: '45 mins ago',
+        likesCount: 5,
+        likedByUserIds: ['user-doc-1'],
       },
       {
         id: 'comm-3',
@@ -345,6 +385,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
           'Agreeing with Dr. Chen. Also check your daily hydration and electrolyte levels (potassium and magnesium), as mild dehydration combined with caffeine can significantly heighten adrenergic sensitivity.',
         timestamp: '25 mins ago',
         isDoctorRecommendation: true,
+        likesCount: 16,
+        likedByUserIds: ['user-patient-1'],
       },
     ],
   },
@@ -359,6 +401,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
       'Noticed this 2cm coin-shaped red scaly lesion on my left arm 10 days ago. It has a slightly elevated border and itches mildly in warm showers. No known contact allergies. Should I apply over-the-counter hydrocortisone cream?',
     urgency: 'low',
     createdAt: '5 hours ago',
+    likesCount: 8,
+    likedByUserIds: ['user-patient-1'],
     comments: [
       {
         id: 'comm-4',
@@ -375,6 +419,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
           'Greetings @alex_m. A circular erythematous lesion with an elevated border and central clearing is characteristic of Tinea Corporis (fungal ringworm) or nummular eczema. Do NOT apply over-the-counter corticosteroid creams (such as hydrocortisone) without an in-person scraping, as topical steroids can mask and worsen fungal infections (tinea incognito). Keep the area clean, dry, and evaluated by a dermatologist.',
         timestamp: '3 hours ago',
         isDoctorRecommendation: true,
+        likesCount: 22,
+        likedByUserIds: ['user-patient-2', 'user-patient-3'],
       },
     ],
   },
@@ -389,6 +435,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
       'My 14-month-old toddler is drooling and pulling at gums, but suddenly developed a temperature of 38.5°C (101.3°F). Is a fever this high standard for teething alone or does it require medical examination?',
     urgency: 'high',
     createdAt: '1 day ago',
+    likesCount: 19,
+    likedByUserIds: ['user-patient-1', 'user-patient-4'],
     comments: [
       {
         id: 'comm-5',
@@ -405,6 +453,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
           'Hello @nora_b. Teething alone rarely causes a true fever above 38.0°C. While drooling and swollen gums are common, a fever of 38.5°C usually indicates an accompanying viral infection or otitis media. Ensure adequate hydration, check for ear-tugging or rashes, and use pediatric paracetamol strictly per weight dosage. If the child is lethargic, refuses fluids, or fever persists >48 hours, seek urgent in-person pediatric evaluation.',
         timestamp: '20 hours ago',
         isDoctorRecommendation: true,
+        likesCount: 34,
+        likedByUserIds: ['user-patient-3'],
       },
     ],
   },
@@ -419,6 +469,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
       'Experienced zig-zag shimmering lights in my left eye for 20 minutes, followed by an intense throbbing pain on the right side of my head with photophobia and nausea. First time this has happened.',
     urgency: 'medium',
     createdAt: '2 days ago',
+    likesCount: 12,
+    likedByUserIds: ['user-patient-2'],
     comments: [
       {
         id: 'comm-6',
@@ -435,6 +487,8 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
           'Hello @omar_health. The scintillant visual phenomenon you describe is a classic migraine aura (scintillating scotoma), typically followed by unilateral throbbing headache. Since this is your first episode, a comprehensive neurological exam is recommended to establish an official diagnosis and rule out secondary vascular etiologies. Rest in a dark, quiet room and maintain a symptom log.',
         timestamp: '1 day ago',
         isDoctorRecommendation: true,
+        likesCount: 18,
+        likedByUserIds: ['user-patient-4'],
       },
     ],
   },
@@ -442,6 +496,82 @@ export const INITIAL_CONSULTATION_POSTS: ConsultationPost[] = [
 
 export const MOCK_CONSULTATIONS = INITIAL_CONSULTATION_POSTS;
 export const MOCK_POSTS = INITIAL_CONSULTATION_POSTS;
+
+export const INITIAL_NOTIFICATIONS: AppNotification[] = [
+  {
+    id: 'notif-1',
+    recipientUserId: 'user-patient-1', // @sarah_k
+    type: 'reply',
+    actorUsername: '@dr_sarah_chen',
+    actorRole: 'doctor',
+    actorSpecialty: 'Cardiologist',
+    title: 'New Clinical Guidance',
+    message: 'Dr. Sarah Chen replied with recommendations to your inquiry "Persistent palpitations after morning espresso".',
+    targetPostId: 'post-101',
+    timestamp: '1 hour ago',
+    isRead: false,
+  },
+  {
+    id: 'notif-2',
+    recipientUserId: 'user-patient-1', // @sarah_k
+    type: 'reply',
+    actorUsername: '@dr_tariq_alnoor',
+    actorRole: 'doctor',
+    actorSpecialty: 'General Physician',
+    title: 'Specialist Evaluation',
+    message: 'Dr. Tariq Al-Noor provided hydration and electrolyte advice on your inquiry.',
+    targetPostId: 'post-101',
+    timestamp: '25 mins ago',
+    isRead: false,
+  },
+  {
+    id: 'notif-3',
+    recipientUserId: 'user-patient-1', // @sarah_k
+    type: 'like',
+    actorUsername: '@alex_m',
+    actorRole: 'patient',
+    title: 'Consultation Engagement',
+    message: '@alex_m found your public medical consultation relevant and marked it helpful.',
+    targetPostId: 'post-101',
+    timestamp: '3 hours ago',
+    isRead: true,
+  },
+  {
+    id: 'notif-4',
+    recipientUserId: 'user-doc-1', // @dr_sarah_chen
+    type: 'follow',
+    actorUsername: '@sarah_k',
+    actorRole: 'patient',
+    title: 'New Follower',
+    message: '@sarah_k started following your verified cardiology profile.',
+    timestamp: '2 hours ago',
+    isRead: false,
+  },
+  {
+    id: 'notif-5',
+    recipientUserId: 'user-doc-1', // @dr_sarah_chen
+    type: 'rating',
+    actorUsername: '@sarah_k',
+    actorRole: 'patient',
+    title: 'New Patient Star Rating',
+    message: '@sarah_k submitted a ⭐⭐⭐⭐⭐ 5-star clinical rating: "Very thorough explanation regarding resting ECG."',
+    stars: 5,
+    timestamp: '30 mins ago',
+    isRead: false,
+  },
+  {
+    id: 'notif-6',
+    recipientUserId: 'user-doc-1', // @dr_sarah_chen
+    type: 'like',
+    actorUsername: '@nora_b',
+    actorRole: 'patient',
+    title: 'Clinical Feedback',
+    message: '@nora_b marked your cardiology guidance as clinically helpful.',
+    targetPostId: 'post-101',
+    timestamp: '4 hours ago',
+    isRead: true,
+  },
+];
 
 export const mockSuperAdminUser: UserAccount = {
   id: 'user-super-admin',
@@ -451,13 +581,13 @@ export const mockSuperAdminUser: UserAccount = {
   lastLoginDate: new Date().toISOString(),
   isDeactivatedInactive: false,
   moderationStatus: 'active',
-  followingDoctorIds: ['doc-1', 'doc-2', 'doc-3'],
+  followingDoctorIds: ['doc-1', 'doc-2'],
 };
 
 export const mockModeratorUser: UserAccount = {
-  id: 'user-moderator-1',
+  id: 'user-mod-1',
   username: '@mod_health_review',
-  email: 'moderator.credentials.team@medshield.net',
+  email: 'moderator.clinical@medshield.net',
   role: 'moderator',
   lastLoginDate: new Date().toISOString(),
   isDeactivatedInactive: false,
@@ -468,21 +598,21 @@ export const mockModeratorUser: UserAccount = {
 export const mockPatientUser: UserAccount = {
   id: 'user-patient-1',
   username: '@sarah_k',
-  email: 'private.sarah.records@medshield.net', // STRICTLY PRIVATE
+  email: 'sarah.k@privatehealth.net',
   role: 'patient',
-  password: 'password123',
+  password: 'Password123!',
   lastLoginDate: new Date().toISOString(),
   isDeactivatedInactive: false,
   moderationStatus: 'active',
-  followingDoctorIds: ['doc-1', 'doc-3'], // Follows Dr. Sarah Chen & Dr. Elena Rostova
+  followingDoctorIds: ['doc-1'],
 };
 
 export const mockDoctorUser: UserAccount = {
   id: 'user-doc-1',
   username: '@dr_sarah_chen',
-  email: 'confidential.license.drchen@medshield.net', // STRICTLY PRIVATE
+  email: 'sarah.chen@cardiology.institute.org',
   role: 'doctor',
-  password: 'password123',
+  password: 'DoctorPass456!',
   realName: 'Dr. Sarah Chen, MD',
   showRealName: true,
   specialty: 'Cardiologist',
@@ -490,29 +620,23 @@ export const mockDoctorUser: UserAccount = {
   verificationStatus: 'verified',
   medicalLicenseNumber: 'MD-8392-CARD',
   hospitalOrClinic: 'Metropolitan Heart & Vascular Institute',
+  clinicCity: 'Paris',
+  clinicAddress: '18 Boulevard Saint-Germain, 75005 Paris',
+  clinicRegion: 'Île-de-France',
+  clinicWorkingHours: 'Mon - Fri: 08:30 - 17:00',
+  clinicPhone: '+33 1 42 68 00 24',
   lastLoginDate: new Date().toISOString(),
   isDeactivatedInactive: false,
   moderationStatus: 'active',
-  followingDoctorIds: ['doc-2'],
-  verificationDocuments: [
-    {
-      id: 'doc-verif-1',
-      title: 'National Board of Cardiology Certificate',
-      type: 'medical_license',
-      fileName: 'License_Cert_MD8392CARD.pdf',
-      fileSize: '2.4 MB',
-      uploadedAt: '2024-01-15',
-      previewNote: 'Verified Active License • Validated against National Medical Council Register',
-    },
-  ],
+  followingDoctorIds: [],
 };
 
 export const mockPendingDoctorUser: UserAccount = {
   id: 'user-doc-pending-1',
   username: '@dr_youssef_benali',
-  email: 'confidential.license.benali@medshield.net',
+  email: 'youssef.benali@orthopedics.org',
   role: 'doctor',
-  password: 'password123',
+  password: 'PendingDoc789!',
   realName: 'Dr. Youssef Benali',
   showRealName: true,
   specialty: 'Orthopedic Surgeon',
@@ -520,35 +644,20 @@ export const mockPendingDoctorUser: UserAccount = {
   verificationStatus: 'pending',
   medicalLicenseNumber: 'MD-5542-ORTH',
   hospitalOrClinic: 'National Orthopedic Hospital',
+  clinicCity: 'Marseille',
+  clinicAddress: '27 Rue de la République, 13002 Marseille',
+  clinicRegion: 'Provence-Alpes-Côte d’Azur',
+  clinicWorkingHours: 'Mon - Thu: 08:00 - 16:00',
   lastLoginDate: new Date().toISOString(),
   isDeactivatedInactive: false,
   moderationStatus: 'active',
-  verificationDocuments: [
-    {
-      id: 'doc-verif-pending-1',
-      title: 'National Orthopedic Board Diploma & License',
-      type: 'medical_license',
-      fileName: 'Benali_Orthopedic_License_2026.pdf',
-      fileSize: '3.8 MB',
-      uploadedAt: '2026-09-08',
-      previewNote: 'Pending Review • Awaiting Moderator Board Verification of Seal and Registry ID',
-    },
-    {
-      id: 'doc-verif-pending-2',
-      title: 'Physicians Council Official Identification Card',
-      type: 'council_id',
-      fileName: 'National_Council_ID_Benali.jpg',
-      fileSize: '1.4 MB',
-      uploadedAt: '2026-09-08',
-      previewNote: 'Government Physician ID card awaiting document verification',
-    },
-  ],
+  followingDoctorIds: [],
 };
 
 export const MOCK_USERS: UserAccount[] = [
-  mockSuperAdminUser,
-  mockModeratorUser,
   mockPatientUser,
   mockDoctorUser,
   mockPendingDoctorUser,
+  mockModeratorUser,
+  mockSuperAdminUser,
 ];

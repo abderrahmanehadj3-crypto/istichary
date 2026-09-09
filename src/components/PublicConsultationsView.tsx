@@ -21,6 +21,7 @@ import {
   Heart,
   MessageCircle,
   Share2,
+  Star,
 } from 'lucide-react';
 import {
   ConsultationPost,
@@ -28,6 +29,7 @@ import {
   UserAccount,
   Language,
   SpecializationId,
+  DoctorProfile,
 } from '../types';
 import { translations } from '../i18n/translations';
 import { SPECIALIZATIONS, MOCK_DOCTORS } from '../data/mockData';
@@ -44,6 +46,9 @@ interface PublicConsultationsViewProps {
   onAddComment: (postId: string, comment: ConsultationComment) => void;
   onApplyPenalty: (penaltyType: 'banned' | 'restricted_48h', reason: string) => void;
   onRequestAuth: () => void;
+  doctors?: DoctorProfile[];
+  onOpenRatingModal?: (doctor: DoctorProfile) => void;
+  onLikePost?: (postId: string) => void;
 }
 
 export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = ({
@@ -56,6 +61,9 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
   onAddComment,
   onApplyPenalty,
   onRequestAuth,
+  doctors = MOCK_DOCTORS,
+  onOpenRatingModal,
+  onLikePost,
 }) => {
   const t = translations[lang];
   const [selectedSpecialty, setSelectedSpecialty] = useState<SpecializationId | 'followed'>('all');
@@ -494,11 +502,23 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 
                 {/* Discussion Thread Stats / Expand Toggle */}
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-700/60 text-xs">
-                  <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 font-medium">
-                    <MessageCircle size={14} className="text-sky-600" />
-                    <span>
-                      {post.comments.length} {post.comments.length === 1 ? 'Specialist Response' : 'Clinical Responses'}
-                    </span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      id={`btn-like-post-${post.id}`}
+                      type="button"
+                      onClick={() => onLikePost && onLikePost(post.id)}
+                      className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 transition cursor-pointer"
+                    >
+                      <Heart size={14} className={post.likesCount ? 'fill-rose-500 text-rose-500' : ''} />
+                      <span>{post.likesCount || 0}</span>
+                    </button>
+
+                    <div className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400 font-medium">
+                      <MessageCircle size={14} className="text-sky-600" />
+                      <span>
+                        {post.comments.length} {post.comments.length === 1 ? 'Specialist Response' : 'Clinical Responses'}
+                      </span>
+                    </div>
                   </div>
 
                   <button
@@ -523,6 +543,15 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                       <div className="space-y-2.5">
                         {post.comments.map((comment) => {
                           const isDocComment = comment.authorRole === 'doctor';
+                          const docProfile = isDocComment
+                            ? (doctors || MOCK_DOCTORS).find(
+                                (d) =>
+                                  d.id === comment.authorDoctorId ||
+                                  d.userId === comment.authorId ||
+                                  d.username === comment.authorUsername
+                              )
+                            : null;
+
                           // Check if followed
                           const isFollowed =
                             comment.authorDoctorId &&
@@ -570,6 +599,20 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                                         </span>
                                       )}
 
+                                      {/* DOCTOR STAR RATING SYSTEM DISPLAY */}
+                                      {isDocComment && docProfile && (
+                                        <div
+                                          id={`comment-doc-rating-${comment.id}`}
+                                          className="flex items-center gap-1 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-800 text-[10px] font-bold text-amber-800 dark:text-amber-300"
+                                        >
+                                          <Star size={10} className="fill-amber-400 text-amber-500" />
+                                          <span>{docProfile.rating.toFixed(1)}</span>
+                                          <span className="text-[9px] text-amber-600/80 font-normal">
+                                            ({docProfile.reviewCount})
+                                          </span>
+                                        </div>
+                                      )}
+
                                       {comment.authorLicenseNumber && (
                                         <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
                                           {comment.authorLicenseNumber}
@@ -584,37 +627,59 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                                   </div>
                                 </div>
 
-                                {/* 4. FOLLOW FEATURE BUTTON ON DOCTOR RESPONSE */}
-                                {isDocComment && comment.authorDoctorId && (
-                                  <button
-                                    id={`btn-follow-doctor-${comment.authorDoctorId}`}
-                                    type="button"
-                                    onClick={() => {
-                                      if (!currentUser) {
-                                        onRequestAuth();
-                                      } else {
-                                        onToggleFollowDoctor(comment.authorDoctorId!);
-                                      }
-                                    }}
-                                    className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
-                                      isFollowed
-                                        ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
-                                        : 'bg-white dark:bg-slate-800 hover:bg-slate-100 text-sky-700 dark:text-sky-300 border border-slate-200 dark:border-slate-700'
-                                    }`}
-                                  >
-                                    {isFollowed ? (
-                                      <>
-                                        <UserCheck size={12} className="text-amber-600 dark:text-amber-400" />
-                                        <span>{t.followingDoctor}</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <UserPlus size={12} className="text-sky-600 dark:text-sky-400" />
-                                        <span>{t.followDoctor}</span>
-                                      </>
-                                    )}
-                                  </button>
-                                )}
+                                <div className="flex items-center gap-1.5">
+                                  {/* 1. RATE DOCTOR BUTTON */}
+                                  {isDocComment && docProfile && onOpenRatingModal && (
+                                    <button
+                                      id={`btn-rate-doc-${docProfile.id}`}
+                                      type="button"
+                                      onClick={() => {
+                                        if (!currentUser) {
+                                          onRequestAuth();
+                                        } else {
+                                          onOpenRatingModal(docProfile);
+                                        }
+                                      }}
+                                      className="px-2 py-1 rounded-xl text-[11px] font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 border border-amber-200 dark:border-amber-800 transition flex items-center gap-1 cursor-pointer"
+                                      title="Rate Doctor"
+                                    >
+                                      <Star size={11} className="fill-amber-400 text-amber-500" />
+                                      <span>{t.rateDoctor}</span>
+                                    </button>
+                                  )}
+
+                                  {/* 4. FOLLOW FEATURE BUTTON ON DOCTOR RESPONSE */}
+                                  {isDocComment && comment.authorDoctorId && (
+                                    <button
+                                      id={`btn-follow-doctor-${comment.authorDoctorId}`}
+                                      type="button"
+                                      onClick={() => {
+                                        if (!currentUser) {
+                                          onRequestAuth();
+                                        } else {
+                                          onToggleFollowDoctor(comment.authorDoctorId!);
+                                        }
+                                      }}
+                                      className={`px-2.5 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1 cursor-pointer ${
+                                        isFollowed
+                                          ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
+                                          : 'bg-white dark:bg-slate-800 hover:bg-slate-100 text-sky-700 dark:text-sky-300 border border-slate-200 dark:border-slate-700'
+                                      }`}
+                                    >
+                                      {isFollowed ? (
+                                        <>
+                                          <UserCheck size={12} className="text-amber-600 dark:text-amber-400" />
+                                          <span>{t.followingDoctor}</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <UserPlus size={12} className="text-sky-600 dark:text-sky-400" />
+                                          <span>{t.followDoctor}</span>
+                                        </>
+                                      )}
+                                    </button>
+                                  )}
+                                </div>
                               </div>
 
                               {/* Comment Content */}
