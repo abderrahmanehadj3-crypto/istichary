@@ -1,3 +1,41 @@
+export type Language = 'en' | 'ar' | 'fr';
+export type ThemeMode = 'light' | 'dark';
+
+export type UserRole = 'patient' | 'doctor';
+
+export type VerificationStatus = 'verified' | 'pending' | 'rejected';
+
+export type ModerationStatus = 'active' | 'restricted_48h' | 'banned';
+
+export interface UserAccount {
+  id: string;
+  username: string; // e.g. "@alex_m" or "@dr_vance"
+  email: string; // STRICTLY PRIVATE: Never displayed publicly to other users
+  role: UserRole;
+  password?: string;
+  // Doctor-specific fields
+  realName?: string; // Doctor's optional real name displayed alongside/above username
+  showRealName?: boolean;
+  specialty?: string;
+  specializationId?: SpecializationId;
+  verificationStatus?: VerificationStatus;
+  medicalLicenseNumber?: string;
+  medicalCertificateFile?: string; // name of uploaded document
+  clinicName?: string;
+  clinicAddress?: string;
+  clinicCity?: string;
+  clinicLat?: number;
+  clinicLng?: number;
+  consultationFee?: number;
+  // Inactivity tracking
+  lastLoginDate: string; // ISO string
+  isDeactivatedInactive: boolean; // Auto-flagged after 12 months of inactivity
+  // AI Moderation & Auto-Penalties
+  moderationStatus: ModerationStatus;
+  restrictionExpiresAt?: string; // ISO string for 48h restriction
+  penaltyReason?: string;
+}
+
 export type SpecializationId =
   | 'all'
   | 'cardiology'
@@ -17,19 +55,27 @@ export interface Specialization {
   description: string;
 }
 
-export interface Doctor {
+export interface DoctorProfile {
   id: string;
-  name: string;
-  title: string;
+  userId: string;
+  username: string;
+  realName?: string;
+  showRealName: boolean;
   specialty: string;
   specializationId: SpecializationId;
-  avatar: string;
+  verificationStatus: VerificationStatus;
+  medicalLicenseNumber: string;
+  medicalCertificateFile?: string;
   rating: number;
   reviewCount: number;
   experienceYears: number;
   patientsCount: number;
-  hospital: string;
-  location: string;
+  clinicName: string;
+  clinicAddress: string;
+  clinicCity: string;
+  clinicLat: number;
+  clinicLng: number;
+  distanceKm?: number;
   about: string;
   consultationFee: number;
   isAvailableToday: boolean;
@@ -46,10 +92,11 @@ export type ConsultationType = 'video' | 'voice' | 'clinic';
 export interface Appointment {
   id: string;
   doctorId: string;
-  doctorName: string;
+  doctorUsername: string;
+  doctorRealName?: string;
   doctorSpecialty: string;
-  doctorAvatar: string;
-  hospital: string;
+  clinicName: string;
+  clinicAddress: string;
   date: string;
   time: string;
   type: ConsultationType;
@@ -58,39 +105,37 @@ export interface Appointment {
   patientNotes?: string;
 }
 
-export interface ChatMessage {
+export interface ConsultationComment {
   id: string;
-  sender: 'patient' | 'doctor';
-  text: string;
+  postId: string;
+  authorId: string;
+  authorUsername: string;
+  authorRole: UserRole;
+  authorRealName?: string;
+  isVerifiedDoctor?: boolean;
+  authorSpecialty?: string;
+  content: string;
   timestamp: string;
-  isPrescription?: boolean;
+  isDoctorRecommendation?: boolean;
 }
 
-export interface ChatThread {
+export interface ConsultationPost {
   id: string;
-  doctorId: string;
-  doctorName: string;
-  doctorSpecialty: string;
-  doctorAvatar: string;
-  isOnline: boolean;
-  unreadCount: number;
-  lastMessage: string;
-  lastMessageTime: string;
-  messages: ChatMessage[];
+  authorId: string;
+  authorUsername: string;
+  authorRole: 'patient';
+  title: string;
+  specializationId: SpecializationId;
+  description: string;
+  urgency: 'low' | 'medium' | 'high';
+  createdAt: string;
+  comments: ConsultationComment[];
+  isClosed?: boolean;
 }
 
-export interface PatientProfile {
-  name: string;
-  greetingName: string;
-  age: number;
-  bloodType: string;
-  height: string;
-  weight: string;
-  allergies: string[];
-  chronicConditions: string[];
-  emergencyContact: {
-    name: string;
-    relationship: string;
-    phone: string;
-  };
+export interface ModerationResult {
+  allowed: boolean;
+  penaltyType: 'none' | 'restricted_48h' | 'banned';
+  reason: string;
+  matchedCategory?: 'abusive_language' | 'off_topic' | 'spam';
 }
