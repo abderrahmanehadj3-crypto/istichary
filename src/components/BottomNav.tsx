@@ -1,57 +1,67 @@
 import React from 'react';
-import { Home, MessageSquare, Compass, User } from 'lucide-react';
-import { Language } from '../types';
+import { MessageSquare, User, ShieldCheck, Heart } from 'lucide-react';
+import { Language, UserAccount } from '../types';
 import { translations } from '../i18n/translations';
 
-export type NavTab = 'home' | 'consultations' | 'near_you' | 'profile';
+export type NavTab = 'consultations' | 'followed' | 'profile' | 'admin';
 
 interface BottomNavProps {
   activeTab: NavTab;
   onSelectTab: (tab: NavTab) => void;
   lang: Language;
+  currentUser: UserAccount | null;
   consultationsBadge?: number;
+  pendingVerifBadge?: number;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
   activeTab,
   onSelectTab,
   lang,
+  currentUser,
   consultationsBadge = 0,
+  pendingVerifBadge = 0,
 }) => {
   const t = translations[lang];
 
-  const tabs = [
+  const hasAdminAccess =
+    currentUser?.role === 'super_admin' || currentUser?.role === 'moderator';
+
+  const tabs: Array<{ id: NavTab; label: string; icon: any; badge: number }> = [
     {
-      id: 'home' as NavTab,
-      label: t.navHome,
-      icon: Home,
-      badge: 0,
-    },
-    {
-      id: 'consultations' as NavTab,
+      id: 'consultations',
       label: t.navConsultations,
       icon: MessageSquare,
       badge: consultationsBadge,
     },
     {
-      id: 'near_you' as NavTab,
-      label: t.navNearYou,
-      icon: Compass,
-      badge: 0,
+      id: 'followed',
+      label: t.navFollowed,
+      icon: Heart,
+      badge: currentUser?.followingDoctorIds?.length || 0,
     },
     {
-      id: 'profile' as NavTab,
+      id: 'profile',
       label: t.navProfile,
       icon: User,
       badge: 0,
     },
   ];
 
+  if (hasAdminAccess) {
+    tabs.push({
+      id: 'admin',
+      label: t.navAdmin,
+      icon: ShieldCheck,
+      badge: pendingVerifBadge,
+    });
+  }
+
   return (
     <nav
       id="bottom-navigation-bar"
       aria-label="Main Navigation"
-      className="fixed sm:sticky bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-sky-100/80 dark:border-slate-800 px-4 py-2 shadow-lg"
+      className="fixed sm:sticky bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-4 py-2 shadow-lg"
     >
       <div className="max-w-md mx-auto flex items-center justify-around">
         {tabs.map((tab) => {
@@ -79,10 +89,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   <Icon className="w-5 h-5" />
                 </div>
 
-                {tab.badge > 0 && (
+                {tab.badge > 0 && tab.id === 'admin' && (
                   <span
                     id={`nav-badge-${tab.id}`}
-                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-sky-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs ring-2 ring-white dark:ring-slate-900"
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs ring-2 ring-white dark:ring-slate-900"
                   >
                     {tab.badge}
                   </span>
@@ -98,10 +108,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               >
                 {tab.label}
               </span>
-
-              {isActive && (
-                <span className="w-1.5 h-1.5 bg-sky-600 dark:bg-sky-400 rounded-full mt-0.5 shadow-xs" />
-              )}
             </button>
           );
         })}

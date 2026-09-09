@@ -1,11 +1,21 @@
 export type Language = 'en' | 'ar' | 'fr';
 export type ThemeMode = 'light' | 'dark';
 
-export type UserRole = 'patient' | 'doctor';
+export type UserRole = 'patient' | 'doctor' | 'moderator' | 'super_admin';
 
 export type VerificationStatus = 'verified' | 'pending' | 'rejected';
 
 export type ModerationStatus = 'active' | 'restricted_48h' | 'banned';
+
+export interface VerificationDocument {
+  id: string;
+  title: string;
+  type: 'medical_license' | 'board_diploma' | 'council_id' | 'identity_proof';
+  fileName: string;
+  fileSize: string;
+  uploadedAt: string;
+  previewNote: string;
+}
 
 export interface UserAccount {
   id: string;
@@ -13,26 +23,26 @@ export interface UserAccount {
   email: string; // STRICTLY PRIVATE: Never displayed publicly to other users
   role: UserRole;
   password?: string;
+  followingDoctorIds?: string[]; // IDs of doctors followed by this user
+  
   // Doctor-specific fields
-  realName?: string; // Doctor's optional real name displayed alongside/above username
+  realName?: string;
   showRealName?: boolean;
-  specialty?: string;
+  specialty?: string; // MANDATORY: Every doctor's specialty is explicitly defined
   specializationId?: SpecializationId;
   verificationStatus?: VerificationStatus;
   medicalLicenseNumber?: string;
-  medicalCertificateFile?: string; // name of uploaded document
-  clinicName?: string;
-  clinicAddress?: string;
-  clinicCity?: string;
-  clinicLat?: number;
-  clinicLng?: number;
-  consultationFee?: number;
-  // Inactivity tracking
+  hospitalOrClinic?: string;
+  verificationDocuments?: VerificationDocument[]; // Accessible ONLY by Super Admin & Moderators
+  rejectionReason?: string;
+  
+  // Inactivity tracking (12-month rule)
   lastLoginDate: string; // ISO string
-  isDeactivatedInactive: boolean; // Auto-flagged after 12 months of inactivity
+  isDeactivatedInactive: boolean;
+  
   // AI Moderation & Auto-Penalties
   moderationStatus: ModerationStatus;
-  restrictionExpiresAt?: string; // ISO string for 48h restriction
+  restrictionExpiresAt?: string;
   penaltyReason?: string;
 }
 
@@ -61,48 +71,19 @@ export interface DoctorProfile {
   username: string;
   realName?: string;
   showRealName: boolean;
-  specialty: string;
+  specialty: string; // MANDATORY: prominently displayed
   specializationId: SpecializationId;
   verificationStatus: VerificationStatus;
   medicalLicenseNumber: string;
-  medicalCertificateFile?: string;
+  hospitalOrClinic: string;
+  experienceYears: number;
+  about: string;
+  education?: string;
   rating: number;
   reviewCount: number;
-  experienceYears: number;
-  patientsCount: number;
-  clinicName: string;
-  clinicAddress: string;
-  clinicCity: string;
-  clinicLat: number;
-  clinicLng: number;
-  distanceKm?: number;
-  about: string;
-  consultationFee: number;
-  isAvailableToday: boolean;
-  nextAvailable: string;
-  availableDates: string[];
-  timeSlots: string[];
-  languages: string[];
-  education: string;
-  services: string[];
-}
-
-export type ConsultationType = 'video' | 'voice' | 'clinic';
-
-export interface Appointment {
-  id: string;
-  doctorId: string;
-  doctorUsername: string;
-  doctorRealName?: string;
-  doctorSpecialty: string;
-  clinicName: string;
-  clinicAddress: string;
-  date: string;
-  time: string;
-  type: ConsultationType;
-  status: 'upcoming' | 'completed' | 'cancelled';
-  fee: number;
-  patientNotes?: string;
+  followersCount?: number;
+  verificationDocuments?: VerificationDocument[];
+  rejectionReason?: string;
 }
 
 export interface ConsultationComment {
@@ -113,7 +94,9 @@ export interface ConsultationComment {
   authorRole: UserRole;
   authorRealName?: string;
   isVerifiedDoctor?: boolean;
-  authorSpecialty?: string;
+  authorSpecialty?: string; // MANDATORY: prominently displayed on every doctor reply
+  authorLicenseNumber?: string;
+  authorDoctorId?: string;
   content: string;
   timestamp: string;
   isDoctorRecommendation?: boolean;
