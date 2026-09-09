@@ -67,9 +67,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     <nav
       id="bottom-navigation-bar"
       aria-label="Main Navigation"
-      className="fixed sm:sticky bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-2 sm:px-4 py-2 shadow-lg"
+      className="lg:hidden fixed bottom-0 left-0 right-0 z-30 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200/90 dark:border-slate-800 px-2 sm:px-4 py-2 shadow-lg safe-area-inset-bottom"
     >
-      <div className="max-w-md mx-auto flex items-center justify-around">
+      <div className="max-w-lg mx-auto flex items-center justify-around">
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -80,7 +80,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
               id={`nav-tab-${tab.id}`}
               type="button"
               onClick={() => onSelectTab(tab.id)}
-              className={`relative flex flex-col items-center justify-center py-1 px-2.5 sm:px-3 rounded-2xl transition-all duration-150 cursor-pointer ${
+              className={`relative min-h-[44px] flex flex-col items-center justify-center py-1 px-3 rounded-2xl transition-all duration-150 cursor-pointer ${
                 isActive
                   ? 'text-sky-600 dark:text-sky-400 font-bold'
                   : 'text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300'
