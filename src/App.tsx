@@ -43,6 +43,7 @@ import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
 import { AuthModal } from './components/AuthModal';
 import { NotificationsCenterModal } from './components/NotificationsCenterModal';
 import { RateDoctorModal } from './components/RateDoctorModal';
+import { AdminVercelLink } from './components/AdminVercelLink';
 import { translations, getTranslations } from './i18n/translations';
 
 export default function App() {
@@ -614,14 +615,17 @@ export default function App() {
           <span className="font-bold text-sky-700 dark:text-sky-400">Istichary</span>
           <span>• Minimalist Medical Consultations</span>
         </div>
-        <button
-          id="btn-toggle-phone-frame"
-          onClick={() => setIsPhoneFrame(!isPhoneFrame)}
-          className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 font-medium transition cursor-pointer"
-        >
-          {isPhoneFrame ? <Maximize2 size={13} /> : <Smartphone size={13} />}
-          <span>{isPhoneFrame ? 'Full Width View' : 'Mobile Frame'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <AdminVercelLink variant="badge" currentUser={currentUser} />
+          <button
+            id="btn-toggle-phone-frame"
+            onClick={() => setIsPhoneFrame(!isPhoneFrame)}
+            className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 font-medium transition cursor-pointer"
+          >
+            {isPhoneFrame ? <Maximize2 size={13} /> : <Smartphone size={13} />}
+            <span>{isPhoneFrame ? 'Full View' : 'Mobile Frame'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Container / Mobile Device Frame */}
@@ -827,6 +831,13 @@ export default function App() {
           }}
         />
       </div>
+
+      {/* Subtle & Discreet Layout Footer */}
+      <footer className="w-full max-w-md py-2.5 text-center text-[10px] text-slate-400/70 dark:text-slate-500/70 flex items-center justify-center gap-2 select-none">
+        <span>Istichary Medical Platform</span>
+        <span className="opacity-40">•</span>
+        <AdminVercelLink variant="footer" currentUser={currentUser} />
+      </footer>
     </div>
   );
 }

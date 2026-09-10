@@ -17,6 +17,7 @@ import { Language, UserAccount } from '../types';
 import { translations } from '../i18n/translations';
 import { NavTab } from './BottomNav';
 import { RoleAvatar } from './RoleAvatar';
+import { AdminVercelLink } from './AdminVercelLink';
 
 interface DesktopSidebarProps {
   activeTab: NavTab;
@@ -260,7 +261,11 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
         </div>
 
         <div className="px-1 text-[10px] text-slate-400 dark:text-slate-500 flex items-center justify-between">
-          <span>Istichary v2.4</span>
+          <div className="flex items-center gap-2">
+            <span>Istichary v2.4</span>
+            <span className="text-slate-300 dark:text-slate-700">•</span>
+            <AdminVercelLink variant="footer" currentUser={currentUser} />
+          </div>
           <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
             <CheckCircle2 size={11} /> 100% Verified
           </span>

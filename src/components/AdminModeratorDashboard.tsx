@@ -28,6 +28,7 @@ import {
 } from '../types';
 import { translations } from '../i18n/translations';
 import { RoleAvatar } from './RoleAvatar';
+import { AdminVercelLink } from './AdminVercelLink';
 
 interface AdminModeratorDashboardProps {
   currentUser: UserAccount | null;
@@ -170,6 +171,9 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
           </div>
         </div>
       </div>
+
+      {/* External Vercel Admin Console */}
+      <AdminVercelLink variant="card" currentUser={currentUser} />
 
       {/* Admin Tab Navigation (Super Admin can see team/moderation) */}
       {isSuperAdmin && (
