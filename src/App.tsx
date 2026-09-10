@@ -74,13 +74,33 @@ export default function App() {
 
   // Doctors and Public Consultations
   const [doctors, setDoctors] = useState<DoctorProfile[]>(MOCK_DOCTORS);
-  const [posts, setPosts] = useState<ConsultationPost[]>(MOCK_POSTS);
+  const [posts, setPosts] = useState<ConsultationPost[]>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_posts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Exclude any legacy mock posts such as post-101..104
+          return parsed.filter((p: ConsultationPost) => !p.id?.startsWith('post-10'));
+        }
+      }
+    } catch (e) {}
+    return MOCK_POSTS;
+  });
 
   // Notifications State
   const [notifications, setNotifications] = useState<AppNotification[]>(() => {
     try {
       const saved = localStorage.getItem('istichary_notifications');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Exclude any legacy mock notifications referencing sample post-101
+          return parsed.filter(
+            (n: AppNotification) => !n.targetPostId?.startsWith('post-10') && !n.id?.startsWith('notif-')
+          );
+        }
+      }
     } catch (e) {}
     return INITIAL_NOTIFICATIONS;
   });
@@ -142,6 +162,13 @@ export default function App() {
       localStorage.setItem('istichary_notifications', JSON.stringify(notifications));
     } catch (e) {}
   }, [notifications]);
+
+  // Sync posts to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('istichary_posts', JSON.stringify(posts));
+    } catch (e) {}
+  }, [posts]);
 
   // Toggle Theme
   const handleThemeToggle = () => {

@@ -78,9 +78,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 }) => {
   const t = translations[lang];
   const [selectedSpecialty, setSelectedSpecialty] = useState<SpecializationId | 'followed'>('all');
-  const [expandedPostIds, setExpandedPostIds] = useState<Record<string, boolean>>({
-    'post-101': true,
-  });
+  const [expandedPostIds, setExpandedPostIds] = useState<Record<string, boolean>>({});
   const [isComposerOpen, setIsComposerOpen] = useState(false);
 
   // New Post Form State
