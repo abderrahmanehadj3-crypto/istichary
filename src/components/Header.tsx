@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   ShieldCheck,
   Globe,
@@ -11,8 +11,6 @@ import {
   Stethoscope,
   Crown,
   CheckCheck,
-  ChevronDown,
-  UserCheck,
   Bell,
 } from 'lucide-react';
 import { UserAccount, Language, ThemeMode } from '../types';
@@ -27,8 +25,6 @@ interface HeaderProps {
   onLanguageChange: (newLang: Language) => void;
   onThemeToggle: () => void;
   onRequestAuth: () => void;
-  onSwitchUser?: (user: UserAccount) => void;
-  availableUsers?: UserAccount[];
   unreadNotificationsCount?: number;
   onOpenNotifications?: () => void;
 }
@@ -40,13 +36,10 @@ export const Header: React.FC<HeaderProps> = ({
   onLanguageChange,
   onThemeToggle,
   onRequestAuth,
-  onSwitchUser,
-  availableUsers = [],
   unreadNotificationsCount = 0,
   onOpenNotifications,
 }) => {
   const t = translations[lang];
-  const [isRolePickerOpen, setIsRolePickerOpen] = useState(false);
 
   const isSuperAdmin = currentUser?.role === 'super_admin';
   const isModerator = currentUser?.role === 'moderator';
@@ -107,56 +100,8 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Right utility buttons: Demo Role Switcher, Language, Theme, Auth */}
+        {/* Right utility buttons: Language, Theme, Notifications */}
         <div className="flex items-center gap-2">
-          {/* Quick Demo Role Switcher Dropdown */}
-          {availableUsers.length > 0 && onSwitchUser && (
-            <div className="relative">
-              <button
-                id="header-role-switcher-btn"
-                type="button"
-                onClick={() => setIsRolePickerOpen(!isRolePickerOpen)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold border border-slate-200 dark:border-slate-700 transition cursor-pointer"
-                title="Switch test account role"
-              >
-                <UserCheck size={13} className="text-sky-600 dark:text-sky-400" />
-                <span className="hidden md:inline text-[11px]">Role</span>
-                <ChevronDown size={12} />
-              </button>
-
-              {isRolePickerOpen && (
-                <div className="absolute right-0 top-full mt-1.5 w-60 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 py-1.5 z-50 text-xs animate-in fade-in slide-in-from-top-1">
-                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100 dark:border-slate-700">
-                    Switch Test Account
-                  </div>
-                  {availableUsers.map((u) => {
-                    const isSelected = currentUser?.id === u.id;
-                    return (
-                      <button
-                        key={u.id}
-                        type="button"
-                        onClick={() => {
-                          onSwitchUser(u);
-                          setIsRolePickerOpen(false);
-                        }}
-                        className={`w-full px-3 py-2 text-start flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-700/60 transition ${
-                          isSelected ? 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 font-bold' : 'text-slate-700 dark:text-slate-300'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="font-semibold truncate">{u.username}</div>
-                          <div className="text-[10px] text-slate-400 capitalize">
-                            {u.role.replace('_', ' ')} {u.specialty ? `• ${u.specialty}` : ''}
-                          </div>
-                        </div>
-                        {isSelected && <span className="text-sky-600 text-xs font-bold">✓</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Language Selector */}
           <div className="flex items-center p-0.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-bold">

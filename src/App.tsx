@@ -5,11 +5,6 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  Wifi,
-  Battery,
-  Signal,
-  Smartphone,
-  Maximize2,
   CheckCircle2,
   AlertTriangle,
   Heart,
@@ -26,13 +21,7 @@ import {
   ConsultationComment,
   AppNotification,
 } from './types';
-import {
-  MOCK_USERS,
-  MOCK_DOCTORS,
-  MOCK_POSTS,
-  INITIAL_NOTIFICATIONS,
-  mockPatientUser,
-} from './data/mockData';
+import { supabase } from './supabaseClient';
 import { Header } from './components/Header';
 import { BottomNav, NavTab } from './components/BottomNav';
 import { PublicConsultationsView } from './components/PublicConsultationsView';
@@ -67,25 +56,71 @@ export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState<NavTab>('consultations');
 
-  // Authentication State
-  const [users, setUsers] = useState<UserAccount[]>(MOCK_USERS);
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(mockPatientUser);
+  // Authentication State - Purged of hardcoded mock accounts (No fake "Sarah")
+  const [users, setUsers] = useState<UserAccount[]>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_users');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(
+            (u: UserAccount) =>
+              u.id !== 'user-patient-1' &&
+              u.username !== '@sarah_k' &&
+              !u.id?.startsWith('user-doc-') &&
+              !u.id?.startsWith('user-mod-')
+          );
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
+
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_user');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (
+          parsed &&
+          parsed.id &&
+          parsed.id !== 'user-patient-1' &&
+          parsed.username !== '@sarah_k'
+        ) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return null;
+  });
+
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  // Doctors and Public Consultations
-  const [doctors, setDoctors] = useState<DoctorProfile[]>(MOCK_DOCTORS);
+  // Doctors and Public Consultations - Clean database state
+  const [doctors, setDoctors] = useState<DoctorProfile[]>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_doctors');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((d: DoctorProfile) => !d.id?.startsWith('doc-1') && !d.id?.startsWith('doc-2') && !d.id?.startsWith('doc-3') && !d.id?.startsWith('doc-4') && !d.id?.startsWith('doc-5') && !d.id?.startsWith('doc-pending-'));
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
+
   const [posts, setPosts] = useState<ConsultationPost[]>(() => {
     try {
       const saved = localStorage.getItem('istichary_posts');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          // Exclude any legacy mock posts such as post-101..104
           return parsed.filter((p: ConsultationPost) => !p.id?.startsWith('post-10'));
         }
       }
     } catch (e) {}
-    return MOCK_POSTS;
+    return [];
   });
 
   // Notifications State
@@ -95,22 +130,18 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          // Exclude any legacy mock notifications referencing sample post-101
           return parsed.filter(
             (n: AppNotification) => !n.targetPostId?.startsWith('post-10') && !n.id?.startsWith('notif-')
           );
         }
       }
     } catch (e) {}
-    return INITIAL_NOTIFICATIONS;
+    return [];
   });
   const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
 
   // Doctor Star Rating Modal State
   const [ratingModalDoctor, setRatingModalDoctor] = useState<DoctorProfile | null>(null);
-
-  // Responsive Frame toggle for desktop preview
-  const [isPhoneFrame, setIsPhoneFrame] = useState(true);
 
   // Toast alert
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -121,6 +152,82 @@ export default function App() {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
+
+  // Sync Supabase Auth Session
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        const u = session.user;
+        const meta = u.user_metadata || {};
+        const account: UserAccount = {
+          id: u.id,
+          username: meta.username || (u.email ? `@${u.email.split('@')[0]}` : '@user'),
+          email: u.email || '',
+          role: meta.role || 'patient',
+          lastLoginDate: new Date().toISOString(),
+          isDeactivatedInactive: false,
+          moderationStatus: 'active',
+          followingDoctorIds: [],
+          realName: meta.realName,
+          showRealName: meta.showRealName,
+          specialty: meta.specialty,
+          specializationId: meta.specializationId,
+          medicalLicenseNumber: meta.medicalLicenseNumber,
+          hospitalOrClinic: meta.hospitalOrClinic,
+          verificationStatus: meta.verificationStatus || (meta.role === 'doctor' ? 'pending' : undefined),
+        };
+        setCurrentUser(account);
+        setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const u = session.user;
+        const meta = u.user_metadata || {};
+        const account: UserAccount = {
+          id: u.id,
+          username: meta.username || (u.email ? `@${u.email.split('@')[0]}` : '@user'),
+          email: u.email || '',
+          role: meta.role || 'patient',
+          lastLoginDate: new Date().toISOString(),
+          isDeactivatedInactive: false,
+          moderationStatus: 'active',
+          followingDoctorIds: [],
+          realName: meta.realName,
+          showRealName: meta.showRealName,
+          specialty: meta.specialty,
+          specializationId: meta.specializationId,
+          medicalLicenseNumber: meta.medicalLicenseNumber,
+          hospitalOrClinic: meta.hospitalOrClinic,
+          verificationStatus: meta.verificationStatus || (meta.role === 'doctor' ? 'pending' : undefined),
+        };
+        setCurrentUser(account);
+        setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Persist Current User
+  useEffect(() => {
+    if (currentUser) {
+      localStorage.setItem('istichary_user', JSON.stringify(currentUser));
+    } else {
+      localStorage.removeItem('istichary_user');
+    }
+  }, [currentUser]);
+
+  // Persist Users
+  useEffect(() => {
+    localStorage.setItem('istichary_users', JSON.stringify(users));
+  }, [users]);
+
+  // Persist Doctors
+  useEffect(() => {
+    localStorage.setItem('istichary_doctors', JSON.stringify(doctors));
+  }, [doctors]);
 
   // Sync HTML direction attribute for Arabic (RTL) and French/English (LTR)
   useEffect(() => {
@@ -634,49 +741,26 @@ export default function App() {
   return (
     <div
       id="app-root"
-      className="min-h-screen bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 flex flex-col items-center justify-start p-0 sm:p-4 transition-colors duration-200"
+      className="min-h-screen bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 flex flex-col items-center justify-start p-2 sm:p-4 transition-colors duration-200"
     >
-      {/* Desktop Responsive Toolbar */}
-      <div className="w-full max-w-md hidden sm:flex items-center justify-between pb-2 text-xs text-slate-500 dark:text-slate-400">
+      {/* Top Brand Bar */}
+      <div className="w-full max-w-3xl flex items-center justify-between pb-3 pt-1 text-xs text-slate-500 dark:text-slate-400">
         <div className="flex items-center gap-2">
-          <span className="font-bold text-sky-700 dark:text-sky-400">Istichary</span>
-          <span>• Minimalist Medical Consultations</span>
+          <span className="font-extrabold text-sm text-sky-700 dark:text-sky-400 tracking-tight">
+            Istichary
+          </span>
+          <span>• Minimalist Telehealth & Consultations</span>
         </div>
         <div className="flex items-center gap-2">
           <AdminVercelLink variant="badge" currentUser={currentUser} />
-          <button
-            id="btn-toggle-phone-frame"
-            onClick={() => setIsPhoneFrame(!isPhoneFrame)}
-            className="flex items-center gap-1 hover:text-slate-800 dark:hover:text-slate-200 font-medium transition cursor-pointer"
-          >
-            {isPhoneFrame ? <Maximize2 size={13} /> : <Smartphone size={13} />}
-            <span>{isPhoneFrame ? 'Full View' : 'Mobile Frame'}</span>
-          </button>
         </div>
       </div>
 
-      {/* Main Container / Mobile Device Frame */}
+      {/* Main Responsive Application Container */}
       <div
         id="app-viewport-container"
-        className={`w-full bg-white dark:bg-slate-900 flex flex-col transition-all duration-300 relative ${
-          isPhoneFrame
-            ? 'sm:max-w-md sm:rounded-[36px] sm:shadow-2xl sm:border sm:border-slate-300 dark:sm:border-slate-800 sm:my-auto sm:min-h-[850px] overflow-hidden'
-            : 'max-w-3xl rounded-none sm:rounded-3xl shadow-none sm:shadow-xl sm:border sm:border-slate-200 dark:sm:border-slate-800 overflow-hidden'
-        }`}
+        className="w-full max-w-3xl bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col min-h-[85vh] overflow-hidden transition-all duration-300 relative"
       >
-        {/* Mobile Status Bar Simulation */}
-        <div
-          id="mobile-status-bar"
-          className="px-6 pt-3 pb-1 flex items-center justify-between text-[11px] font-semibold text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-900 select-none"
-        >
-          <span>9:41</span>
-          <div className="flex items-center gap-1.5">
-            <Signal size={12} />
-            <Wifi size={12} />
-            <Battery size={14} className="fill-current" />
-          </div>
-        </div>
-
         {/* Global Toast Notification */}
         {toastMessage && (
           <div
@@ -698,11 +782,6 @@ export default function App() {
           onRequestAuth={() => setIsAuthModalOpen(true)}
           unreadNotificationsCount={unreadNotificationsCount}
           onOpenNotifications={() => setIsNotificationsModalOpen(true)}
-          onSwitchUser={(user) => {
-            setCurrentUser(user);
-            showToast(`Switched to test user: ${user.username} (${user.role})`);
-          }}
-          availableUsers={users}
         />
 
         {/* Dynamic Body Content by Active Tab */}
@@ -766,8 +845,13 @@ export default function App() {
               theme={theme}
               onLanguageChange={handleLanguageChange}
               onThemeToggle={handleThemeToggle}
-              onSignOut={() => {
+              onSignOut={async () => {
+                try {
+                  await supabase.auth.signOut();
+                } catch (e) {}
+                localStorage.removeItem('istichary_user');
                 setCurrentUser(null);
+                setIsAuthModalOpen(true);
                 showToast('Signed out successfully.');
               }}
               onRequestAuth={() => setIsAuthModalOpen(true)}
@@ -824,21 +908,25 @@ export default function App() {
           onSubmitRating={handleSubmitDoctorRating}
         />
 
-        {/* Authentication Modal */}
+        {/* Strict Authentication Guard Modal */}
         <AuthModal
-          isOpen={isAuthModalOpen}
-          onClose={() => setIsAuthModalOpen(false)}
+          isOpen={isAuthModalOpen || !currentUser}
+          isMandatory={!currentUser}
+          onClose={() => {
+            if (currentUser) {
+              setIsAuthModalOpen(false);
+            }
+          }}
           lang={lang}
           existingUsers={users}
-         onAuthSuccess={(user) => {
-      if (!user.email || !user.email.includes('@')) {
-        return;
-      }
-      setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
-      setCurrentUser(user);
-      showToast(`Signed in as ${user.username}`);
-    }}
-
+          onAuthSuccess={(user) => {
+            if (!user.email || !user.email.includes('@')) {
+              return;
+            }
+            setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
+            setCurrentUser(user);
+            setIsAuthModalOpen(false);
+            showToast(`Signed in as ${user.username}`);
           }}
           onRegisterDoctor={(newDocUser, docDetails) => {
             const newDocProfile: DoctorProfile = {
@@ -865,8 +953,8 @@ export default function App() {
       </div>
 
       {/* Subtle & Discreet Layout Footer */}
-      <footer className="w-full max-w-md py-2.5 text-center text-[10px] text-slate-400/70 dark:text-slate-500/70 flex items-center justify-center gap-2 select-none">
-        <span>Istichary Medical Platform</span>
+      <footer className="w-full max-w-3xl py-3 text-center text-[11px] text-slate-400/80 dark:text-slate-500/80 flex items-center justify-center gap-2 select-none">
+        <span>Istichary Telehealth Portal</span>
         <span className="opacity-40">•</span>
         <AdminVercelLink variant="footer" currentUser={currentUser} />
       </footer>
