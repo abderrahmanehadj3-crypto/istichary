@@ -830,10 +830,15 @@ export default function App() {
           onClose={() => setIsAuthModalOpen(false)}
           lang={lang}
           existingUsers={users}
-          onAuthSuccess={(user) => {
-            setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
-            setCurrentUser(user);
-            showToast(`Signed in as ${user.username}`);
+         onAuthSuccess={(user) => {
+      if (!user.email || !user.email.includes('@')) {
+        return;
+      }
+      setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
+      setCurrentUser(user);
+      showToast(`Signed in as ${user.username}`);
+    }}
+
           }}
           onRegisterDoctor={(newDocUser, docDetails) => {
             const newDocProfile: DoctorProfile = {
