@@ -153,10 +153,10 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Sync Supabase Auth Session
+  // Sync Supabase Auth Session strictly from server
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (session?.user && !error) {
         const u = session.user;
         const meta = u.user_metadata || {};
         const account: UserAccount = {
@@ -178,10 +178,14 @@ export default function App() {
         };
         setCurrentUser(account);
         setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
+      } else {
+        // No valid server-side session: reset current user and purge any stale cached token
+        setCurrentUser(null);
+        localStorage.removeItem('istichary_user');
       }
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (session?.user) {
         const u = session.user;
         const meta = u.user_metadata || {};
@@ -204,6 +208,9 @@ export default function App() {
         };
         setCurrentUser(account);
         setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
+      } else if (event === 'SIGNED_OUT' || !session) {
+        setCurrentUser(null);
+        localStorage.removeItem('istichary_user');
       }
     });
 

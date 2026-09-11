@@ -82,7 +82,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     return clean;
   };
 
-  // Sign In Handler
+  // Sign In Handler - Strictly relies on Supabase server-side session
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -92,95 +92,75 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const emailOrUser = loginEmail.trim().toLowerCase();
     const pass = loginPassword;
 
-    try {
-      // 1. Attempt Supabase Auth
-      if (emailOrUser.includes('@') && !emailOrUser.startsWith('@')) {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: emailOrUser,
-          password: pass,
-        });
-
-        if (!error && data?.user) {
-          const u = data.user;
-          const userMeta = u.user_metadata || {};
-          const signedInUser: UserAccount = {
-            id: u.id,
-            username: userMeta.username || normalizeUsername(u.email?.split('@')[0] || 'user'),
-            email: u.email || emailOrUser,
-            role: userMeta.role || 'patient',
-            lastLoginDate: new Date().toISOString(),
-            isDeactivatedInactive: false,
-            moderationStatus: 'active',
-            followingDoctorIds: [],
-            realName: userMeta.realName,
-            showRealName: userMeta.showRealName,
-            specialty: userMeta.specialty,
-            specializationId: userMeta.specializationId,
-            medicalLicenseNumber: userMeta.medicalLicenseNumber,
-            hospitalOrClinic: userMeta.hospitalOrClinic,
-            verificationStatus: userMeta.verificationStatus || (userMeta.role === 'doctor' ? 'pending' : undefined),
-          };
-
-          onAuthSuccess(signedInUser);
-          setLoading(false);
-          onClose();
-          return;
-        }
-      }
-
-      // 2. Fallback to existing registered users in local memory/storage
-      const found = existingUsers.find(
+    // Resolve target email if user provided username
+    let targetEmail = emailOrUser;
+    if (!targetEmail.includes('@') || targetEmail.startsWith('@')) {
+      const match = existingUsers.find(
         (u) =>
-          u.email.toLowerCase() === emailOrUser ||
           u.username.toLowerCase() === emailOrUser ||
-          u.username.toLowerCase() === '@' + emailOrUser
+          u.username.toLowerCase() === '@' + emailOrUser.replace(/^@/, '')
       );
-
-      if (found) {
-        if (found.password && found.password !== pass) {
-          setErrorMsg('Invalid email or password.');
-          setLoading(false);
-          return;
-        }
-
-        const updated: UserAccount = {
-          ...found,
-          lastLoginDate: new Date().toISOString(),
-        };
-        onAuthSuccess(updated);
+      if (match?.email) {
+        targetEmail = match.email.toLowerCase();
+      } else {
+        setErrorMsg('Please provide a valid registered email address or your registered username.');
         setLoading(false);
-        onClose();
+        return;
+      }
+    }
+
+    try {
+      // Strictly authenticate with Supabase Auth server
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: targetEmail,
+        password: pass,
+      });
+
+      // If Supabase rejects credentials or password fails, COMPLETELY BLOCK
+      if (error) {
+        setErrorMsg(error.message || 'Invalid email or password.');
+        setLoading(false);
         return;
       }
 
-      // If new login directly via email credentials
-      if (emailOrUser.includes('@')) {
-        const newUser: UserAccount = {
-          id: `user-${Date.now()}`,
-          username: normalizeUsername(emailOrUser.split('@')[0]),
-          email: emailOrUser,
-          role: 'patient',
-          password: pass,
-          lastLoginDate: new Date().toISOString(),
-          isDeactivatedInactive: false,
-          moderationStatus: 'active',
-          followingDoctorIds: [],
-        };
-        onAuthSuccess(newUser);
+      if (!data?.user) {
+        setErrorMsg('Authentication failed: No valid server session received.');
         setLoading(false);
-        onClose();
         return;
       }
 
-      setErrorMsg('No user account found. Please check your credentials or register.');
+      // Valid server-side session confirmed by Supabase
+      const u = data.user;
+      const userMeta = u.user_metadata || {};
+      const signedInUser: UserAccount = {
+        id: u.id,
+        username: userMeta.username || normalizeUsername(u.email?.split('@')[0] || 'user'),
+        email: u.email || targetEmail,
+        role: userMeta.role || 'patient',
+        lastLoginDate: new Date().toISOString(),
+        isDeactivatedInactive: false,
+        moderationStatus: 'active',
+        followingDoctorIds: [],
+        realName: userMeta.realName,
+        showRealName: userMeta.showRealName,
+        specialty: userMeta.specialty,
+        specializationId: userMeta.specializationId,
+        medicalLicenseNumber: userMeta.medicalLicenseNumber,
+        hospitalOrClinic: userMeta.hospitalOrClinic,
+        verificationStatus: userMeta.verificationStatus || (userMeta.role === 'doctor' ? 'pending' : undefined),
+      };
+
+      onAuthSuccess(signedInUser);
+      setLoading(false);
+      onClose();
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Authentication error. Please try again.');
-    } finally {
+      // Strictly block on any authentication error
+      setErrorMsg(err?.message || 'Authentication error. Please check your credentials.');
       setLoading(false);
     }
   };
 
-  // Sign Up Patient Handler
+  // Sign Up Patient Handler - Strictly relies on Supabase Auth
   const handleSignUpPatient = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -200,7 +180,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     const cleanEmail = patientEmail.trim().toLowerCase();
 
     try {
-      // 1. Try Supabase Auth
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password: patientPassword,
@@ -212,44 +191,49 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         },
       });
 
+      if (error) {
+        setErrorMsg(error.message || 'Failed to create patient account.');
+        setLoading(false);
+        return;
+      }
+
+      if (!data?.user) {
+        setErrorMsg('Sign up failed: No user account returned from server.');
+        setLoading(false);
+        return;
+      }
+
+      const u = data.user;
+      const userMeta = u.user_metadata || {};
       const newPatient: UserAccount = {
-        id: data?.user?.id || `user-patient-${Date.now()}`,
-        username: cleanUser,
-        email: cleanEmail,
+        id: u.id,
+        username: userMeta.username || cleanUser,
+        email: u.email || cleanEmail,
         role: 'patient',
-        password: patientPassword,
         lastLoginDate: new Date().toISOString(),
         isDeactivatedInactive: false,
         moderationStatus: 'active',
         followingDoctorIds: [],
       };
 
-      onAuthSuccess(newPatient);
-      setInfoMsg(error ? 'Account created locally.' : 'Account created successfully!');
-      setTimeout(() => {
+      if (data.session) {
+        onAuthSuccess(newPatient);
+        setInfoMsg('Account created and signed in successfully!');
+        setTimeout(() => {
+          setLoading(false);
+          onClose();
+        }, 800);
+      } else {
+        setInfoMsg('Account created! If confirmation is required, please check your email inbox.');
         setLoading(false);
-        onClose();
-      }, 800);
+      }
     } catch (err: any) {
-      // Fallback local create
-      const newPatient: UserAccount = {
-        id: `user-patient-${Date.now()}`,
-        username: cleanUser,
-        email: cleanEmail,
-        role: 'patient',
-        password: patientPassword,
-        lastLoginDate: new Date().toISOString(),
-        isDeactivatedInactive: false,
-        moderationStatus: 'active',
-        followingDoctorIds: [],
-      };
-      onAuthSuccess(newPatient);
+      setErrorMsg(err?.message || 'Failed to create account.');
       setLoading(false);
-      onClose();
     }
   };
 
-  // Sign Up Doctor Handler
+  // Sign Up Doctor Handler - Strictly relies on Supabase Auth
   const handleSignUpDoctor = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -285,8 +269,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     };
 
     try {
-      // Try Supabase Auth
-      const { data } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password: doctorPassword,
         options: {
@@ -304,47 +287,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         },
       });
 
-      const newDoctor: UserAccount = {
-        id: data?.user?.id || `user-doc-${Date.now()}`,
-        username: cleanUser,
-        email: cleanEmail,
-        role: 'doctor',
-        password: doctorPassword,
-        realName: doctorRealName.trim() || undefined,
-        showRealName,
-        specialty: specName,
-        specializationId: specialtyId,
-        verificationStatus: 'pending',
-        medicalLicenseNumber: licenseNumber.trim(),
-        hospitalOrClinic: hospitalClinic.trim() || 'General Health Clinic',
-        verificationDocuments: [docVerif],
-        lastLoginDate: new Date().toISOString(),
-        isDeactivatedInactive: false,
-        moderationStatus: 'active',
-        followingDoctorIds: [],
-      };
-
-      if (onRegisterDoctor) {
-        onRegisterDoctor(newDoctor, {
-          experienceYears: 5,
-          about: `${doctorRealName || cleanUser}, specialized in ${specName}.`,
-          education: 'Faculty of Medicine',
-        });
-      }
-
-      onAuthSuccess(newDoctor);
-      setInfoMsg(t.authDoctorPendingNotice || 'Doctor account submitted for review.');
-      setTimeout(() => {
+      if (error) {
+        setErrorMsg(error.message || 'Failed to register doctor.');
         setLoading(false);
-        onClose();
-      }, 1200);
-    } catch (err: any) {
+        return;
+      }
+
+      if (!data?.user) {
+        setErrorMsg('Doctor registration failed: No user account returned from server.');
+        setLoading(false);
+        return;
+      }
+
+      const u = data.user;
+      const userMeta = u.user_metadata || {};
       const newDoctor: UserAccount = {
-        id: `user-doc-${Date.now()}`,
-        username: cleanUser,
-        email: cleanEmail,
+        id: u.id,
+        username: userMeta.username || cleanUser,
+        email: u.email || cleanEmail,
         role: 'doctor',
-        password: doctorPassword,
         realName: doctorRealName.trim() || undefined,
         showRealName,
         specialty: specName,
@@ -367,9 +328,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         });
       }
 
-      onAuthSuccess(newDoctor);
+      if (data.session) {
+        onAuthSuccess(newDoctor);
+        setInfoMsg(t.authDoctorPendingNotice || 'Doctor account submitted for review.');
+        setTimeout(() => {
+          setLoading(false);
+          onClose();
+        }, 1200);
+      } else {
+        setInfoMsg('Doctor account registered! Please check your email to confirm registration before signing in.');
+        setLoading(false);
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Doctor registration failed.');
       setLoading(false);
-      onClose();
     }
   };
 
@@ -387,22 +359,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      // Send real password reset email via Supabase Auth
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: window.location.origin,
       });
 
       if (error) {
-        // Still give feedback
-        setResetCodeSent(true);
-        setInfoMsg(`Password recovery instructions prepared for ${email}.`);
+        setErrorMsg(error.message || 'Failed to send password reset email.');
       } else {
         setResetCodeSent(true);
         setInfoMsg(`Verification and password reset link sent to ${email}. Sender: Istichary.`);
       }
     } catch (err: any) {
-      setResetCodeSent(true);
-      setInfoMsg(`Password reset link sent to ${email}.`);
+      setErrorMsg(err?.message || 'Failed to send password reset link.');
     } finally {
       setLoading(false);
     }
