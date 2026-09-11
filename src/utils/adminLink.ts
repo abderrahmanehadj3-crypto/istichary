@@ -4,7 +4,36 @@
  */
 
 export const DEFAULT_VERCEL_ADMIN_URL = 'https://admin-istichary2.vercel.app/';
+export const DEFAULT_VERCEL_APP_URL = 'https://istichary.vercel.app';
 export const STORAGE_KEY_ADMIN_URL = 'istichary_admin_vercel_url';
+
+/**
+ * Returns the Vercel production domain for client-side redirection and Supabase Auth recovery.
+ * It ensures the redirectTo parameter in resetPasswordForEmail matches the registered
+ * Vercel domain so users receive a properly formatted recovery link instead of an empty page.
+ */
+export function getVercelRedirectUrl(): string {
+  try {
+    // If currently running on any Vercel deployment
+    if (typeof window !== 'undefined' && window.location.origin.includes('vercel.app')) {
+      return window.location.origin;
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const customUrl =
+      (import.meta as any).env?.VITE_VERCEL_APP_URL || (import.meta as any).env?.VITE_APP_URL;
+    if (customUrl && typeof customUrl === 'string' && customUrl.trim().startsWith('http')) {
+      return customUrl.trim().replace(/\/+$/, '');
+    }
+  } catch {
+    // ignore
+  }
+
+  return DEFAULT_VERCEL_APP_URL;
+}
 
 /**
  * Sanitizes and formats an external URL, ensuring it starts with https:// or http://

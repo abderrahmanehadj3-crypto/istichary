@@ -29,7 +29,7 @@ import { FollowedView } from './components/FollowedView';
 import { ProfileView } from './components/ProfileView';
 import { NearbyDoctorsView } from './components/NearbyDoctorsView';
 import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
-import { AuthModal } from './components/AuthModal';
+import { AuthModal, AuthTab } from './components/AuthModal';
 import { NotificationsCenterModal } from './components/NotificationsCenterModal';
 import { RateDoctorModal } from './components/RateDoctorModal';
 import { AdminVercelLink } from './components/AdminVercelLink';
@@ -95,6 +95,7 @@ export default function App() {
   });
 
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authInitialTab, setAuthInitialTab] = useState<AuthTab>('signin');
 
   // Doctors and Public Consultations - Clean database state
   const [doctors, setDoctors] = useState<DoctorProfile[]>(() => {
@@ -185,7 +186,26 @@ export default function App() {
       }
     });
 
+    // Check URL parameters/hash for password recovery link
+    try {
+      if (typeof window !== 'undefined') {
+        const hash = window.location.hash || '';
+        const search = window.location.search || '';
+        if (hash.includes('type=recovery') || search.includes('type=recovery')) {
+          setAuthInitialTab('update_password');
+          setIsAuthModalOpen(true);
+        }
+      }
+    } catch (e) {}
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setAuthInitialTab('update_password');
+        setIsAuthModalOpen(true);
+        showToast('Password recovery verified. Please enter your new password.');
+        return;
+      }
+
       if (session?.user) {
         const u = session.user;
         const meta = u.user_metadata || {};
@@ -919,6 +939,7 @@ export default function App() {
         <AuthModal
           isOpen={isAuthModalOpen || !currentUser}
           isMandatory={!currentUser}
+          initialTab={authInitialTab}
           onClose={() => {
             if (currentUser) {
               setIsAuthModalOpen(false);

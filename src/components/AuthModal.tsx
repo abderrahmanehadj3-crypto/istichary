@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import {
   X,
@@ -16,10 +16,12 @@ import {
 import { UserAccount, Language, SpecializationId, VerificationDocument } from '../types';
 import { translations } from '../i18n/translations';
 import { SPECIALIZATIONS } from '../data/mockData';
+import { getVercelRedirectUrl } from '../utils/adminLink';
 
 interface AuthModalProps {
   isOpen: boolean;
   isMandatory?: boolean;
+  initialTab?: AuthTab;
   onClose: () => void;
   lang: Language;
   existingUsers: UserAccount[];
@@ -30,11 +32,12 @@ interface AuthModalProps {
   ) => void;
 }
 
-type AuthTab = 'signin' | 'signup_patient' | 'signup_doctor' | 'forgot_password';
+export type AuthTab = 'signin' | 'signup_patient' | 'signup_doctor' | 'forgot_password' | 'update_password';
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   isMandatory = false,
+  initialTab = 'signin',
   onClose,
   lang,
   existingUsers,
@@ -42,10 +45,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onRegisterDoctor,
 }) => {
   const t = translations[lang];
-  const [activeTab, setActiveTab] = useState<AuthTab>('signin');
+  const [activeTab, setActiveTab] = useState<AuthTab>(initialTab);
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // Sync activeTab if initialTab changes
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
 
   // Sign in state
   const [loginEmail, setLoginEmail] = useState('');
@@ -68,9 +78,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [licenseNumber, setLicenseNumber] = useState('');
   const [hospitalClinic, setHospitalClinic] = useState('');
 
-  // Forgot password
+  // Forgot password & Set new password
   const [forgotEmail, setForgotEmail] = useState('');
   const [resetCodeSent, setResetCodeSent] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
   if (!isOpen) return null;
 
@@ -359,19 +371,69 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
+      // Use the verified Vercel production domain redirect URL
+      const redirectUrl = getVercelRedirectUrl();
+
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin,
+        redirectTo: redirectUrl,
       });
 
       if (error) {
         setErrorMsg(error.message || 'Failed to send password reset email.');
       } else {
         setResetCodeSent(true);
-        setInfoMsg(`Verification and password reset link sent to ${email}. Sender: Istichary.`);
+        setInfoMsg(
+          `Verification and password reset link sent to ${email} (redirect: ${redirectUrl}). Sender: Istichary. Please check your inbox.`
+        );
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to send password reset link.');
     } finally {
+      setLoading(false);
+    }
+  };
+
+  // Set New Password Handler (triggered after user clicks recovery link in email)
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setInfoMsg('');
+
+    if (newPassword !== confirmNewPassword) {
+      setErrorMsg(t.authPasswordsDoNotMatch || 'Passwords do not match.');
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setErrorMsg('Password must be at least 6 characters.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        setErrorMsg(error.message || 'Failed to update password.');
+        setLoading(false);
+        return;
+      }
+
+      setInfoMsg('Your password has been reset successfully! You can now sign in with your new password.');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      // Clean up recovery hash parameters from address bar
+      if (typeof window !== 'undefined' && window.history.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+      setTimeout(() => {
+        setActiveTab('signin');
+        setLoading(false);
+      }, 1500);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to update password.');
       setLoading(false);
     }
   };
@@ -463,6 +525,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           >
             {t.signUpAsDoctor || 'Doctor Sign Up'}
           </button>
+          {activeTab === 'update_password' && (
+            <button
+              id="tab-btn-update-password"
+              type="button"
+              className="flex-1 py-2 rounded-xl transition bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm font-bold"
+            >
+              Reset Password
+            </button>
+          )}
         </div>
 
         {/* Notifications / Alerts */}
@@ -794,6 +865,80 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 className="w-full py-3 rounded-2xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
               >
                 {loading ? 'Sending Verification Link...' : 'Send Verification & Reset Link'}
+              </button>
+            </form>
+
+            <div className="text-center pt-1">
+              <button
+                type="button"
+                onClick={() => setActiveTab('signin')}
+                className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold cursor-pointer"
+              >
+                Back to Sign In
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: UPDATE PASSWORD (TRIGGERED VIA EMAIL RECOVERY LINK) */}
+        {activeTab === 'update_password' && (
+          <div className="space-y-4">
+            <div className="p-3 bg-sky-50 dark:bg-sky-950/40 border border-sky-100 dark:border-sky-900 rounded-2xl text-xs text-sky-800 dark:text-sky-300 flex items-start gap-2.5">
+              <KeyRound size={18} className="shrink-0 text-sky-600 dark:text-sky-400 mt-0.5" />
+              <div>
+                <span className="font-bold block">Password Recovery Verified</span>
+                <span className="text-slate-600 dark:text-slate-300">
+                  Please create a strong new password for your Istichary account.
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleUpdatePassword} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  New Password
+                </label>
+                <div className="relative">
+                  <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="update-password-new-input"
+                    type="password"
+                    required
+                    minLength={6}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="At least 6 characters"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Confirm New Password
+                </label>
+                <div className="relative">
+                  <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="update-password-confirm-input"
+                    type="password"
+                    required
+                    minLength={6}
+                    value={confirmNewPassword}
+                    onChange={(e) => setConfirmNewPassword(e.target.value)}
+                    placeholder="Repeat new password"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                id="btn-submit-new-password"
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 rounded-2xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
+              >
+                {loading ? 'Updating Password...' : 'Save New Password'}
               </button>
             </form>
 
