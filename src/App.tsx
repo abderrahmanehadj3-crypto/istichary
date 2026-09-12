@@ -34,6 +34,15 @@ import { NotificationsCenterModal } from './components/NotificationsCenterModal'
 import { RateDoctorModal } from './components/RateDoctorModal';
 import { AdminVercelLink } from './components/AdminVercelLink';
 import { translations, getTranslations } from './i18n/translations';
+import {
+  saveUserToSupabase,
+  saveConsultationToSupabase,
+  updateConsultationCommentsInSupabase,
+  deleteConsultationFromSupabase,
+  fetchConsultationsFromSupabase,
+  fetchUsersFromSupabase,
+  setupRealtimeSubscriptions,
+} from './utils/supabaseSync';
 
 export default function App() {
   // Multilingual & Theme with localStorage persistence to prevent falling back to English
@@ -235,6 +244,81 @@ export default function App() {
     });
 
     return () => subscription.unsubscribe();
+  }, []);
+
+  // Synchronize Consultations, Users, and Realtime with Supabase Production
+  useEffect(() => {
+    let isMounted = true;
+
+    // 1. Initial Fetch of Consultations from Supabase
+    fetchConsultationsFromSupabase().then((remotePosts) => {
+      if (!isMounted) return;
+      if (remotePosts && remotePosts.length > 0) {
+        setPosts((prev) => {
+          const remoteIds = new Set(remotePosts.map((p) => p.id));
+          const localOnly = prev.filter((p) => !remoteIds.has(p.id));
+          return [...remotePosts, ...localOnly];
+        });
+      }
+    });
+
+    // 2. Initial Fetch of Users & Doctors from Supabase
+    fetchUsersFromSupabase().then(({ users: remoteUsers, doctors: remoteDoctors }) => {
+      if (!isMounted) return;
+      if (remoteUsers.length > 0) {
+        setUsers((prev) => {
+          const remoteIds = new Set(remoteUsers.map((u) => u.id));
+          const localOnly = prev.filter((u) => !remoteIds.has(u.id));
+          return [...remoteUsers, ...localOnly];
+        });
+      }
+      if (remoteDoctors.length > 0) {
+        setDoctors((prev) => {
+          const remoteIds = new Set(remoteDoctors.map((d) => d.userId || d.id));
+          const localOnly = prev.filter((d) => !remoteIds.has(d.userId || d.id));
+          return [...remoteDoctors, ...localOnly];
+        });
+      }
+    });
+
+    // 3. Setup Realtime Listener for live updates from Super-Admin dashboard and database
+    const unsubscribeRealtime = setupRealtimeSubscriptions({
+      onConsultationChange: (payload) => {
+        if (!isMounted) return;
+        if (payload.eventType === 'DELETE' && payload.old?.id) {
+          setPosts((prev) => prev.filter((p) => p.id !== payload.old.id));
+        } else {
+          // Re-fetch consultations to get cleanly parsed state
+          fetchConsultationsFromSupabase().then((refreshed) => {
+            if (!isMounted) return;
+            if (refreshed && refreshed.length > 0) {
+              setPosts((prev) => {
+                const refreshedIds = new Set(refreshed.map((r) => r.id));
+                const localOnly = prev.filter((p) => !refreshedIds.has(p.id));
+                return [...refreshed, ...localOnly];
+              });
+            }
+          });
+        }
+      },
+      onUserChange: (payload) => {
+        if (!isMounted) return;
+        fetchUsersFromSupabase().then(({ users: refreshedUsers, doctors: refreshedDocs }) => {
+          if (!isMounted) return;
+          if (refreshedUsers.length > 0) setUsers(refreshedUsers);
+          if (refreshedDocs.length > 0) setDoctors(refreshedDocs);
+          if (payload.new?.id && currentUser?.id === payload.new.id) {
+            const updated = refreshedUsers.find((u) => u.id === payload.new.id);
+            if (updated) setCurrentUser(updated);
+          }
+        });
+      },
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribeRealtime();
+    };
   }, []);
 
   // Persist Current User
@@ -452,87 +536,130 @@ export default function App() {
   const handleAddPost = (newPost: ConsultationPost) => {
     setPosts((prev) => [newPost, ...prev]);
     showToast(t.inquiryPublishedSuccess);
+
+    // Save directly to Supabase public.consultations and public.posts
+    saveConsultationToSupabase(newPost, currentUser?.email).catch((err) => {
+      console.warn('[SupabaseSync] handleAddPost error:', err);
+    });
   };
 
   // Edit Consultation Post (Allowed for post author - doctor or patient)
   const handleEditPost = (postId: string, updatedData: Partial<ConsultationPost>) => {
+    let savedPost: ConsultationPost | null = null;
     setPosts((prev) =>
       prev.map((p) => {
         if (p.id === postId) {
-          return {
+          const updated = {
             ...p,
             ...updatedData,
             isEdited: true,
             updatedAt: 'Just now',
           };
+          savedPost = updated;
+          return updated;
         }
         return p;
       })
     );
     showToast(t.postUpdatedSuccess);
+
+    if (savedPost) {
+      saveConsultationToSupabase(savedPost, currentUser?.email).catch((err) => {
+        console.warn('[SupabaseSync] handleEditPost error:', err);
+      });
+    }
   };
 
   // Delete Consultation Post (Allowed for post author)
   const handleDeletePost = (postId: string) => {
     setPosts((prev) => prev.filter((p) => p.id !== postId));
     showToast(t.postDeletedSuccess);
+
+    // Delete from Supabase public.consultations
+    deleteConsultationFromSupabase(postId).catch((err) => {
+      console.warn('[SupabaseSync] handleDeletePost error:', err);
+    });
   };
 
   // Edit Comment / Reply (Allowed for comment author)
   const handleEditComment = (postId: string, commentId: string, newContent: string) => {
+    let updatedCommentsList: ConsultationComment[] = [];
     setPosts((prev) =>
       prev.map((p) => {
         if (p.id === postId) {
+          const updatedComments = p.comments.map((c) => {
+            if (c.id === commentId) {
+              return {
+                ...c,
+                content: newContent,
+                isEdited: true,
+                updatedAt: 'Just now',
+              };
+            }
+            return c;
+          });
+          updatedCommentsList = updatedComments;
           return {
             ...p,
-            comments: p.comments.map((c) => {
-              if (c.id === commentId) {
-                return {
-                  ...c,
-                  content: newContent,
-                  isEdited: true,
-                  updatedAt: 'Just now',
-                };
-              }
-              return c;
-            }),
+            comments: updatedComments,
           };
         }
         return p;
       })
     );
     showToast(t.commentUpdatedSuccess);
+
+    if (updatedCommentsList.length > 0) {
+      updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
+        console.warn('[SupabaseSync] handleEditComment error:', err);
+      });
+    }
   };
 
   // Delete Comment / Reply (Allowed for comment author)
   const handleDeleteComment = (postId: string, commentId: string) => {
+    let updatedCommentsList: ConsultationComment[] = [];
     setPosts((prev) =>
       prev.map((p) => {
         if (p.id === postId) {
+          const updatedComments = p.comments.filter((c) => c.id !== commentId);
+          updatedCommentsList = updatedComments;
           return {
             ...p,
-            comments: p.comments.filter((c) => c.id !== commentId),
+            comments: updatedComments,
           };
         }
         return p;
       })
     );
     showToast(t.commentDeletedSuccess);
+
+    updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
+      console.warn('[SupabaseSync] handleDeleteComment error:', err);
+    });
   };
 
   // Add Comment / Doctor Response to a Post with Notification Alert
   const handleAddComment = (postId: string, newComment: ConsultationComment) => {
+    let updatedCommentsList: ConsultationComment[] = [];
     setPosts((prev) =>
       prev.map((p) => {
         if (p.id === postId) {
+          const updatedComments = [...p.comments, newComment];
+          updatedCommentsList = updatedComments;
           return {
             ...p,
-            comments: [...p.comments, newComment],
+            comments: updatedComments,
           };
         }
         return p;
       })
     );
+
+    // Save comments/responses directly into Supabase
+    updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
+      console.warn('[SupabaseSync] handleAddComment error:', err);
+    });
 
     showToast(newComment.authorRole === 'doctor' ? t.doctorReplySentSuccess : 'Reply submitted.');
 
@@ -743,8 +870,16 @@ export default function App() {
 
   // Doctor Verification status change by Admin/Moderator
   const handleVerifyDoctor = (userId: string, newStatus: 'verified' | 'rejected') => {
+    let updatedUserObj: UserAccount | null = null;
     setUsers((prev) =>
-      prev.map((u) => (u.id === userId ? { ...u, verificationStatus: newStatus } : u))
+      prev.map((u) => {
+        if (u.id === userId) {
+          const updated = { ...u, verificationStatus: newStatus };
+          updatedUserObj = updated;
+          return updated;
+        }
+        return u;
+      })
     );
 
     setDoctors((prev) =>
@@ -753,6 +888,10 @@ export default function App() {
 
     if (currentUser?.id === userId) {
       setCurrentUser((prev) => (prev ? { ...prev, verificationStatus: newStatus } : null));
+    }
+
+    if (updatedUserObj) {
+      saveUserToSupabase(updatedUserObj).catch(() => {});
     }
 
     showToast(
@@ -976,6 +1115,7 @@ export default function App() {
               about: docDetails.about || 'Specialist physician.',
             };
             setDoctors((prev) => [...prev, newDocProfile]);
+            saveUserToSupabase(newDocUser).catch(() => {});
           }}
         />
       </div>

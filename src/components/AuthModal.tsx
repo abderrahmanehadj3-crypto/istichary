@@ -17,6 +17,7 @@ import { UserAccount, Language, SpecializationId, VerificationDocument } from '.
 import { translations } from '../i18n/translations';
 import { SPECIALIZATIONS } from '../data/mockData';
 import { getVercelRedirectUrl } from '../utils/adminLink';
+import { saveUserToSupabase } from '../utils/supabaseSync';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -162,6 +163,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         verificationStatus: userMeta.verificationStatus || (userMeta.role === 'doctor' ? 'pending' : undefined),
       };
 
+      // Ensure user entry is saved in Supabase public.users
+      saveUserToSupabase(signedInUser).catch(() => {});
+
       onAuthSuccess(signedInUser);
       setLoading(false);
       onClose();
@@ -227,6 +231,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         moderationStatus: 'active',
         followingDoctorIds: [],
       };
+
+      // Persist directly into Supabase public.users
+      await saveUserToSupabase(newPatient);
 
       if (data.session) {
         onAuthSuccess(newPatient);
@@ -331,6 +338,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         moderationStatus: 'active',
         followingDoctorIds: [],
       };
+
+      // Persist doctor directly into Supabase public.users
+      await saveUserToSupabase(newDoctor);
 
       if (onRegisterDoctor) {
         onRegisterDoctor(newDoctor, {

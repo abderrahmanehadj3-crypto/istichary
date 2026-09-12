@@ -1,6 +1,22 @@
-import { createClient } from '@supabase/supabase-js'
+import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL = 'https://oqdngfhupadfirmsfbfj.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xZG5nZmh1cGFkZmlybXNmYmZqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxMTQ0MzgsImV4cCI6MjEwNDY5MDQzOH0.JPlKEtFJDoyUlkO2JSkx804o5JT1OyefFftfcqnMOMk'
+export const SUPABASE_URL =
+  (import.meta as any).env?.VITE_SUPABASE_URL || 'https://oqdgngfhupadfirmsfbfj.supabase.co';
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+export const SUPABASE_ANON_KEY =
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+  (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  'sb_publishable_T4iSALFPm1Y09Nc6QWdvQA_j8nCDCKL';
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
+});

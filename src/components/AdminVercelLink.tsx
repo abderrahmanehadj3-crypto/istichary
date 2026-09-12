@@ -16,6 +16,8 @@ import {
   DEFAULT_VERCEL_ADMIN_URL,
 } from '../utils/adminLink';
 import { UserAccount } from '../types';
+import { SUPABASE_URL } from '../supabaseClient';
+import { Database, Radio } from 'lucide-react';
 
 interface AdminVercelLinkProps {
   variant?: 'header' | 'footer' | 'badge' | 'card';
@@ -245,6 +247,11 @@ export const AdminVercelLink: React.FC<AdminVercelLinkProps> = ({
             <p className="text-[11px] text-violet-700/80 dark:text-violet-400 truncate max-w-xs sm:max-w-md">
               {getAdminDashboardUrl()}
             </p>
+            <div className="flex items-center gap-1 mt-0.5 text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+              <Radio size={10} className="text-emerald-500 animate-pulse" />
+              <span>DB Sync: {SUPABASE_URL.replace('https://', '').split('.')[0]}</span>
+              <span className="text-violet-400 dark:text-violet-500">• Realtime</span>
+            </div>
           </div>
         </div>
 
