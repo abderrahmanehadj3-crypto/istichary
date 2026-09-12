@@ -16,7 +16,6 @@ import {
 import { UserAccount, Language, ThemeMode } from '../types';
 import { translations } from '../i18n/translations';
 import { RoleAvatar } from './RoleAvatar';
-import { AdminVercelLink } from './AdminVercelLink';
 
 interface HeaderProps {
   currentUser: UserAccount | null;
@@ -169,9 +168,6 @@ export const Header: React.FC<HeaderProps> = ({
               <Moon size={15} className="text-indigo-600" />
             )}
           </button>
-
-          {/* Subtle External Admin Dashboard Link */}
-          <AdminVercelLink variant="header" currentUser={currentUser} />
 
           {!currentUser && (
             <button

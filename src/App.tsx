@@ -28,11 +28,9 @@ import { PublicConsultationsView } from './components/PublicConsultationsView';
 import { FollowedView } from './components/FollowedView';
 import { ProfileView } from './components/ProfileView';
 import { NearbyDoctorsView } from './components/NearbyDoctorsView';
-import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
 import { AuthModal, AuthTab } from './components/AuthModal';
 import { NotificationsCenterModal } from './components/NotificationsCenterModal';
 import { RateDoctorModal } from './components/RateDoctorModal';
-import { AdminVercelLink } from './components/AdminVercelLink';
 import { translations, getTranslations } from './i18n/translations';
 import {
   saveUserToSupabase,
@@ -449,7 +447,7 @@ export default function App() {
         actorRole: currentUser.role,
         targetDoctorId: doctorId,
         message: `You started following Dr. ${doc?.realName || doc?.username} (${doc?.specialty}).`,
-        timestamp: 'Just now',
+        timestamp: new Date().toISOString(),
         isRead: false,
       };
       setNotifications((prev) => [newNotif, ...prev]);
@@ -496,7 +494,7 @@ export default function App() {
       message: `Verified consultation rating: ${stars} Stars submitted for Dr. ${
         doc?.realName || doc?.username
       } (${doc?.specialty}). ${feedback ? `"${feedback}"` : ''}`,
-      timestamp: 'Just now',
+      timestamp: new Date().toISOString(),
       isRead: false,
     };
     setNotifications((prev) => [newNotif, ...prev]);
@@ -526,7 +524,7 @@ export default function App() {
       actorRole: currentUser?.role || 'patient',
       postId,
       message: `Someone appreciated clinical inquiry: "${post?.title ? post.title.slice(0, 35) + '...' : 'Medical Post'}"`,
-      timestamp: 'Just now',
+      timestamp: new Date().toISOString(),
       isRead: false,
     };
     setNotifications((prev) => [newNotif, ...prev]);
@@ -553,7 +551,7 @@ export default function App() {
             ...p,
             ...updatedData,
             isEdited: true,
-            updatedAt: 'Just now',
+            updatedAt: new Date().toISOString(),
           };
           savedPost = updated;
           return updated;
@@ -593,7 +591,7 @@ export default function App() {
                 ...c,
                 content: newContent,
                 isEdited: true,
-                updatedAt: 'Just now',
+                updatedAt: new Date().toISOString(),
               };
             }
             return c;
@@ -676,7 +674,7 @@ export default function App() {
         message: `Certified specialist Dr. ${
           newComment.authorRealName || newComment.authorUsername
         } (${newComment.authorSpecialty || 'Specialist'}) published medical guidance.`,
-        timestamp: 'Just now',
+        timestamp: new Date().toISOString(),
         isRead: false,
       };
       setNotifications((prev) => [newNotif, ...prev]);
@@ -917,9 +915,6 @@ export default function App() {
           </span>
           <span>• Minimalist Telehealth & Consultations</span>
         </div>
-        <div className="flex items-center gap-2">
-          <AdminVercelLink variant="badge" currentUser={currentUser} />
-        </div>
       </div>
 
       {/* Main Responsive Application Container */}
@@ -1031,17 +1026,6 @@ export default function App() {
               onUpdateClinicLocation={handleUpdateClinicLocation}
             />
           )}
-
-          {/* TAB 5: Admin & Moderator Verification Governance */}
-          {activeTab === 'admin' && (
-            <AdminModeratorDashboard
-              currentUser={currentUser}
-              lang={lang}
-              users={users}
-              onVerifyDoctor={handleVerifyDoctor}
-              onRevokeDoctorAccess={(userId) => handleVerifyDoctor(userId, 'rejected')}
-            />
-          )}
         </main>
 
         {/* Minimalist Bottom Navigation */}
@@ -1124,7 +1108,7 @@ export default function App() {
       <footer className="w-full max-w-3xl py-3 text-center text-[11px] text-slate-400/80 dark:text-slate-500/80 flex items-center justify-center gap-2 select-none">
         <span>Istichary Telehealth Portal</span>
         <span className="opacity-40">•</span>
-        <AdminVercelLink variant="footer" currentUser={currentUser} />
+        <span>Verified Medical Care</span>
       </footer>
     </div>
   );

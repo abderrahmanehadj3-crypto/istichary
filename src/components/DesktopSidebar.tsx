@@ -17,7 +17,6 @@ import { Language, UserAccount } from '../types';
 import { translations } from '../i18n/translations';
 import { NavTab } from './BottomNav';
 import { RoleAvatar } from './RoleAvatar';
-import { AdminVercelLink } from './AdminVercelLink';
 
 interface DesktopSidebarProps {
   activeTab: NavTab;
@@ -82,17 +81,6 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
       icon: User,
     },
   ];
-
-  if (hasAdminAccess) {
-    navItems.push({
-      id: 'admin',
-      label: t.navAdmin,
-      description: lang === 'ar' ? 'إدارة توثيق تراخيص الأطباء' : lang === 'fr' ? 'Gouvernance des licences' : 'Doctor verification & safety',
-      icon: ShieldCheck,
-      badge: pendingVerifBadge,
-      badgeColor: 'bg-amber-500 text-white',
-    });
-  }
 
   return (
     <aside
@@ -264,7 +252,7 @@ export const DesktopSidebar: React.FC<DesktopSidebarProps> = ({
           <div className="flex items-center gap-2">
             <span>Istichary v2.4</span>
             <span className="text-slate-300 dark:text-slate-700">•</span>
-            <AdminVercelLink variant="footer" currentUser={currentUser} />
+            <span>Telehealth</span>
           </div>
           <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
             <CheckCircle2 size={11} /> 100% Verified

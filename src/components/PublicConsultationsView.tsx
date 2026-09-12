@@ -38,6 +38,7 @@ import { translations, getSpecialtyLabel, getUrgencyLabel } from '../i18n/transl
 import { SPECIALIZATIONS, MOCK_DOCTORS } from '../data/mockData';
 import { RoleAvatar } from './RoleAvatar';
 import { evaluateContent, checkUserCanPost } from '../utils/moderation';
+import { formatRelativeTime } from '../utils/timeAgo';
 
 interface PublicConsultationsViewProps {
   posts: ConsultationPost[];
@@ -220,8 +221,11 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
     }));
   };
 
-  // Filtered posts
-  const filteredPosts = posts.filter((p) => {
+  // Doctor role check for clinical priority triage
+  const isDoctorUser = currentUser?.role === 'doctor';
+
+  // Filtered posts by specialty or followed
+  const baseFilteredPosts = posts.filter((p) => {
     if (selectedSpecialty === 'all') return true;
     if (selectedSpecialty === 'followed') {
       // Show posts where at least one comment is from a followed doctor
@@ -231,6 +235,29 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
     }
     return p.specializationId === selectedSpecialty;
   });
+
+  // Strict sorting rule:
+  // For doctors: Urgent/Emergency ('high') consultations MUST appear at the very top!
+  const filteredPosts = [...baseFilteredPosts].sort((a, b) => {
+    if (isDoctorUser) {
+      const isUrgentA = a.urgency === 'high';
+      const isUrgentB = b.urgency === 'high';
+      if (isUrgentA && !isUrgentB) return -1;
+      if (!isUrgentA && isUrgentB) return 1;
+
+      // Secondary ranking for doctors (medium urgency before low)
+      const rank = (u: string) => (u === 'high' ? 3 : u === 'medium' ? 2 : 1);
+      const rankDiff = rank(b.urgency) - rank(a.urgency);
+      if (rankDiff !== 0) return rankDiff;
+    }
+
+    // Chronological ordering (newest first)
+    const timeA = new Date(a.createdAt).getTime() || 0;
+    const timeB = new Date(b.createdAt).getTime() || 0;
+    return timeB - timeA;
+  });
+
+  const urgentEmergencyCount = filteredPosts.filter((p) => p.urgency === 'high').length;
 
   const handleCreatePost = (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,7 +307,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
       specializationId: postSpecialty,
       description: postDescription.trim(),
       urgency: postUrgency,
-      createdAt: 'Just now',
+      createdAt: new Date().toISOString(),
       comments: [],
     };
 
@@ -356,7 +383,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
       authorSpecialty: isDoctor ? currentUser.specialty || 'Medical Specialist' : undefined,
       authorLicenseNumber: isDoctor ? currentUser.medicalLicenseNumber : undefined,
       content: text,
-      timestamp: 'Just now',
+      timestamp: new Date().toISOString(),
       isDoctorRecommendation: isDoctor,
     };
 
@@ -555,7 +582,41 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
         ))}
       </div>
 
-      {/* 3. CONSULTATION POSTS FEED */}
+      {/* 3. DOCTOR EMERGENCY TRIAGE BANNER */}
+      {isDoctorUser && urgentEmergencyCount > 0 && (
+        <div
+          id="doctor-emergency-triage-banner"
+          className="p-3.5 rounded-2xl bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-md border border-red-400/40 flex items-center justify-between gap-3 animate-in fade-in"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center shrink-0 shadow-xs ring-2 ring-white/30">
+              <AlertTriangle size={20} className="text-white fill-white/20 animate-pulse" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] font-black uppercase tracking-wider bg-white text-red-700 px-2 py-0.5 rounded-md shadow-xs">
+                  {lang === 'ar' ? '🚨 أولوية الطوارئ للأطباء' : lang === 'fr' ? '🚨 PRIORITÉ URGENCES' : '🚨 DOCTOR EMERGENCY PRIORITY'}
+                </span>
+                <span className="text-xs font-bold text-red-100">
+                  {urgentEmergencyCount} {lang === 'ar' ? 'حالة مستعجلة في صدارة القائمة' : 'urgent case(s) prioritized at the top'}
+                </span>
+              </div>
+              <p className="text-[11px] text-red-100/90 mt-0.5">
+                {lang === 'ar'
+                  ? 'تم فرز الاستشارات الطارئة في الصدارة وتحديدها باللون الأحمر لسرعة التدخل الطبي.'
+                  : lang === 'fr'
+                  ? 'Consultations urgentes affichées en tête et surlignées en rouge pour prise en charge rapide.'
+                  : 'Urgent consultations are prioritized at the top and highlighted in red for immediate medical response.'}
+              </p>
+            </div>
+          </div>
+          <span className="shrink-0 px-2.5 py-1 bg-white/20 text-white text-[11px] font-extrabold rounded-xl border border-white/30 whitespace-nowrap">
+            {urgentEmergencyCount} {lang === 'ar' ? 'عاجل' : 'Urgent'}
+          </span>
+        </div>
+      )}
+
+      {/* 4. CONSULTATION POSTS FEED */}
       <div className="space-y-3">
         {filteredPosts.length === 0 ? (
           <div className="p-8 text-center bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
@@ -578,13 +639,44 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
             const isDoctor = currentUser?.role === 'doctor';
             const isVerifiedDoc = isDoctor && currentUser?.verificationStatus === 'verified';
             const canReply = isPostAuthor || isVerifiedDoc;
+            const isUrgent = post.urgency === 'high';
 
             return (
               <article
                 key={post.id}
                 id={`consultation-post-${post.id}`}
-                className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3.5"
+                className={`rounded-2xl p-4 shadow-xs space-y-3.5 transition-all ${
+                  isUrgent
+                    ? 'bg-red-50/70 dark:bg-red-950/30 border-2 border-red-500 dark:border-red-500/90 shadow-md shadow-red-500/10 ring-1 ring-red-500/30'
+                    : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700'
+                }`}
               >
+                {/* Prominent Emergency Banner for Urgent Cases */}
+                {isUrgent && (
+                  <div
+                    id={`emergency-banner-post-${post.id}`}
+                    className="flex items-center justify-between px-3 py-1.5 rounded-xl bg-red-600 text-white shadow-xs text-xs font-bold -mt-0.5 mb-1"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                      </span>
+                      <span className="uppercase tracking-wider font-black text-[11px] flex items-center gap-1.5">
+                        <AlertTriangle size={13} className="fill-white/20 text-white" />
+                        {lang === 'ar'
+                          ? 'استشارة طبية مستعجلة • أولوية قصوى'
+                          : lang === 'fr'
+                          ? 'CONSULTATION MÉDICALE URGENTE • PRIORITÉ MAX'
+                          : 'EMERGENCY MEDICAL CONSULTATION • HIGH PRIORITY'}
+                      </span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-md bg-white/20 text-[10px] font-black uppercase tracking-wider">
+                      {lang === 'ar' ? 'طوارئ' : 'URGENT'}
+                    </span>
+                  </div>
+                )}
+
                 {/* Post Top Row: Author, Time, Urgency, and Post Owner Action Buttons */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-2.5">
@@ -611,7 +703,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                       </div>
                       <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                         <Clock size={11} />
-                        <span>{post.createdAt}</span>
+                        <span>{formatRelativeTime(post.createdAt, lang)}</span>
                         {post.isEdited && (
                           <span className="text-[10px] text-slate-400 font-medium italic">
                             ({t.editedBadge})
@@ -649,14 +741,15 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                     )}
 
                     <span
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                        post.urgency === 'high'
-                          ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-900'
+                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-extrabold uppercase tracking-wider flex items-center gap-1 ${
+                        isUrgent
+                          ? 'bg-red-600 text-white shadow-xs ring-2 ring-red-400/50'
                           : post.urgency === 'medium'
                           ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-900'
                           : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900'
                       }`}
                     >
+                      {isUrgent && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
                       {getUrgencyLabel(post.urgency, t)}
                     </span>
 
@@ -940,7 +1033,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 
                                     <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
                                       <Clock size={10} />
-                                      <span>{comment.timestamp}</span>
+                                      <span>{formatRelativeTime(comment.timestamp, lang)}</span>
                                       {comment.isEdited && (
                                         <span className="text-[10px] text-slate-400 font-medium italic">
                                           ({t.editedBadge})

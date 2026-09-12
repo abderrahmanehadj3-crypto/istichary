@@ -1,9 +1,9 @@
 import React from 'react';
-import { MessageSquare, User, ShieldCheck, Heart, MapPin } from 'lucide-react';
+import { MessageSquare, User, Heart, MapPin } from 'lucide-react';
 import { Language, UserAccount } from '../types';
 import { translations } from '../i18n/translations';
 
-export type NavTab = 'consultations' | 'nearby' | 'followed' | 'profile' | 'admin';
+export type NavTab = 'consultations' | 'nearby' | 'followed' | 'profile';
 
 interface BottomNavProps {
   activeTab: NavTab;
@@ -20,12 +20,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   lang,
   currentUser,
   consultationsBadge = 0,
-  pendingVerifBadge = 0,
 }) => {
   const t = translations[lang];
-
-  const hasAdminAccess =
-    currentUser?.role === 'super_admin' || currentUser?.role === 'moderator';
 
   const tabs: Array<{ id: NavTab; label: string; icon: any; badge: number }> = [
     {
@@ -53,15 +49,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       badge: 0,
     },
   ];
-
-  if (hasAdminAccess) {
-    tabs.push({
-      id: 'admin',
-      label: t.navAdmin,
-      icon: ShieldCheck,
-      badge: pendingVerifBadge,
-    });
-  }
 
   return (
     <nav
@@ -95,10 +82,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({
                   <Icon className="w-5 h-5" />
                 </div>
 
-                {tab.badge > 0 && tab.id === 'admin' && (
+                {tab.badge > 0 && tab.id === 'consultations' && (
                   <span
                     id={`nav-badge-${tab.id}`}
-                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-amber-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs ring-2 ring-white dark:ring-slate-900"
+                    className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-sky-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-xs ring-2 ring-white dark:ring-slate-900"
                   >
                     {tab.badge}
                   </span>

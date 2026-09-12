@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { AppNotification, Language, NotificationType } from '../types';
 import { translations } from '../i18n/translations';
+import { formatRelativeTime } from '../utils/timeAgo';
 
 interface NotificationsCenterModalProps {
   isOpen: boolean;
@@ -203,7 +204,7 @@ export const NotificationsCenterModal: React.FC<NotificationsCenterModalProps> =
                     </div>
 
                     <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">
-                      {notif.timestamp}
+                      {formatRelativeTime(notif.timestamp, lang)}
                     </span>
                   </div>
 
