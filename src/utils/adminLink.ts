@@ -5,7 +5,8 @@
 
 export const DEFAULT_VERCEL_ADMIN_URL = 'https://isticharyadmiin.vercel.app';
 export const DEFAULT_VERCEL_APP_URL = 'https://istichary.vercel.app';
-export const STORAGE_KEY_ADMIN_URL = 'istichary_admin_vercel_url';
+export const VITE_KEY_ADMIN_URL = 'https://isticharyadmiin.vercel.app';
+export const STORAGE_KEY_ADMIN_URL = 'istichary_admin_storage_key';
 
 /**
  * Returns the Vercel production domain for client-side redirection and Supabase Auth recovery.
@@ -40,7 +41,9 @@ export function getVercelRedirectUrl(): string {
  */
 export function sanitizeExternalUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();
-  if (!trimmed) return DEFAULT_VERCEL_ADMIN_URL;
+  if (!trimmed || trimmed === 'istichary_admin_vercel_url' || !trimmed.includes('.')) {
+    return VITE_KEY_ADMIN_URL || DEFAULT_VERCEL_ADMIN_URL;
+  }
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
   }
@@ -50,14 +53,21 @@ export function sanitizeExternalUrl(rawUrl: string): string {
 /**
  * Retrieves the configured Vercel Admin Dashboard URL.
  * Priority:
- * 1. import.meta.env.VITE_ADMIN_DASHBOARD_URL
+ * 1. import.meta.env.VITE_KEY_ADMIN_URL or import.meta.env.VITE_ADMIN_DASHBOARD_URL
  * 2. Saved custom URL in localStorage
  * 3. Default fallback Vercel URL
  */
 export function getAdminDashboardUrl(): string {
   try {
-    const envUrl = (import.meta as any).env?.VITE_ADMIN_DASHBOARD_URL;
-    if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
+    const envUrl =
+      (import.meta as any).env?.VITE_KEY_ADMIN_URL ||
+      (import.meta as any).env?.VITE_ADMIN_DASHBOARD_URL;
+    if (
+      envUrl &&
+      typeof envUrl === 'string' &&
+      envUrl.trim() !== '' &&
+      envUrl.trim() !== 'istichary_admin_vercel_url'
+    ) {
       return sanitizeExternalUrl(envUrl);
     }
   } catch {
@@ -66,14 +76,14 @@ export function getAdminDashboardUrl(): string {
 
   try {
     const saved = localStorage.getItem(STORAGE_KEY_ADMIN_URL);
-    if (saved && saved.trim() !== '') {
+    if (saved && saved.trim() !== '' && saved !== 'istichary_admin_vercel_url') {
       return sanitizeExternalUrl(saved);
     }
   } catch {
     // ignore
   }
 
-  return DEFAULT_VERCEL_ADMIN_URL;
+  return VITE_KEY_ADMIN_URL || DEFAULT_VERCEL_ADMIN_URL;
 }
 
 /**
