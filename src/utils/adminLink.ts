@@ -3,7 +3,7 @@
  * and opening it securely with reverse tabnabbing prevention.
  */
 
-export const DEFAULT_VERCEL_ADMIN_URL = 'https://admin-istichary2.vercel.app/';
+export const DEFAULT_VERCEL_ADMIN_URL = 'https://isticharyadmiin.vercel.app';
 export const DEFAULT_VERCEL_APP_URL = 'https://istichary.vercel.app';
 export const STORAGE_KEY_ADMIN_URL = 'istichary_admin_vercel_url';
 
