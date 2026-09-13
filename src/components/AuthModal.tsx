@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { supabase, SUPABASE_URL } from '../supabaseClient';
 import {
   X,
   Lock,
@@ -95,6 +95,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     return clean;
   };
 
+  /**
+   * Helper to format authentication errors with clear network diagnostics
+   */
+  const formatAuthError = (error: any, fallbackMessage: string = 'Authentication error.'): string => {
+    if (!error) return fallbackMessage;
+    const msg = typeof error === 'string' ? error : error.message || '';
+    const lower = msg.toLowerCase();
+    if (
+      lower.includes('failed to fetch') ||
+      lower.includes('network') ||
+      lower.includes('connection') ||
+      lower.includes('load failed') ||
+      error.status === 0 ||
+      error.name === 'AuthRetryableFetchError'
+    ) {
+      return `Network connection error: Unable to reach the Supabase authentication server (${SUPABASE_URL}). Please verify your internet connection or try again shortly.`;
+    }
+    return msg || fallbackMessage;
+  };
+
   // Sign In Handler - Strictly relies on Supabase server-side session
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,7 +151,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // If Supabase rejects credentials or password fails, COMPLETELY BLOCK
       if (error) {
-        setErrorMsg(error.message || 'Invalid email or password.');
+        setErrorMsg(formatAuthError(error, 'Invalid email or password.'));
         setLoading(false);
         return;
       }
@@ -171,7 +191,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err: any) {
       // Strictly block on any authentication error
-      setErrorMsg(err?.message || 'Authentication error. Please check your credentials.');
+      setErrorMsg(formatAuthError(err, 'Authentication error. Please check your credentials.'));
       setLoading(false);
     }
   };
@@ -208,7 +228,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
 
       if (error) {
-        setErrorMsg(error.message || 'Failed to create patient account.');
+        setErrorMsg(formatAuthError(error, 'Failed to create patient account.'));
         setLoading(false);
         return;
       }
@@ -247,7 +267,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setLoading(false);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to create account.');
+      setErrorMsg(formatAuthError(err, 'Failed to create account.'));
       setLoading(false);
     }
   };
@@ -307,7 +327,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
 
       if (error) {
-        setErrorMsg(error.message || 'Failed to register doctor.');
+        setErrorMsg(formatAuthError(error, 'Failed to register doctor.'));
         setLoading(false);
         return;
       }
@@ -362,7 +382,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setLoading(false);
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Doctor registration failed.');
+      setErrorMsg(formatAuthError(err, 'Doctor registration failed.'));
       setLoading(false);
     }
   };
@@ -389,7 +409,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
 
       if (error) {
-        setErrorMsg(error.message || 'Failed to send password reset email.');
+        setErrorMsg(formatAuthError(error, 'Failed to send password reset email.'));
       } else {
         setResetCodeSent(true);
         setInfoMsg(
@@ -397,7 +417,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         );
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to send password reset link.');
+      setErrorMsg(formatAuthError(err, 'Failed to send password reset link.'));
     } finally {
       setLoading(false);
     }
@@ -426,7 +446,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
 
       if (error) {
-        setErrorMsg(error.message || 'Failed to update password.');
+        setErrorMsg(formatAuthError(error, 'Failed to update password.'));
         setLoading(false);
         return;
       }
