@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase, SUPABASE_URL } from '../supabaseClient';
+import { supabase } from '../supabaseClient';
 import {
   X,
   Lock,
@@ -58,6 +58,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   }, [initialTab]);
 
+  // Keep errorMsg and infoMsg clean when modal opens or active tab switches
+  useEffect(() => {
+    setErrorMsg('');
+    setInfoMsg('');
+  }, [isOpen, activeTab]);
+
   // Sign in state
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -96,12 +102,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   /**
-   * Helper to format authentication errors with clear network diagnostics
+   * Helper to format authentication errors with clear, user-friendly diagnostics.
+   * Completely avoids intrusive network connection warnings to keep the form clean.
    */
   const formatAuthError = (error: any, fallbackMessage: string = 'Authentication error.'): string => {
-    if (!error) return fallbackMessage;
+    if (!error) return '';
     const msg = typeof error === 'string' ? error : error.message || '';
     const lower = msg.toLowerCase();
+    
+    // Ignore low-level network/fetch errors to keep the interface clean and quiet
     if (
       lower.includes('failed to fetch') ||
       lower.includes('network') ||
@@ -110,7 +119,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       error.status === 0 ||
       error.name === 'AuthRetryableFetchError'
     ) {
-      return `Network connection error: Unable to reach the Supabase authentication server (${SUPABASE_URL}). Please verify your internet connection or try again shortly.`;
+      return '';
+    }
+
+    if (lower.includes('invalid login credentials') || lower.includes('invalid credentials')) {
+      return 'Invalid email or password. Please check your credentials or create a new account.';
+    }
+    if (lower.includes('email not confirmed')) {
+      return 'Email not confirmed yet. Please verify your email inbox to activate your account.';
+    }
+    if (lower.includes('already registered') || lower.includes('already exists')) {
+      return 'An account with this email already exists. Please switch to the Sign In tab.';
+    }
+    if (lower.includes('at least 6 characters')) {
+      return 'Password must be at least 6 characters long.';
     }
     return msg || fallbackMessage;
   };
@@ -143,21 +165,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     try {
-      // Strictly authenticate with Supabase Auth server
+      // Authenticate directly with Supabase Auth
       const { data, error } = await supabase.auth.signInWithPassword({
         email: targetEmail,
         password: pass,
       });
 
-      // If Supabase rejects credentials or password fails, COMPLETELY BLOCK
+      // Handle standard authentication failure
       if (error) {
-        setErrorMsg(formatAuthError(error, 'Invalid email or password.'));
+        const formatted = formatAuthError(error, 'Invalid email or password.');
+        if (formatted) setErrorMsg(formatted);
         setLoading(false);
         return;
       }
 
       if (!data?.user) {
-        setErrorMsg('Authentication failed: No valid server session received.');
+        setErrorMsg('Authentication failed: No user returned.');
         setLoading(false);
         return;
       }
@@ -190,8 +213,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setLoading(false);
       onClose();
     } catch (err: any) {
-      // Strictly block on any authentication error
-      setErrorMsg(formatAuthError(err, 'Authentication error. Please check your credentials.'));
+      const formatted = formatAuthError(err, '');
+      if (formatted) setErrorMsg(formatted);
       setLoading(false);
     }
   };
@@ -228,13 +251,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
 
       if (error) {
-        setErrorMsg(formatAuthError(error, 'Failed to create patient account.'));
+        const formatted = formatAuthError(error, 'Failed to create patient account.');
+        if (formatted) setErrorMsg(formatted);
         setLoading(false);
         return;
       }
 
       if (!data?.user) {
-        setErrorMsg('Sign up failed: No user account returned from server.');
+        setErrorMsg('Sign up failed: No user account returned.');
         setLoading(false);
         return;
       }
@@ -267,7 +291,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setLoading(false);
       }
     } catch (err: any) {
-      setErrorMsg(formatAuthError(err, 'Failed to create account.'));
+      const formatted = formatAuthError(err, '');
+      if (formatted) setErrorMsg(formatted);
       setLoading(false);
     }
   };
@@ -283,7 +308,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
     if (doctorPassword.length < 6) {
-      setErrorMsg('Password must be at least 6 characters.');
+      setErrorMsg(t.authPasswordTooShort || 'Password must be at least 6 characters.');
       return;
     }
     if (!licenseNumber.trim()) {
@@ -327,13 +352,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       });
 
       if (error) {
-        setErrorMsg(formatAuthError(error, 'Failed to register doctor.'));
+        const formatted = formatAuthError(error, 'Failed to register doctor.');
+        if (formatted) setErrorMsg(formatted);
         setLoading(false);
         return;
       }
 
       if (!data?.user) {
-        setErrorMsg('Doctor registration failed: No user account returned from server.');
+        setErrorMsg('Doctor registration failed: No user account returned.');
         setLoading(false);
         return;
       }
@@ -382,7 +408,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setLoading(false);
       }
     } catch (err: any) {
-      setErrorMsg(formatAuthError(err, 'Doctor registration failed.'));
+      const formatted = formatAuthError(err, '');
+      if (formatted) setErrorMsg(formatted);
       setLoading(false);
     }
   };
@@ -569,8 +596,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         {/* Notifications / Alerts */}
         {errorMsg && (
           <div className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
-            <AlertCircle size={16} className="shrink-0" />
-            <span>{errorMsg}</span>
+            <AlertCircle size={16} className="shrink-0 text-rose-600 dark:text-rose-400" />
+            <span className="leading-relaxed flex-1">{errorMsg}</span>
           </div>
         )}
 

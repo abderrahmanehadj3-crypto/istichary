@@ -191,6 +191,9 @@ export default function App() {
         setCurrentUser(null);
         localStorage.removeItem('istichary_user');
       }
+    }).catch((err) => {
+      console.warn('[App] Supabase session retrieval notice:', err);
+      setCurrentUser(null);
     });
 
     // Check URL parameters/hash for password recovery link
