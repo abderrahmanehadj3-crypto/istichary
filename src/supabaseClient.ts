@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Exact production credentials for the Istichary Supabase instance
-export const PRODUCTION_SUPABASE_URL = 'https://oqdgngfhupadfirmsfbfj.supabase.co';
+export const PRODUCTION_SUPABASE_URL = 'https://oqdngfhupadfirmsfbfj.supabase.co';
 export const PRODUCTION_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xZG5nZmh1cGFkZmlybXNmYmZqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxMTQ0MzgsImV4cCI6MjEwNDY5MDQzOH0.JPlKEtFJDoyUlkO2JSkx804o5JT1OyefFftfcqnMOMk';
 
@@ -28,7 +28,7 @@ export const SUPABASE_ANON_KEY: string = cleanEnvVar(
   PRODUCTION_SUPABASE_ANON_KEY
 );
 
-// Initialize Supabase client cleanly without non-standard headers that trigger CORS preflight failures
+// Initialize Supabase client cleanly with real-time WebSocket connections disabled
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
@@ -37,10 +37,8 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     storageKey: 'istichary_sb_auth',
   },
   realtime: {
-    params: {
-      eventsPerSecond: 10,
-    },
-  },
+    enabled: false,
+  } as any,
 });
 
 /**

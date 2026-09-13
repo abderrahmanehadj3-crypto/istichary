@@ -171,10 +171,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         password: pass,
       });
 
-      // Handle standard authentication failure
+      // Handle authentication failure - immediately log and display exact failure reason
       if (error) {
-        const formatted = formatAuthError(error, 'Invalid email or password.');
-        if (formatted) setErrorMsg(formatted);
+        console.error('Supabase sign-in error:', error);
+        setErrorMsg(error.message || 'Invalid email or password.');
         setLoading(false);
         return;
       }
@@ -213,8 +213,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setLoading(false);
       onClose();
     } catch (err: any) {
-      const formatted = formatAuthError(err, '');
-      if (formatted) setErrorMsg(formatted);
+      console.error('Sign-in unexpected exception:', err);
+      setErrorMsg(err?.message || 'Authentication error. Please check your credentials.');
       setLoading(false);
     }
   };
