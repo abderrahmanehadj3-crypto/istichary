@@ -208,6 +208,7 @@ export const arTranslations: Translations = {
   specialtyGeneral: 'الطب العام والداخلي',
   specialtyOrthopedics: 'طب وجراحة العظام',
   specialtyPsychiatry: 'الطب النفسي',
+  specialtyLaboratory: 'مخبري',
 
   // Moderation
   moderationActiveBadge: 'نشط وموثق',

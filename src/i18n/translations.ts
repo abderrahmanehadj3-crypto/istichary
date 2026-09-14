@@ -48,6 +48,8 @@ export function getSpecialtyLabel(specialtyId: string, t: Translations): string 
       return t.specialtyOrthopedics;
     case 'psychiatry':
       return t.specialtyPsychiatry;
+    case 'laboratory':
+      return t.specialtyLaboratory;
     case 'all':
       return t.specialtyAll;
     default:

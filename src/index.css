@@ -16,3 +16,45 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+@keyframes ecgPulse {
+  0% {
+    stroke-dashoffset: 240;
+    opacity: 0.7;
+  }
+  50% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: -240;
+    opacity: 0.7;
+  }
+}
+
+@keyframes heartBeatScale {
+  0%, 100% {
+    transform: scale(1);
+  }
+  14% {
+    transform: scale(1.24);
+  }
+  28% {
+    transform: scale(1);
+  }
+  42% {
+    transform: scale(1.16);
+  }
+  56% {
+    transform: scale(1);
+  }
+}
+
+.animate-heartbeat-trace {
+  animation: ecgPulse 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+.animate-heartbeat-pulse {
+  animation: heartBeatScale 1.3s ease-in-out infinite;
+}
+

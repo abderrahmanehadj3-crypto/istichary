@@ -31,6 +31,7 @@ import { NearbyDoctorsView } from './components/NearbyDoctorsView';
 import { AuthModal, AuthTab } from './components/AuthModal';
 import { NotificationsCenterModal } from './components/NotificationsCenterModal';
 import { RateDoctorModal } from './components/RateDoctorModal';
+import { HeartbeatPullToRefresh } from './components/HeartbeatPullToRefresh';
 import { translations, getTranslations } from './i18n/translations';
 import {
   saveUserToSupabase,
@@ -238,6 +239,17 @@ export default function App() {
         };
         setCurrentUser(account);
         setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
+
+        // Refresh user posts and consultations from Supabase on sign-in
+        fetchConsultationsFromSupabase().then((remotePosts) => {
+          if (remotePosts && remotePosts.length > 0) {
+            setPosts((prev) => {
+              const remoteIds = new Set(remotePosts.map((p) => p.id));
+              const localOnly = prev.filter((p) => !remoteIds.has(p.id));
+              return [...remotePosts, ...localOnly];
+            });
+          }
+        });
       } else if (event === 'SIGNED_OUT' || !session) {
         setCurrentUser(null);
         localStorage.removeItem('istichary_user');
@@ -905,6 +917,22 @@ export default function App() {
     (u) => u.role === 'doctor' && u.verificationStatus === 'pending'
   ).length;
 
+  const handleRefreshData = async () => {
+    try {
+      const remotePosts = await fetchConsultationsFromSupabase();
+      if (remotePosts && remotePosts.length > 0) {
+        setPosts((prev) => {
+          const remoteIds = new Set(remotePosts.map((p) => p.id));
+          const localOnly = prev.filter((p) => !remoteIds.has(p.id));
+          return [...remotePosts, ...localOnly];
+        });
+      }
+      showToast(lang === 'ar' ? 'تم تحديث البيانات الطبية بنجاح' : 'Clinical data refreshed');
+    } catch (err) {
+      console.warn('Pull-to-refresh error:', err);
+    }
+  };
+
   return (
     <div
       id="app-root"
@@ -950,85 +978,90 @@ export default function App() {
 
         {/* Dynamic Body Content by Active Tab */}
         <main id="main-content-scroll" className="flex-1 overflow-y-auto p-4 scroll-smooth">
-          {/* TAB 1: Streamlined Homepage with Prominent Post Input & Consultations */}
-          {activeTab === 'consultations' && (
-            <PublicConsultationsView
-              posts={posts}
-              currentUser={currentUser}
-              lang={lang}
-              followedDoctorIds={currentUser?.followingDoctorIds || []}
-              onToggleFollowDoctor={handleToggleFollowDoctor}
-              onAddPost={handleAddPost}
-              onEditPost={handleEditPost}
-              onDeletePost={handleDeletePost}
-              onAddComment={handleAddComment}
-              onEditComment={handleEditComment}
-              onDeleteComment={handleDeleteComment}
-              onApplyPenalty={handleApplyPenalty}
-              onRequestAuth={() => setIsAuthModalOpen(true)}
-              doctors={doctors}
-              onOpenRatingModal={setRatingModalDoctor}
-              onLikePost={handleLikePost}
-            />
-          )}
+          <HeartbeatPullToRefresh onRefresh={handleRefreshData} lang={lang}>
+            {/* TAB 1: Streamlined Homepage with Prominent Post Input & Consultations */}
+            {activeTab === 'consultations' && (
+              <PublicConsultationsView
+                posts={posts}
+                currentUser={currentUser}
+                lang={lang}
+                followedDoctorIds={currentUser?.followingDoctorIds || []}
+                onToggleFollowDoctor={handleToggleFollowDoctor}
+                onAddPost={handleAddPost}
+                onEditPost={handleEditPost}
+                onDeletePost={handleDeletePost}
+                onAddComment={handleAddComment}
+                onEditComment={handleEditComment}
+                onDeleteComment={handleDeleteComment}
+                onApplyPenalty={handleApplyPenalty}
+                onRequestAuth={() => setIsAuthModalOpen(true)}
+                doctors={doctors}
+                onOpenRatingModal={setRatingModalDoctor}
+                onLikePost={handleLikePost}
+              />
+            )}
 
-          {/* TAB 2: Strictly Restricted Nearby Doctors (Verified clinic locations only) */}
-          {activeTab === 'nearby' && (
-            <NearbyDoctorsView
-              doctors={doctors}
-              currentUser={currentUser}
-              lang={lang}
-              followedDoctorIds={currentUser?.followingDoctorIds || []}
-              onToggleFollow={handleToggleFollowDoctor}
-              onOpenRatingModal={setRatingModalDoctor}
-              onNavigateToProfileClinic={() => setActiveTab('profile')}
-              onRequestAuth={() => setIsAuthModalOpen(true)}
-            />
-          )}
+            {/* TAB 2: Strictly Restricted Nearby Doctors (Verified clinic locations only) */}
+            {activeTab === 'nearby' && (
+              <NearbyDoctorsView
+                doctors={doctors}
+                currentUser={currentUser}
+                lang={lang}
+                followedDoctorIds={currentUser?.followingDoctorIds || []}
+                onToggleFollow={handleToggleFollowDoctor}
+                onOpenRatingModal={setRatingModalDoctor}
+                onNavigateToProfileClinic={() => setActiveTab('profile')}
+                onRequestAuth={() => setIsAuthModalOpen(true)}
+              />
+            )}
 
-          {/* TAB 3: Followed Doctors & Specialists */}
-          {activeTab === 'followed' && (
-            <FollowedView
-              followedDoctorIds={currentUser?.followingDoctorIds || []}
-              doctors={doctors}
-              posts={posts}
-              lang={lang}
-              currentUser={currentUser}
-              onToggleFollow={handleToggleFollowDoctor}
-              onSelectConsultationTab={() => setActiveTab('consultations')}
-              onRequestAuth={() => setIsAuthModalOpen(true)}
-            />
-          )}
+            {/* TAB 3: Followed Doctors & Specialists */}
+            {activeTab === 'followed' && (
+              <FollowedView
+                followedDoctorIds={currentUser?.followingDoctorIds || []}
+                doctors={doctors}
+                posts={posts}
+                lang={lang}
+                currentUser={currentUser}
+                onToggleFollow={handleToggleFollowDoctor}
+                onSelectConsultationTab={() => setActiveTab('consultations')}
+                onRequestAuth={() => setIsAuthModalOpen(true)}
+              />
+            )}
 
-          {/* TAB 4: Profile & Account Management */}
-          {activeTab === 'profile' && (
-            <ProfileView
-              currentUser={currentUser}
-              doctors={doctors}
-              lang={lang}
-              theme={theme}
-              onLanguageChange={handleLanguageChange}
-              onThemeToggle={handleThemeToggle}
-              onSignOut={async () => {
-                try {
-                  await supabase.auth.signOut();
-                } catch (e) {}
-                localStorage.removeItem('istichary_user');
-                setCurrentUser(null);
-                setIsAuthModalOpen(true);
-                showToast('Signed out successfully.');
-              }}
-              onRequestAuth={() => setIsAuthModalOpen(true)}
-              onUpdateEmail={handleUpdateEmail}
-              onChangePassword={handleChangePassword}
-              onDeleteAccount={handleDeleteAccount}
-              onToggleRealName={handleToggleDoctorRealName}
-              onUnfollowDoctor={handleToggleFollowDoctor}
-              onSimulateInactivity={handleSimulateInactivity}
-              onClearModerationPenalty={handleClearModerationPenalty}
-              onUpdateClinicLocation={handleUpdateClinicLocation}
-            />
-          )}
+            {/* TAB 4: Profile & Account Management */}
+            {activeTab === 'profile' && (
+              <ProfileView
+                currentUser={currentUser}
+                doctors={doctors}
+                lang={lang}
+                theme={theme}
+                posts={posts}
+                onSelectConsultationTab={() => setActiveTab('consultations')}
+                onDeletePost={handleDeletePost}
+                onLanguageChange={handleLanguageChange}
+                onThemeToggle={handleThemeToggle}
+                onSignOut={async () => {
+                  try {
+                    await supabase.auth.signOut();
+                  } catch (e) {}
+                  localStorage.removeItem('istichary_user');
+                  setCurrentUser(null);
+                  setIsAuthModalOpen(true);
+                  showToast('Signed out successfully.');
+                }}
+                onRequestAuth={() => setIsAuthModalOpen(true)}
+                onUpdateEmail={handleUpdateEmail}
+                onChangePassword={handleChangePassword}
+                onDeleteAccount={handleDeleteAccount}
+                onToggleRealName={handleToggleDoctorRealName}
+                onUnfollowDoctor={handleToggleFollowDoctor}
+                onSimulateInactivity={handleSimulateInactivity}
+                onClearModerationPenalty={handleClearModerationPenalty}
+                onUpdateClinicLocation={handleUpdateClinicLocation}
+              />
+            )}
+          </HeartbeatPullToRefresh>
         </main>
 
         {/* Minimalist Bottom Navigation */}

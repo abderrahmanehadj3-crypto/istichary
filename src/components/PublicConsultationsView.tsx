@@ -38,7 +38,8 @@ import { translations, getSpecialtyLabel, getUrgencyLabel } from '../i18n/transl
 import { SPECIALIZATIONS, MOCK_DOCTORS } from '../data/mockData';
 import { RoleAvatar } from './RoleAvatar';
 import { evaluateContent, checkUserCanPost } from '../utils/moderation';
-import { formatRelativeTime } from '../utils/timeAgo';
+import { formatRelativeTime, formatPostPublishedTime } from '../utils/timeAgo';
+import { generateUUID } from '../utils/supabaseSync';
 
 interface PublicConsultationsViewProps {
   posts: ConsultationPost[];
@@ -297,7 +298,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
     }
 
     const newPost: ConsultationPost = {
-      id: `post-${Date.now()}`,
+      id: generateUUID(),
       authorId: currentUser.id,
       authorUsername: currentUser.username,
       authorRole: currentUser.role,
@@ -703,7 +704,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                       </div>
                       <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
                         <Clock size={11} />
-                        <span>{formatRelativeTime(post.createdAt, lang)}</span>
+                        <span>{formatPostPublishedTime(post.createdAt, lang)}</span>
                         {post.isEdited && (
                           <span className="text-[10px] text-slate-400 font-medium italic">
                             ({t.editedBadge})

@@ -19,6 +19,21 @@ export interface SyncStatus {
   lastSyncedAt?: string;
 }
 
+export function isValidUUID(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+export function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /**
  * Maps specialty string into a supported SpecializationId
  */
@@ -37,6 +52,7 @@ function mapSpecialtyToId(specStr?: string): SpecializationId {
   if (lower.includes('ortho') || lower.includes('عظام')) return 'orthopedics';
   if (lower.includes('dent') || lower.includes('أسنان')) return 'dentistry';
   if (lower.includes('psych') || lower.includes('نفس')) return 'psychiatry';
+  if (lower.includes('lab') || lower.includes('مخبر') || lower.includes('تحاليل')) return 'laboratory';
   return 'general';
 }
 
@@ -107,21 +123,20 @@ export async function saveUserToSupabase(user: UserAccount): Promise<{ success: 
 
 /**
  * 2. CONSULTATION / POST SYNCHRONIZATION
- * Saves a ConsultationPost directly into public.consultations (matching the Super-Admin dashboard schema)
- * and public.posts (if available).
+ * Saves a ConsultationPost directly into public.consultations (matching the Supabase database schema)
+ * and ensures all post data and user_id linkage persist across sessions.
  */
 export async function saveConsultationToSupabase(
   post: ConsultationPost,
   patientEmail?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const spec = SPECIALIZATIONS.find((s) => s.id === post.specializationId);
-    const specName = spec?.name || 'General Medicine';
+    // Ensure post ID is a valid UUID for Postgres UUID column
+    if (!isValidUUID(post.id)) {
+      post.id = generateUUID();
+    }
 
     const doctorComment = post.comments?.find((c) => c.authorRole === 'doctor');
-    const doctorName = doctorComment?.authorRealName || doctorComment?.authorUsername || null;
-    const doctorSpecialty = doctorComment?.authorSpecialty || null;
-
     let status = 'waiting_doctor';
     if (post.isClosed) {
       status = 'completed';
@@ -129,40 +144,32 @@ export async function saveConsultationToSupabase(
       status = 'in_progress';
     }
 
-    let urgency = 'routine';
-    if (post.urgency === 'high') urgency = 'critical';
-    else if (post.urgency === 'medium') urgency = 'urgent';
-
-    // Format full complaint text
-    const fullComplaint = post.title
-      ? `${post.title}\n\n${post.description}`
-      : post.description;
-
-    const clinicalSummary = post.comments && post.comments.length > 0
-      ? post.comments.map((c) => `${c.authorUsername} (${c.authorSpecialty || c.authorRole}): ${c.content}`).join('\n\n')
-      : null;
-
-    // Schema matching public.consultations in Super-Admin dashboard
-    const consultationPayload = {
-      id: post.id,
-      patient_id: post.authorId,
-      patient_name: post.authorRealName || post.authorUsername,
-      patient_phone: null,
+    const detailsPayload = {
+      user_id: post.authorId,
+      authorId: post.authorId,
+      authorUsername: post.authorUsername,
+      authorRole: post.authorRole || 'patient',
+      authorRealName: post.authorRealName || null,
+      authorSpecialty: post.authorSpecialty || null,
       patient_email: patientEmail || null,
-      doctor_id: doctorComment?.authorId || null,
-      doctor_name: doctorName,
-      doctor_specialty: doctorSpecialty,
-      specialty: specName,
-      type: 'chat',
-      urgency,
+      title: post.title,
+      description: post.description,
+      specializationId: post.specializationId,
+      urgency: post.urgency,
+      comments: post.comments || [],
+      likesCount: post.likesCount || 0,
+      isClosed: !!post.isClosed,
+      isEdited: !!post.isEdited,
+      createdAt: post.createdAt || new Date().toISOString(),
+      updatedAt: post.updatedAt || new Date().toISOString(),
+    };
+
+    const consultationPayload: Record<string, any> = {
+      id: post.id,
+      patient_name: post.authorRealName || post.authorUsername || 'Patient',
       status,
-      chief_complaint: fullComplaint,
-      symptoms_duration: 'Recent inquiry',
-      clinical_summary: clinicalSummary,
-      consultation_fee: 0,
-      currency: 'SAR',
+      details: JSON.stringify(detailsPayload),
       created_at: post.createdAt || new Date().toISOString(),
-      updated_at: post.updatedAt || new Date().toISOString(),
     };
 
     const { error: consultError } = await supabase
@@ -173,14 +180,13 @@ export async function saveConsultationToSupabase(
       console.warn('[SupabaseSync] Upsert to public.consultations error:', consultError.message);
     }
 
-    // Also attempt saving to public.posts for full post metadata preservation
+    // Also try saving to public.posts if the table exists
     try {
       await supabase.from('posts').upsert({
         id: post.id,
+        user_id: post.authorId,
         author_id: post.authorId,
         author_username: post.authorUsername,
-        author_role: post.authorRole || 'patient',
-        author_real_name: post.authorRealName || null,
         title: post.title,
         description: post.description,
         specialization_id: post.specializationId,
@@ -192,7 +198,7 @@ export async function saveConsultationToSupabase(
         updated_at: post.updatedAt || post.createdAt,
       }, { onConflict: 'id' });
     } catch {
-      // Ignore posts table failure if only consultations exists
+      // Ignore if posts table doesn't exist
     }
 
     return { success: !consultError, error: consultError?.message };
@@ -204,7 +210,7 @@ export async function saveConsultationToSupabase(
 
 /**
  * 3. UPDATE CONSULTATION COMMENTS / RESPONSES
- * Updates doctor replies and clinical summary in public.consultations and public.posts
+ * Updates doctor replies and clinical status in public.consultations
  */
 export async function updateConsultationCommentsInSupabase(
   postId: string,
@@ -213,9 +219,6 @@ export async function updateConsultationCommentsInSupabase(
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const doctorComment = comments.find((c) => c.authorRole === 'doctor');
-    const doctorName = doctorComment?.authorRealName || doctorComment?.authorUsername || null;
-    const doctorSpecialty = doctorComment?.authorSpecialty || null;
-
     let status = 'waiting_doctor';
     if (isClosed) {
       status = 'completed';
@@ -223,27 +226,41 @@ export async function updateConsultationCommentsInSupabase(
       status = 'in_progress';
     }
 
-    const clinicalSummary = comments.length > 0
-      ? comments.map((c) => `${c.authorUsername} (${c.authorSpecialty || c.authorRole}): ${c.content}`).join('\n\n')
-      : null;
+    // Fetch existing row to preserve other details
+    const { data: existing } = await supabase
+      .from('consultations')
+      .select('*')
+      .eq('id', postId)
+      .maybeSingle();
+
+    let detailsObj: any = {};
+    if (existing?.details) {
+      try {
+        detailsObj = typeof existing.details === 'object' ? existing.details : JSON.parse(existing.details);
+      } catch {
+        detailsObj = { description: existing.details };
+      }
+    }
+
+    detailsObj.comments = comments;
+    if (isClosed !== undefined) detailsObj.isClosed = isClosed;
+    detailsObj.updatedAt = new Date().toISOString();
 
     const { error } = await supabase
       .from('consultations')
       .update({
-        doctor_name: doctorName,
-        doctor_specialty: doctorSpecialty,
         status,
-        clinical_summary: clinicalSummary,
-        updated_at: new Date().toISOString(),
+        details: JSON.stringify(detailsObj),
       })
       .eq('id', postId);
 
-    // Also update posts table comments payload
+    // Also update posts table if available
     try {
       await supabase
         .from('posts')
         .update({
           comments: JSON.stringify(comments),
+          is_closed: isClosed,
           updated_at: new Date().toISOString(),
         })
         .eq('id', postId);
@@ -272,7 +289,8 @@ export async function deleteConsultationFromSupabase(postId: string): Promise<{ 
 
 /**
  * 5. FETCH CONSULTATIONS FROM SUPABASE
- * Loads public consultations directly from the Supabase production project
+ * Loads public consultations directly from the Supabase production project,
+ * linking every post to its user_id and preserving full metadata.
  */
 export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost[]> {
   try {
@@ -288,25 +306,47 @@ export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost
 
     // Map each database row into ConsultationPost
     return data.map((row: any): ConsultationPost => {
-      const id = String(row.id || `cns-${Math.random().toString(36).slice(2, 9)}`);
-      const authorId = String(row.patient_id || row.user_id || 'remote-patient');
-      const authorUsername = String(row.patient_name || 'Patient');
+      const id = String(row.id);
+      
+      let meta: any = {};
+      if (row.details) {
+        if (typeof row.details === 'object' && row.details !== null) {
+          meta = row.details;
+        } else if (typeof row.details === 'string') {
+          try {
+            meta = JSON.parse(row.details);
+          } catch {
+            meta = { description: row.details };
+          }
+        }
+      }
 
-      // Deconstruct chief complaint into title and description
-      const complaint = String(row.chief_complaint || row.description || 'Medical inquiry');
-      const lines = complaint.split('\n').map((l) => l.trim()).filter(Boolean);
-      const title = lines.length > 0 ? lines[0].slice(0, 90) : 'Medical Inquiry';
-      const description = lines.length > 1 ? lines.slice(1).join('\n') : complaint;
+      const authorId = String(meta.user_id || meta.authorId || row.patient_id || row.user_id || 'remote-patient');
+      const authorUsername = String(meta.authorUsername || row.patient_name || 'Patient');
+
+      // Title & Description resolution
+      let title = meta.title;
+      let description = meta.description;
+      if (!title && !description) {
+        const complaint = String(row.chief_complaint || row.details || 'Medical inquiry');
+        const lines = complaint.split('\n').map((l: string) => l.trim()).filter(Boolean);
+        title = lines.length > 0 ? lines[0].slice(0, 90) : 'Medical Inquiry';
+        description = lines.length > 1 ? lines.slice(1).join('\n') : complaint;
+      } else if (!title) {
+        title = 'Medical Inquiry';
+      }
 
       // Urgency mapping
       let urgency: 'low' | 'medium' | 'high' = 'medium';
-      const rawUrgency = String(row.urgency || '').toLowerCase();
+      const rawUrgency = String(meta.urgency || row.urgency || '').toLowerCase();
       if (rawUrgency.includes('crit') || rawUrgency.includes('high')) urgency = 'high';
       else if (rawUrgency.includes('rout') || rawUrgency.includes('low')) urgency = 'low';
 
-      // Parse comments from clinical_summary or doctor response
-      const comments: ConsultationComment[] = [];
-      if (row.doctor_name) {
+      // Comments resolution
+      let comments: ConsultationComment[] = [];
+      if (Array.isArray(meta.comments)) {
+        comments = meta.comments;
+      } else if (row.doctor_name) {
         comments.push({
           id: `reply-${id}-1`,
           postId: id,
@@ -321,19 +361,26 @@ export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost
         });
       }
 
+      const createdAt = row.created_at || meta.createdAt || new Date().toISOString();
+      const updatedAt = meta.updatedAt || row.updated_at || createdAt;
+
       return {
         id,
         authorId,
         authorUsername,
+        authorRole: meta.authorRole || 'patient',
+        authorRealName: meta.authorRealName || undefined,
+        authorSpecialty: meta.authorSpecialty || undefined,
         title,
-        description,
-        specializationId: mapSpecialtyToId(row.specialty),
+        description: description || '',
+        specializationId: (meta.specializationId as SpecializationId) || mapSpecialtyToId(meta.specialty || row.specialty),
         urgency,
-        createdAt: row.created_at || new Date().toISOString(),
-        updatedAt: row.updated_at,
-        isClosed: row.status === 'completed' || row.status === 'cancelled',
+        createdAt,
+        updatedAt,
+        isClosed: row.status === 'completed' || row.status === 'cancelled' || !!meta.isClosed,
+        isEdited: !!meta.isEdited,
         comments,
-        likesCount: 0,
+        likesCount: typeof meta.likesCount === 'number' ? meta.likesCount : 0,
       };
     });
   } catch (err) {

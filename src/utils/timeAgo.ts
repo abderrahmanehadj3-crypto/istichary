@@ -140,3 +140,53 @@ export function formatRelativeTime(
   }
   return years <= 1 ? '1 year ago' : `${years} years ago`;
 }
+
+/**
+ * Formats post creation time as an accurate, human-readable relative timestamp
+ * e.g. "Published 3 hours ago" / "نُشر منذ 3 ساعات" / "Publié il y a 3 heures"
+ */
+export function formatPostPublishedTime(
+  input: string | number | Date | null | undefined,
+  lang: Language = 'ar'
+): string {
+  const relative = formatRelativeTime(input, lang);
+
+  if (lang === 'ar') {
+    if (relative === 'الآن' || relative === 'منذ لحظات') {
+      return 'نُشر الآن';
+    }
+    if (relative === 'أمس') {
+      return 'نُشر أمس';
+    }
+    if (relative.startsWith('نُشر ')) {
+      return relative;
+    }
+    return `نُشر ${relative}`;
+  }
+
+  if (lang === 'fr') {
+    if (relative === "à l'instant") {
+      return "Publié à l'instant";
+    }
+    if (relative === 'hier') {
+      return 'Publié hier';
+    }
+    if (relative.startsWith('Publié')) {
+      return relative;
+    }
+    return `Publié ${relative}`;
+  }
+
+  // English
+  if (relative === 'just now') {
+    return 'Published just now';
+  }
+  if (relative === 'yesterday') {
+    return 'Published yesterday';
+  }
+  if (relative.startsWith('Published ')) {
+    return relative;
+  }
+  return `Published ${relative}`;
+}
+

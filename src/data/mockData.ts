@@ -64,6 +64,13 @@ export const SPECIALIZATIONS: Specialization[] = [
     doctorCount: 6,
     description: 'Mental health, anxiety, and behavioral therapy',
   },
+  {
+    id: 'laboratory',
+    name: 'Laboratory',
+    iconName: 'FlaskConical',
+    doctorCount: 4,
+    description: 'Medical laboratory tests, blood analysis, pathology, and diagnostics',
+  },
 ];
 
 export const MOCK_DOCTORS: DoctorProfile[] = [];

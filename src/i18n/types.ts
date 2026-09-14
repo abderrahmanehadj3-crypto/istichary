@@ -206,6 +206,7 @@ export interface Translations {
   specialtyGeneral: string;
   specialtyOrthopedics: string;
   specialtyPsychiatry: string;
+  specialtyLaboratory: string;
 
   // Moderation
   moderationActiveBadge: string;

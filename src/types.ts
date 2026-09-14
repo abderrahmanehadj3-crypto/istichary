@@ -63,7 +63,8 @@ export type SpecializationId =
   | 'general'
   | 'orthopedics'
   | 'dentistry'
-  | 'psychiatry';
+  | 'psychiatry'
+  | 'laboratory';
 
 export interface Specialization {
   id: SpecializationId;

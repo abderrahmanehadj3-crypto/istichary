@@ -208,6 +208,7 @@ export const frTranslations: Translations = {
   specialtyGeneral: 'Médecine Générale',
   specialtyOrthopedics: 'Orthopédie',
   specialtyPsychiatry: 'Psychiatrie',
+  specialtyLaboratory: 'Laboratoire',
 
   // Moderation
   moderationActiveBadge: 'Actif & Vérifié',

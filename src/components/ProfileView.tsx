@@ -25,17 +25,25 @@ import {
   UserMinus,
   Edit2,
   RefreshCw,
+  MessageSquare,
+  ExternalLink,
+  PlusCircle,
 } from 'lucide-react';
-import { UserAccount, Language, ThemeMode, DoctorProfile } from '../types';
-import { translations } from '../i18n/translations';
+import { UserAccount, Language, ThemeMode, DoctorProfile, ConsultationPost } from '../types';
+import { translations, getSpecialtyLabel, getUrgencyLabel } from '../i18n/translations';
 import { RoleAvatar } from './RoleAvatar';
 import { MOCK_DOCTORS } from '../data/mockData';
+import { formatPostPublishedTime } from '../utils/timeAgo';
+import { SpecializationIcon } from './SpecializationIcons';
 
 interface ProfileViewProps {
   currentUser: UserAccount | null;
   doctors: DoctorProfile[];
   lang: Language;
   theme: ThemeMode;
+  posts?: ConsultationPost[];
+  onSelectConsultationTab?: () => void;
+  onDeletePost?: (postId: string) => void;
   onLanguageChange: (newLang: Language) => void;
   onThemeToggle: () => void;
   onSignOut: () => void;
@@ -61,6 +69,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   doctors,
   lang,
   theme,
+  posts = [],
+  onSelectConsultationTab,
+  onDeletePost,
   onLanguageChange,
   onThemeToggle,
   onSignOut,
@@ -75,6 +86,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onUpdateClinicLocation,
 }) => {
   const t = translations[lang];
+
+  // Filter posts published by current user
+  const userPosts = posts.filter(
+    (p) => p.authorId === currentUser?.id || p.authorUsername === currentUser?.username
+  );
 
   // Email Update State
   const [isUpdatingEmail, setIsUpdatingEmail] = useState(false);
@@ -287,7 +303,150 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         )}
       </div>
 
-      {/* 2. EMAIL UPDATE SECTION (STRICT PRIVACY) */}
+      {/* 2. DEDICATED USER POSTS & INQUIRIES VIEW */}
+      <div id="profile-user-posts-section" className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageSquare size={16} className="text-emerald-600 dark:text-emerald-400" />
+            <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+              {lang === 'ar' ? 'استشاراتي ومنشوراتي الطبية' : lang === 'fr' ? 'Mes consultations publiées' : 'My Published Inquiries'}
+            </h4>
+          </div>
+          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+            {userPosts.length} {lang === 'ar' ? 'استشارة' : 'posts'}
+          </span>
+        </div>
+
+        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+          {lang === 'ar'
+            ? 'جميع الاستشارات والأسئلة الطبية التي قمت بنشرها مع تفاصيل التوقيت وردود الأطباء المتخصصين.'
+            : lang === 'fr'
+            ? 'Toutes vos consultations et questions médicales publiées avec réponses des médecins.'
+            : 'All medical inquiries and clinical posts you have published, along with responses from verified doctors.'}
+        </p>
+
+        {userPosts.length === 0 ? (
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-dashed border-slate-200 dark:border-slate-700 text-center space-y-2.5">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {lang === 'ar'
+                ? 'لم تقم بنشر أي استشارات طبية حتى الآن.'
+                : lang === 'fr'
+                ? 'Vous n\'avez pas encore publié de consultation médicale.'
+                : 'You have not published any medical inquiries yet.'}
+            </p>
+            {onSelectConsultationTab && (
+              <button
+                id="btn-profile-create-first-inquiry"
+                type="button"
+                onClick={onSelectConsultationTab}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition cursor-pointer"
+              >
+                <PlusCircle size={13} />
+                <span>{lang === 'ar' ? 'طرح استشارة جديدة' : lang === 'fr' ? 'Poser une question' : 'Ask a Medical Inquiry'}</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-0.5 no-scrollbar">
+            {userPosts.map((post) => {
+              const specLabel = getSpecialtyLabel(post.specializationId, lang);
+              const urgencyLabel = getUrgencyLabel(post.urgency, lang);
+              const doctorReply = post.comments?.find((c) => c.authorRole === 'doctor');
+              const relativeTime = formatPostPublishedTime(post.createdAt, lang);
+
+              return (
+                <div
+                  key={post.id}
+                  id={`profile-post-card-${post.id}`}
+                  className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-700/80 hover:border-emerald-500/40 transition space-y-2 text-left rtl:text-right"
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-white dark:bg-slate-800 text-emerald-700 dark:text-emerald-300 border border-slate-200 dark:border-slate-700">
+                        <SpecializationIcon specializationId={post.specializationId} size={11} />
+                        <span>{specLabel}</span>
+                      </span>
+
+                      <span
+                        className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase ${
+                          post.urgency === 'high'
+                            ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300'
+                            : post.urgency === 'medium'
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300'
+                            : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                        }`}
+                      >
+                        {urgencyLabel}
+                      </span>
+                    </div>
+
+                    <span className="text-[11px] text-slate-400 font-medium flex items-center gap-1">
+                      <Clock size={11} />
+                      <span>{relativeTime}</span>
+                    </span>
+                  </div>
+
+                  <div>
+                    <h5 className="text-xs font-bold text-slate-900 dark:text-white line-clamp-1">
+                      {post.title}
+                    </h5>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2 mt-0.5 leading-relaxed">
+                      {post.description}
+                    </p>
+                  </div>
+
+                  <div className="pt-1.5 border-t border-slate-200/60 dark:border-slate-800 flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                      <MessageSquare size={12} className="text-emerald-600 dark:text-emerald-400" />
+                      <span>
+                        {post.comments?.length || 0}{' '}
+                        {lang === 'ar' ? 'رد طبي' : lang === 'fr' ? 'réponses' : 'replies'}
+                      </span>
+                      {doctorReply && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          {lang === 'ar' ? 'أجاب طبيب' : 'Doctor replied'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      {onSelectConsultationTab && (
+                        <button
+                          id={`btn-view-profile-post-${post.id}`}
+                          type="button"
+                          onClick={onSelectConsultationTab}
+                          className="px-2 py-1 rounded-lg text-[11px] font-semibold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/50 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 flex items-center gap-1 transition cursor-pointer"
+                        >
+                          <ExternalLink size={11} />
+                          <span>{lang === 'ar' ? 'عرض' : lang === 'fr' ? 'Voir' : 'View'}</span>
+                        </button>
+                      )}
+
+                      {onDeletePost && (
+                        <button
+                          id={`btn-delete-profile-post-${post.id}`}
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(lang === 'ar' ? 'هل تريد حذف هذه الاستشارة؟' : 'Delete this inquiry?')) {
+                              onDeletePost(post.id);
+                            }
+                          }}
+                          className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+                          title="Delete"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* 3. EMAIL UPDATE SECTION (STRICT PRIVACY) */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
