@@ -12,11 +12,11 @@ import {
   FileCheck,
   ShieldCheck,
   KeyRound,
+  RefreshCw,
 } from 'lucide-react';
 import { UserAccount, Language, SpecializationId, VerificationDocument } from '../types';
 import { translations } from '../i18n/translations';
 import { SPECIALIZATIONS } from '../data/mockData';
-import { getVercelRedirectUrl } from '../utils/adminLink';
 import { saveUserToSupabase } from '../utils/supabaseSync';
 
 interface AuthModalProps {
@@ -33,7 +33,7 @@ interface AuthModalProps {
   ) => void;
 }
 
-export type AuthTab = 'signin' | 'signup_patient' | 'signup_doctor' | 'forgot_password' | 'update_password';
+export type AuthTab = 'signin' | 'signup_patient' | 'signup_doctor' | 'forgot_password' | 'update_password' | 'verify_otp';
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
@@ -90,6 +90,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [resetCodeSent, setResetCodeSent] = useState(false);
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
+
+  // 6-digit OTP verification state
+  const [otpCode, setOtpCode] = useState('');
+  const [otpEmail, setOtpEmail] = useState('');
+  const [otpPurpose, setOtpPurpose] = useState<'signup' | 'recovery'>('recovery');
+  const [pendingSignupUser, setPendingSignupUser] = useState<UserAccount | null>(null);
 
   if (!isOpen) return null;
 
@@ -287,7 +293,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onClose();
         }, 800);
       } else {
-        setInfoMsg('Account created! If confirmation is required, please check your email inbox.');
+        setPendingSignupUser(newPatient);
+        setOtpEmail(cleanEmail);
+        setOtpPurpose('signup');
+        setOtpCode('');
+        setActiveTab('verify_otp');
+        setInfoMsg(
+          lang === 'ar'
+            ? `تم إرسال رمز التحقق المكون من 6 أرقام إلى ${cleanEmail}. يرجى إدخال الرمز لتفعيل الحساب.`
+            : `A 6-digit verification code has been sent to ${cleanEmail}. Please enter the code below to activate your account.`
+        );
         setLoading(false);
       }
     } catch (err: any) {
@@ -404,7 +419,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onClose();
         }, 1200);
       } else {
-        setInfoMsg('Doctor account registered! Please check your email to confirm registration before signing in.');
+        setPendingSignupUser(newDoctor);
+        setOtpEmail(cleanEmail);
+        setOtpPurpose('signup');
+        setOtpCode('');
+        setActiveTab('verify_otp');
+        setInfoMsg(
+          lang === 'ar'
+            ? `تم إرسال رمز التحقق المكون من 6 أرقام إلى ${cleanEmail}. يرجى إدخال الرمز لتأكيد بريدك الإلكتروني.`
+            : `A 6-digit verification code has been sent to ${cleanEmail}. Please enter the code below to activate your doctor account.`
+        );
         setLoading(false);
       }
     } catch (err: any) {
@@ -414,7 +438,62 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
-  // Forgot Password Handler
+  // Resend 6-digit OTP verification code
+  const handleResendOtp = async (targetEmail: string, purpose: 'recovery' | 'signup') => {
+    if (!targetEmail) return;
+    setErrorMsg('');
+    setInfoMsg('');
+    setLoading(true);
+
+    try {
+      if (purpose === 'recovery') {
+        let { error } = await supabase.auth.signInWithOtp({
+          email: targetEmail,
+          options: { shouldCreateUser: false },
+        });
+        if (error) {
+          const res = await supabase.auth.resetPasswordForEmail(targetEmail);
+          error = res.error;
+        }
+        if (error) {
+          setErrorMsg(formatAuthError(error, 'Failed to resend verification code.'));
+        } else {
+          setInfoMsg(
+            lang === 'ar'
+              ? `تم إرسال رمز تحقق جديد (6 أرقام) إلى ${targetEmail}.`
+              : `A new 6-digit verification code has been sent to ${targetEmail}.`
+          );
+        }
+      } else {
+        let { error } = await supabase.auth.signInWithOtp({
+          email: targetEmail,
+          options: { shouldCreateUser: true },
+        });
+        if (error) {
+          const res = await supabase.auth.resend({
+            type: 'signup',
+            email: targetEmail,
+          });
+          error = res.error;
+        }
+        if (error) {
+          setErrorMsg(formatAuthError(error, 'Failed to resend verification code.'));
+        } else {
+          setInfoMsg(
+            lang === 'ar'
+              ? `تم إرسال رمز تحقق جديد (6 أرقام) إلى ${targetEmail}.`
+              : `A new 6-digit verification code has been sent to ${targetEmail}.`
+          );
+        }
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to resend verification code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Forgot Password Handler - Dispatches 6-digit OTP verification code via Supabase
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -422,35 +501,258 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const email = forgotEmail.trim().toLowerCase();
     if (!email) {
-      setErrorMsg('Please enter your registered email address.');
+      setErrorMsg(
+        lang === 'ar'
+          ? 'يرجى إدخال عنوان بريدك الإلكتروني المسجل.'
+          : 'Please enter your registered email address.'
+      );
       return;
     }
 
     setLoading(true);
     try {
-      // Use the verified Vercel production domain redirect URL
-      const redirectUrl = getVercelRedirectUrl();
-
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
+      // 1. Primary: Use signInWithOtp to send 6-digit code to email (no redirect URL dependency)
+      let { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: false,
+        },
       });
 
+      // 2. Fallback: resetPasswordForEmail without any localhost or redirect URL
       if (error) {
-        setErrorMsg(formatAuthError(error, 'Failed to send password reset email.'));
+        console.warn('signInWithOtp error, falling back to resetPasswordForEmail:', error.message);
+        const res = await supabase.auth.resetPasswordForEmail(email);
+        error = res.error;
+      }
+
+      if (error) {
+        setErrorMsg(formatAuthError(error, 'Failed to send password reset code.'));
       } else {
         setResetCodeSent(true);
+        setOtpEmail(email);
+        setOtpPurpose('recovery');
+        setOtpCode('');
         setInfoMsg(
-          `Verification and password reset link sent to ${email} (redirect: ${redirectUrl}). Sender: Istichary. Please check your inbox.`
+          lang === 'ar'
+            ? `تم إرسال رمز التحقق (6 أرقام) إلى ${email}. يرجى إدخال الرمز أدناه لتحديث كلمة المرور.`
+            : lang === 'fr'
+            ? `Un code de vérification à 6 chiffres a été envoyé à ${email}. Entrez-le ci-dessous pour réinitialiser votre mot de passe.`
+            : `A 6-digit verification code has been sent to ${email}. Please enter the code below to reset your password.`
         );
       }
     } catch (err: any) {
-      setErrorMsg(formatAuthError(err, 'Failed to send password reset link.'));
+      setErrorMsg(formatAuthError(err, 'Failed to send password reset code.'));
     } finally {
       setLoading(false);
     }
   };
 
-  // Set New Password Handler (triggered after user clicks recovery link in email)
+  // Verify Recovery OTP & Reset Password
+  const handleVerifyRecoveryOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setInfoMsg('');
+
+    const cleanCode = otpCode.trim();
+    const email = (otpEmail || forgotEmail).trim().toLowerCase();
+
+    if (!cleanCode || cleanCode.length < 6) {
+      setErrorMsg(
+        lang === 'ar'
+          ? 'يرجى إدخال رمز التحقق المكون من 6 أرقام كاملاً.'
+          : 'Please enter the complete 6-digit verification code.'
+      );
+      return;
+    }
+
+    if (newPassword.length < 6) {
+      setErrorMsg(
+        lang === 'ar'
+          ? 'يجب ألا تقل كلمة المرور الجديدة عن 6 أحرف.'
+          : 'New password must be at least 6 characters.'
+      );
+      return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+      setErrorMsg(t.authPasswordsDoNotMatch || 'Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      // 1. Verify 6-digit OTP with Supabase verifyOtp
+      let verifyRes = await supabase.auth.verifyOtp({
+        email,
+        token: cleanCode,
+        type: 'recovery',
+      });
+
+      if (verifyRes.error) {
+        verifyRes = await supabase.auth.verifyOtp({
+          email,
+          token: cleanCode,
+          type: 'email',
+        });
+      }
+
+      if (verifyRes.error) {
+        setErrorMsg(
+          formatAuthError(
+            verifyRes.error,
+            lang === 'ar'
+              ? 'رمز التحقق غير صحيح أو انتهت صلاحيته. يرجى التحقق من الرمز أو طلب رمز جديد.'
+              : 'Invalid or expired verification code. Please check your email or request a new code.'
+          )
+        );
+        setLoading(false);
+        return;
+      }
+
+      // 2. Active session is now verified, update user password
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (updateError) {
+        setErrorMsg(formatAuthError(updateError, 'Failed to update password.'));
+        setLoading(false);
+        return;
+      }
+
+      setInfoMsg(
+        lang === 'ar'
+          ? 'تم التحقق بنجاح وتحديث كلمة المرور! تم تسجيل دخولك.'
+          : 'Password reset successfully! You are now logged in.'
+      );
+
+      const u = verifyRes.data?.user;
+      if (u) {
+        const userMeta = u.user_metadata || {};
+        const signedInUser: UserAccount = {
+          id: u.id,
+          username: userMeta.username || normalizeUsername(u.email?.split('@')[0] || 'user'),
+          email: u.email || email,
+          role: userMeta.role || 'patient',
+          lastLoginDate: new Date().toISOString(),
+          isDeactivatedInactive: false,
+          moderationStatus: 'active',
+          followingDoctorIds: [],
+          realName: userMeta.realName,
+          showRealName: userMeta.showRealName,
+          specialty: userMeta.specialty,
+          specializationId: userMeta.specializationId,
+          medicalLicenseNumber: userMeta.medicalLicenseNumber,
+          hospitalOrClinic: userMeta.hospitalOrClinic,
+          verificationStatus: userMeta.verificationStatus,
+        };
+        saveUserToSupabase(signedInUser).catch(() => {});
+        onAuthSuccess(signedInUser);
+      }
+
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setOtpCode('');
+      setResetCodeSent(false);
+
+      setTimeout(() => {
+        setLoading(false);
+        onClose();
+      }, 1200);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Failed to verify code and update password.');
+      setLoading(false);
+    }
+  };
+
+  // Verify 6-digit OTP code for Email Sign-Up
+  const handleVerifySignupOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setInfoMsg('');
+
+    const cleanCode = otpCode.trim();
+    const email = (otpEmail || patientEmail || doctorEmail).trim().toLowerCase();
+
+    if (!cleanCode || cleanCode.length < 6) {
+      setErrorMsg(
+        lang === 'ar'
+          ? 'يرجى إدخال رمز التحقق المكون من 6 أرقام كاملاً.'
+          : 'Please enter the complete 6-digit verification code.'
+      );
+      return;
+    }
+
+    setLoading(true);
+    try {
+      let verifyRes = await supabase.auth.verifyOtp({
+        email,
+        token: cleanCode,
+        type: 'signup',
+      });
+
+      if (verifyRes.error) {
+        verifyRes = await supabase.auth.verifyOtp({
+          email,
+          token: cleanCode,
+          type: 'email',
+        });
+      }
+
+      if (verifyRes.error) {
+        setErrorMsg(
+          formatAuthError(
+            verifyRes.error,
+            lang === 'ar'
+              ? 'رمز التحقق غير صحيح أو انتهت صلاحيته. يرجى التأكد من الرمز أو طلب رمز جديد.'
+              : 'Invalid or expired verification code. Please check your email or request a new code.'
+          )
+        );
+        setLoading(false);
+        return;
+      }
+
+      const u = verifyRes.data?.user;
+      const userMeta = u?.user_metadata || {};
+      const verifiedUser: UserAccount = pendingSignupUser || {
+        id: u?.id || `user-${Date.now()}`,
+        username: userMeta.username || normalizeUsername(email.split('@')[0]),
+        email: u?.email || email,
+        role: userMeta.role || 'patient',
+        lastLoginDate: new Date().toISOString(),
+        isDeactivatedInactive: false,
+        moderationStatus: 'active',
+        followingDoctorIds: [],
+        realName: userMeta.realName,
+        showRealName: userMeta.showRealName,
+        specialty: userMeta.specialty,
+        specializationId: userMeta.specializationId,
+        medicalLicenseNumber: userMeta.medicalLicenseNumber,
+        hospitalOrClinic: userMeta.hospitalOrClinic,
+        verificationStatus: userMeta.verificationStatus || (userMeta.role === 'doctor' ? 'pending' : undefined),
+      };
+
+      await saveUserToSupabase(verifiedUser);
+      onAuthSuccess(verifiedUser);
+
+      setInfoMsg(
+        lang === 'ar'
+          ? 'تم التحقق من حسابك وتفعيله بنجاح! تم تسجيل الدخول.'
+          : 'Your account has been verified and activated successfully! You are now signed in.'
+      );
+
+      setTimeout(() => {
+        setLoading(false);
+        onClose();
+      }, 900);
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Verification failed.');
+      setLoading(false);
+    }
+  };
+
+  // Set New Password Handler (triggered after user verifies recovery or enters recovery state)
   const handleUpdatePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -468,6 +770,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
+      // If otpCode is entered, verify OTP first
+      if (otpCode.trim().length === 6 && (forgotEmail || otpEmail)) {
+        const email = (forgotEmail || otpEmail).trim().toLowerCase();
+        let verifyRes = await supabase.auth.verifyOtp({
+          email,
+          token: otpCode.trim(),
+          type: 'recovery',
+        });
+        if (verifyRes.error) {
+          verifyRes = await supabase.auth.verifyOtp({
+            email,
+            token: otpCode.trim(),
+            type: 'email',
+          });
+        }
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
@@ -481,6 +800,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setInfoMsg('Your password has been reset successfully! You can now sign in with your new password.');
       setNewPassword('');
       setConfirmNewPassword('');
+      setOtpCode('');
       // Clean up recovery hash parameters from address bar
       if (typeof window !== 'undefined' && window.history.replaceState) {
         window.history.replaceState(null, '', window.location.pathname);
@@ -582,6 +902,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           >
             {t.signUpAsDoctor || 'Doctor Sign Up'}
           </button>
+          {activeTab === 'verify_otp' && (
+            <button
+              id="tab-btn-verify-otp"
+              type="button"
+              className="flex-1 py-2 rounded-xl transition bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-sm font-bold"
+            >
+              {lang === 'ar' ? 'تأكيد الرمز' : 'Verify Code'}
+            </button>
+          )}
           {activeTab === 'update_password' && (
             <button
               id="tab-btn-update-password"
@@ -668,6 +997,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             >
               {loading ? 'Authenticating...' : t.signIn || 'Sign In'}
             </button>
+
+            {otpEmail && errorMsg && (errorMsg.toLowerCase().includes('not confirmed') || errorMsg.includes('غير مؤكد')) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('verify_otp');
+                  handleResendOtp(otpEmail, 'signup');
+                }}
+                className="w-full py-2.5 px-3 rounded-xl bg-sky-50 dark:bg-sky-950/50 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300 text-xs font-semibold hover:bg-sky-100 dark:hover:bg-sky-900/60 transition cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <ShieldCheck size={15} />
+                <span>{lang === 'ar' ? 'إدخال رمز التحقق (6 أرقام) لتفعيل الحساب' : 'Enter 6-digit OTP code to verify account'}</span>
+              </button>
+            )}
           </form>
         )}
 
@@ -890,50 +1233,247 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </form>
         )}
 
-        {/* TAB 4: FORGOT PASSWORD */}
+        {/* TAB 4: FORGOT PASSWORD & 6-DIGIT OTP RECOVERY */}
         {activeTab === 'forgot_password' && (
           <div className="space-y-4">
-            <form onSubmit={handleForgotPassword} className="space-y-3.5">
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                Enter your registered email address to receive an official verification link and password reset instructions directly from Istichary.
-              </p>
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    id="forgot-password-email-input"
-                    type="email"
-                    required
-                    value={forgotEmail}
-                    onChange={(e) => setForgotEmail(e.target.value)}
-                    placeholder="name@example.com"
-                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
-                  />
+            {!resetCodeSent ? (
+              <form onSubmit={handleForgotPassword} className="space-y-3.5">
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  {lang === 'ar'
+                    ? 'أدخل بريدك الإلكتروني المسجل لتلقي رمز التحقق المكون من 6 أرقام (OTP) لإعادة تعيين كلمة المرور بشكل فوري دون الحاجة إلى روابط خارجية.'
+                    : lang === 'fr'
+                    ? 'Entrez votre adresse e-mail pour recevoir un code de vérification à 6 chiffres (OTP) afin de réinitialiser votre mot de passe en toute sécurité.'
+                    : 'Enter your registered email address to receive a secure 6-digit verification code (OTP) to reset your password directly.'}
+                </p>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {t.email || 'Email Address'}
+                  </label>
+                  <div className="relative">
+                    <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="forgot-password-email-input"
+                      type="email"
+                      required
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="name@example.com"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              <button
-                id="btn-send-reset-link"
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 rounded-2xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
-              >
-                {loading ? 'Sending Verification Link...' : 'Send Verification & Reset Link'}
-              </button>
-            </form>
+                <button
+                  id="btn-send-reset-link"
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-2xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
+                >
+                  {loading
+                    ? (lang === 'ar' ? 'جارٍ إرسال رمز التحقق...' : 'Sending Verification Code...')
+                    : (lang === 'ar' ? 'إرسال رمز التحقق (OTP)' : 'Send 6-Digit Verification Code')}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleVerifyRecoveryOtp} className="space-y-3.5">
+                <div className="p-3 bg-sky-50 dark:bg-sky-950/40 border border-sky-100 dark:border-sky-900 rounded-2xl text-xs text-sky-800 dark:text-sky-300 flex items-start gap-2.5">
+                  <ShieldCheck size={18} className="shrink-0 text-sky-600 dark:text-sky-400 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block">
+                      {lang === 'ar' ? 'تم إرسال رمز التحقق (OTP)' : '6-Digit Code Sent'}
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-300 block">
+                      {lang === 'ar'
+                        ? `تم إرسال الرمز المكون من 6 أرقام إلى ${forgotEmail}. أدخل الرمز وكلمة المرور الجديدة.`
+                        : `We sent a 6-digit code to ${forgotEmail}. Enter it below with your new password.`}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {lang === 'ar' ? 'رمز التحقق (6 أرقام)' : '6-Digit Verification Code (OTP)'}
+                  </label>
+                  <div className="relative">
+                    <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="forgot-password-otp-input"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      required
+                      maxLength={6}
+                      value={otpCode}
+                      onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="123456"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-sm tracking-[0.25em] font-mono text-slate-900 dark:text-white text-center focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {lang === 'ar' ? 'كلمة المرور الجديدة' : 'New Password'}
+                  </label>
+                  <div className="relative">
+                    <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="forgot-password-new-password"
+                      type="password"
+                      required
+                      minLength={6}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Min 6 characters"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {lang === 'ar' ? 'تأكيد كلمة المرور الجديدة' : 'Confirm New Password'}
+                  </label>
+                  <div className="relative">
+                    <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      id="forgot-password-confirm-password"
+                      type="password"
+                      required
+                      minLength={6}
+                      value={confirmNewPassword}
+                      onChange={(e) => setConfirmNewPassword(e.target.value)}
+                      placeholder="Repeat new password"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-sky-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  id="btn-verify-reset-password"
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-3 rounded-2xl bg-sky-600 hover:bg-sky-700 active:bg-sky-800 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
+                >
+                  {loading
+                    ? (lang === 'ar' ? 'جارٍ التحقق وتحديث كلمة المرور...' : 'Verifying & Updating Password...')
+                    : (lang === 'ar' ? 'تأكيد الرمز وتحديث كلمة المرور' : 'Confirm Code & Reset Password')}
+                </button>
+
+                <div className="flex items-center justify-between text-xs pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleResendOtp(forgotEmail, 'recovery')}
+                    disabled={loading}
+                    className="text-sky-600 dark:text-sky-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                    <span>{lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend Code'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetCodeSent(false);
+                      setOtpCode('');
+                    }}
+                    className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold cursor-pointer"
+                  >
+                    {lang === 'ar' ? 'تغيير البريد الإلكتروني' : 'Change Email'}
+                  </button>
+                </div>
+              </form>
+            )}
 
             <div className="text-center pt-1">
               <button
                 type="button"
-                onClick={() => setActiveTab('signin')}
+                onClick={() => {
+                  setActiveTab('signin');
+                  setResetCodeSent(false);
+                  setOtpCode('');
+                }}
                 className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold cursor-pointer"
               >
                 Back to Sign In
               </button>
             </div>
+          </div>
+        )}
+
+        {/* TAB 5: DEDICATED SIGN-UP OTP VERIFICATION */}
+        {activeTab === 'verify_otp' && (
+          <div className="space-y-4">
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-100 dark:border-emerald-900 rounded-2xl text-xs text-emerald-800 dark:text-emerald-300 flex items-start gap-2.5">
+              <ShieldCheck size={18} className="shrink-0 text-emerald-600 dark:text-emerald-400 mt-0.5" />
+              <div className="space-y-0.5">
+                <span className="font-bold block">
+                  {lang === 'ar' ? 'تأكيد الحساب برمز التحقق' : 'Account Verification Code'}
+                </span>
+                <span className="text-slate-600 dark:text-slate-300 block">
+                  {lang === 'ar'
+                    ? `أدخل رمز التحقق (6 أرقام) المرسل إلى ${otpEmail || patientEmail || doctorEmail}`
+                    : `Enter the 6-digit code sent to ${otpEmail || patientEmail || doctorEmail}`}
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleVerifySignupOtp} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {lang === 'ar' ? 'رمز التحقق (6 أرقام)' : '6-Digit Verification Code (OTP)'}
+                </label>
+                <div className="relative">
+                  <KeyRound size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="signup-otp-input"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    required
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="123456"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-sm tracking-[0.25em] font-mono text-slate-900 dark:text-white text-center focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <button
+                id="btn-submit-signup-otp"
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-xs shadow-md transition cursor-pointer disabled:opacity-50"
+              >
+                {loading
+                  ? (lang === 'ar' ? 'جارٍ التحقق وتفعيل الحساب...' : 'Verifying & Activating Account...')
+                  : (lang === 'ar' ? 'تأكيد الرمز وتفعيل الحساب' : 'Verify Code & Activate Account')}
+              </button>
+
+              <div className="flex items-center justify-between text-xs pt-1">
+                <button
+                  type="button"
+                  onClick={() => handleResendOtp(otpEmail || patientEmail || doctorEmail, 'signup')}
+                  disabled={loading}
+                  className="text-emerald-600 dark:text-emerald-400 hover:underline font-semibold flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                  <span>{lang === 'ar' ? 'إعادة إرسال الرمز' : 'Resend Code'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('signin');
+                    setOtpCode('');
+                  }}
+                  className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-semibold cursor-pointer"
+                >
+                  {lang === 'ar' ? 'العودة لتسجيل الدخول' : 'Back to Sign In'}
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
