@@ -18,6 +18,7 @@ import { UserAccount, Language, SpecializationId, VerificationDocument } from '.
 import { translations } from '../i18n/translations';
 import { SPECIALIZATIONS } from '../data/mockData';
 import { saveUserToSupabase } from '../utils/supabaseSync';
+import { getVercelRedirectUrl } from '../utils/adminLink';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -293,6 +294,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onClose();
         }, 800);
       } else {
+        const redirectUrl = getVercelRedirectUrl();
+        await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            emailRedirectTo: redirectUrl,
+            shouldCreateUser: false,
+          },
+        }).catch(() => {});
+
         setPendingSignupUser(newPatient);
         setOtpEmail(cleanEmail);
         setOtpPurpose('signup');
@@ -419,6 +429,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           onClose();
         }, 1200);
       } else {
+        const redirectUrl = getVercelRedirectUrl();
+        await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            emailRedirectTo: redirectUrl,
+            shouldCreateUser: false,
+          },
+        }).catch(() => {});
+
         setPendingSignupUser(newDoctor);
         setOtpEmail(cleanEmail);
         setOtpPurpose('signup');
@@ -446,45 +465,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      if (purpose === 'recovery') {
-        let { error } = await supabase.auth.signInWithOtp({
-          email: targetEmail,
-          options: { shouldCreateUser: false },
-        });
-        if (error) {
-          const res = await supabase.auth.resetPasswordForEmail(targetEmail);
-          error = res.error;
-        }
-        if (error) {
-          setErrorMsg(formatAuthError(error, 'Failed to resend verification code.'));
-        } else {
-          setInfoMsg(
-            lang === 'ar'
-              ? `تم إرسال رمز تحقق جديد (6 أرقام) إلى ${targetEmail}.`
-              : `A new 6-digit verification code has been sent to ${targetEmail}.`
-          );
-        }
+      const redirectUrl = getVercelRedirectUrl();
+      const { error } = await supabase.auth.signInWithOtp({
+        email: targetEmail,
+        options: {
+          emailRedirectTo: redirectUrl,
+          shouldCreateUser: purpose === 'signup',
+        },
+      });
+
+      if (error) {
+        setErrorMsg(formatAuthError(error, 'Failed to resend verification code.'));
       } else {
-        let { error } = await supabase.auth.signInWithOtp({
-          email: targetEmail,
-          options: { shouldCreateUser: true },
-        });
-        if (error) {
-          const res = await supabase.auth.resend({
-            type: 'signup',
-            email: targetEmail,
-          });
-          error = res.error;
-        }
-        if (error) {
-          setErrorMsg(formatAuthError(error, 'Failed to resend verification code.'));
-        } else {
-          setInfoMsg(
-            lang === 'ar'
-              ? `تم إرسال رمز تحقق جديد (6 أرقام) إلى ${targetEmail}.`
-              : `A new 6-digit verification code has been sent to ${targetEmail}.`
-          );
-        }
+        setInfoMsg(
+          lang === 'ar'
+            ? `تم إرسال رمز تحقق جديد (6 أرقام) إلى ${targetEmail}.`
+            : `A new 6-digit verification code has been sent to ${targetEmail}.`
+        );
       }
     } catch (err: any) {
       setErrorMsg(err?.message || 'Failed to resend verification code.');
@@ -511,23 +508,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      // 1. Primary: Use signInWithOtp to send 6-digit code to email (no redirect URL dependency)
-      let { error } = await supabase.auth.signInWithOtp({
+      const redirectUrl = getVercelRedirectUrl();
+      const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
+          emailRedirectTo: redirectUrl,
           shouldCreateUser: false,
         },
       });
 
-      // 2. Fallback: resetPasswordForEmail without any localhost or redirect URL
       if (error) {
-        console.warn('signInWithOtp error, falling back to resetPasswordForEmail:', error.message);
-        const res = await supabase.auth.resetPasswordForEmail(email);
-        error = res.error;
-      }
-
-      if (error) {
-        setErrorMsg(formatAuthError(error, 'Failed to send password reset code.'));
+        setErrorMsg(formatAuthError(error, 'Failed to send verification code.'));
       } else {
         setResetCodeSent(true);
         setOtpEmail(email);
@@ -535,14 +526,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setOtpCode('');
         setInfoMsg(
           lang === 'ar'
-            ? `تم إرسال رمز التحقق (6 أرقام) إلى ${email}. يرجى إدخال الرمز أدناه لتحديث كلمة المرور.`
+            ? `تم إرسال رمز التحقق (6 أرقام) إلى ${email}. يرجى إدخال الرمز أدناه لتأكيد الهوية.`
             : lang === 'fr'
-            ? `Un code de vérification à 6 chiffres a été envoyé à ${email}. Entrez-le ci-dessous pour réinitialiser votre mot de passe.`
-            : `A 6-digit verification code has been sent to ${email}. Please enter the code below to reset your password.`
+            ? `Un code de vérification à 6 chiffres a été envoyé à ${email}. Veuillez entrer le code ci-dessous.`
+            : `A 6-digit verification code has been sent to ${email}. Please enter the code below.`
         );
       }
     } catch (err: any) {
-      setErrorMsg(formatAuthError(err, 'Failed to send password reset code.'));
+      setErrorMsg(formatAuthError(err, 'Failed to send verification code.'));
     } finally {
       setLoading(false);
     }
@@ -566,7 +557,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (newPassword.length < 6) {
+    if (newPassword && newPassword.length < 6) {
       setErrorMsg(
         lang === 'ar'
           ? 'يجب ألا تقل كلمة المرور الجديدة عن 6 أحرف.'
@@ -575,26 +566,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (newPassword !== confirmNewPassword) {
+    if (newPassword && newPassword !== confirmNewPassword) {
       setErrorMsg(t.authPasswordsDoNotMatch || 'Passwords do not match.');
       return;
     }
 
     setLoading(true);
     try {
-      // 1. Verify 6-digit OTP with Supabase verifyOtp
+      // 1. Verify 6-digit OTP with Supabase verifyOtp explicitly using type: 'email'
       let verifyRes = await supabase.auth.verifyOtp({
         email,
         token: cleanCode,
-        type: 'recovery',
+        type: 'email',
       });
 
       if (verifyRes.error) {
-        verifyRes = await supabase.auth.verifyOtp({
+        const fallbackRes = await supabase.auth.verifyOtp({
           email,
           token: cleanCode,
-          type: 'email',
+          type: 'recovery',
         });
+        if (!fallbackRes.error) {
+          verifyRes = fallbackRes;
+        }
       }
 
       if (verifyRes.error) {
@@ -610,21 +604,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         return;
       }
 
-      // 2. Active session is now verified, update user password
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: newPassword,
-      });
+      // 2. Active session is now verified, update user password if provided
+      if (newPassword.trim()) {
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
 
-      if (updateError) {
-        setErrorMsg(formatAuthError(updateError, 'Failed to update password.'));
-        setLoading(false);
-        return;
+        if (updateError) {
+          setErrorMsg(formatAuthError(updateError, 'Failed to update password.'));
+          setLoading(false);
+          return;
+        }
       }
 
       setInfoMsg(
-        lang === 'ar'
-          ? 'تم التحقق بنجاح وتحديث كلمة المرور! تم تسجيل دخولك.'
-          : 'Password reset successfully! You are now logged in.'
+        newPassword.trim()
+          ? (lang === 'ar'
+              ? 'تم التحقق بنجاح وتحديث كلمة المرور! تم تسجيل دخولك.'
+              : 'Password reset successfully! You are now logged in.')
+          : (lang === 'ar'
+              ? 'تم التحقق من الرمز بنجاح! تم تسجيل دخولك.'
+              : 'Verification code confirmed! You are now logged in.')
       );
 
       const u = verifyRes.data?.user;
@@ -661,7 +661,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         onClose();
       }, 1200);
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Failed to verify code and update password.');
+      setErrorMsg(err?.message || 'Failed to verify code.');
       setLoading(false);
     }
   };
@@ -689,15 +689,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       let verifyRes = await supabase.auth.verifyOtp({
         email,
         token: cleanCode,
-        type: 'signup',
+        type: 'email',
       });
 
       if (verifyRes.error) {
-        verifyRes = await supabase.auth.verifyOtp({
+        const fallbackRes = await supabase.auth.verifyOtp({
           email,
           token: cleanCode,
-          type: 'email',
+          type: 'signup',
         });
+        if (!fallbackRes.error) {
+          verifyRes = fallbackRes;
+        }
       }
 
       if (verifyRes.error) {
@@ -770,19 +773,19 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setLoading(true);
     try {
-      // If otpCode is entered, verify OTP first
+      // If otpCode is entered, verify OTP first with type: 'email'
       if (otpCode.trim().length === 6 && (forgotEmail || otpEmail)) {
         const email = (forgotEmail || otpEmail).trim().toLowerCase();
         let verifyRes = await supabase.auth.verifyOtp({
           email,
           token: otpCode.trim(),
-          type: 'recovery',
+          type: 'email',
         });
         if (verifyRes.error) {
           verifyRes = await supabase.auth.verifyOtp({
             email,
             token: otpCode.trim(),
-            type: 'email',
+            type: 'recovery',
           });
         }
       }
