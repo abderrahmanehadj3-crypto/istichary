@@ -264,4 +264,22 @@ export const enTranslations: Translations = {
   commentUpdatedSuccess: 'Reply updated.',
   commentDeletedSuccess: 'Reply deleted.',
   doctorAuthorBadge: 'Physician Author',
+
+  // Anonymous Reports & Appeals & Fake Account Purge
+  anonymousReporting: 'Anonymous Reporting System (100% Confidential)',
+  reportContent: 'Report Content',
+  reportSuccessNotice: 'Your report was submitted with 100% complete anonymity. The reported party will never know your identity.',
+  submitAppeal: 'Submit Formal Appeal',
+  appealSubmittedSuccess: 'Your formal appeal has been submitted successfully and is pending administrative review.',
+  appealUnderReview: 'Appeal Under Official Review',
+  purgeMarcoAccount: 'Permanently Purge Dummy Marco Account from Database',
+  purgeMarcoSuccess: 'The dummy account Marco and all related records were eradicated from Supabase.',
+  reportsQueue: 'Anonymous Reports',
+  appealsQueue: 'Account Appeals',
+  approveAppeal: 'Approve Appeal & Restore Account',
+  rejectAppeal: 'Reject Appeal',
+  appealApprovedSuccess: 'Appeal approved and account access restored successfully.',
+  appealRejectedSuccess: 'Appeal review completed with rejection.',
+  deleteUserPermanently: 'Delete Account Permanently',
 };
+

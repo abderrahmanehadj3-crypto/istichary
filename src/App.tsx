@@ -20,6 +20,8 @@ import {
   ConsultationPost,
   ConsultationComment,
   AppNotification,
+  AnonymousReport,
+  AccountAppeal,
 } from './types';
 import { supabase } from './supabaseClient';
 import { Header } from './components/Header';
@@ -32,15 +34,23 @@ import { AuthModal, AuthTab } from './components/AuthModal';
 import { NotificationsCenterModal } from './components/NotificationsCenterModal';
 import { RateDoctorModal } from './components/RateDoctorModal';
 import { HeartbeatPullToRefresh } from './components/HeartbeatPullToRefresh';
+import { AccountAppealModal } from './components/AccountAppealModal';
+import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
 import { translations, getTranslations } from './i18n/translations';
 import {
   saveUserToSupabase,
   saveConsultationToSupabase,
   updateConsultationCommentsInSupabase,
+  updateConsultationInteractionsInSupabase,
   deleteConsultationFromSupabase,
   fetchConsultationsFromSupabase,
   fetchUsersFromSupabase,
   setupRealtimeSubscriptions,
+  saveReportToSupabase,
+  getReportsFromSupabase,
+  saveAppealToSupabase,
+  getAppealsFromSupabase,
+  purgeDummyMarcoAccountFromSupabase,
 } from './utils/supabaseSync';
 
 export default function App() {
@@ -151,6 +161,43 @@ export default function App() {
 
   // Doctor Star Rating Modal State
   const [ratingModalDoctor, setRatingModalDoctor] = useState<DoctorProfile | null>(null);
+
+  // Anonymous Reports & Appeals State
+  const [reports, setReports] = useState<AnonymousReport[]>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_reports');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [];
+  });
+  const [appeals, setAppeals] = useState<AccountAppeal[]>(() => {
+    try {
+      const saved = localStorage.getItem('istichary_appeals');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [];
+  });
+  const [isAppealModalOpen, setIsAppealModalOpen] = useState(false);
+  const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
+
+  // Load initial reports and appeals from Supabase on mount
+  useEffect(() => {
+    getReportsFromSupabase().then((data) => {
+      if (data && data.length > 0) setReports(data);
+    });
+    getAppealsFromSupabase().then((data) => {
+      if (data && data.length > 0) setAppeals(data);
+    });
+  }, []);
+
+  // Save reports and appeals to localStorage
+  useEffect(() => {
+    localStorage.setItem('istichary_reports', JSON.stringify(reports));
+  }, [reports]);
+
+  useEffect(() => {
+    localStorage.setItem('istichary_appeals', JSON.stringify(appeals));
+  }, [appeals]);
 
   // Toast alert
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -515,14 +562,16 @@ export default function App() {
     setNotifications((prev) => [newNotif, ...prev]);
   };
 
-  // Like / Heart Consultation Post with Interaction Notification
+  // Like / Heart Consultation Post with Interaction Notification & Supabase Sync
   const handleLikePost = (postId: string) => {
+    let newLikesCount = 1;
     setPosts((prev) =>
       prev.map((p) => {
         if (p.id === postId) {
+          newLikesCount = (p.likesCount || 0) + 1;
           return {
             ...p,
-            likesCount: (p.likesCount || 0) + 1,
+            likesCount: newLikesCount,
           };
         }
         return p;
@@ -531,6 +580,11 @@ export default function App() {
 
     const post = posts.find((p) => p.id === postId);
     showToast('Consultation inquiry upvoted.');
+
+    // Save interaction directly to Supabase
+    updateConsultationInteractionsInSupabase(postId, { likesCount: newLikesCount }).catch((err) => {
+      console.warn('[SupabaseSync] handleLikePost interaction error:', err);
+    });
 
     const newNotif: AppNotification = {
       id: `notif-like-${Date.now()}`,
@@ -694,6 +748,212 @@ export default function App() {
       };
       setNotifications((prev) => [newNotif, ...prev]);
     }
+  };
+
+  // Like / Upvote a Specific Comment or Reply with Supabase Persistence
+  const handleLikeComment = (postId: string, commentId: string) => {
+    let updatedCommentsList: ConsultationComment[] = [];
+    setPosts((prev) =>
+      prev.map((p) => {
+        if (p.id === postId) {
+          const updatedComments = p.comments.map((c) => {
+            if (c.id === commentId) {
+              const currentLikedBy = c.likedByUserIds || [];
+              const userId = currentUser?.id || 'guest';
+              const isAlreadyLiked = currentLikedBy.includes(userId);
+              const newLikedBy = isAlreadyLiked
+                ? currentLikedBy.filter((id) => id !== userId)
+                : [...currentLikedBy, userId];
+              const newLikesCount = isAlreadyLiked
+                ? Math.max(0, (c.likesCount || 1) - 1)
+                : (c.likesCount || 0) + 1;
+              return {
+                ...c,
+                likesCount: newLikesCount,
+                likedByUserIds: newLikedBy,
+              };
+            }
+            return c;
+          });
+          updatedCommentsList = updatedComments;
+          return { ...p, comments: updatedComments };
+        }
+        return p;
+      })
+    );
+
+    if (updatedCommentsList.length > 0) {
+      updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
+        console.warn('[SupabaseSync] handleLikeComment error:', err);
+      });
+    }
+  };
+
+  // Anonymous Reporting System (100% confidential submission)
+  const handleReportContent = (newReport: AnonymousReport) => {
+    setReports((prev) => [newReport, ...prev]);
+    saveReportToSupabase(newReport).catch((err) => {
+      console.warn('[SupabaseSync] saveReport error:', err);
+    });
+    showToast(t.reportSuccessNotice || 'Report submitted anonymously.');
+  };
+
+  const handleDismissReport = (reportId: string) => {
+    setReports((prev) =>
+      prev.map((r) => (r.id === reportId ? { ...r, status: 'dismissed' as const } : r))
+    );
+    showToast('Report dismissed.');
+  };
+
+  const handleTakeActionOnReport = (
+    reportId: string,
+    action: 'ban_user' | 'restrict_48h' | 'delete_content',
+    targetUserId?: string,
+    targetPostId?: string
+  ) => {
+    setReports((prev) =>
+      prev.map((r) => (r.id === reportId ? { ...r, status: 'resolved' as const } : r))
+    );
+
+    if (targetUserId) {
+      setUsers((prev) =>
+        prev.map((u) => {
+          if (u.id === targetUserId || u.username === targetUserId) {
+            const updated: UserAccount = {
+              ...u,
+              moderationStatus: action === 'ban_user' ? 'banned' : 'restricted_48h',
+              penaltyReason: 'Violation reported anonymously by community member',
+              restrictedUntil:
+                action === 'restrict_48h'
+                  ? new Date(Date.now() + 48 * 3600 * 1000).toISOString()
+                  : undefined,
+            };
+            saveUserToSupabase(updated).catch(console.warn);
+            if (currentUser?.id === updated.id) {
+              setCurrentUser(updated);
+            }
+            return updated;
+          }
+          return u;
+        })
+      );
+    }
+
+    if (action === 'delete_content' && targetPostId) {
+      handleDeletePost(targetPostId);
+    }
+
+    showToast(action === 'ban_user' ? 'User permanently banned.' : 'Account restricted for 48 hours.');
+  };
+
+  // Account Restriction Appeals System
+  const handleSubmitAppeal = (newAppeal: AccountAppeal) => {
+    setAppeals((prev) => [newAppeal, ...prev]);
+    saveAppealToSupabase(newAppeal).catch((err) => {
+      console.warn('[SupabaseSync] saveAppeal error:', err);
+    });
+    showToast(t.appealSubmittedSuccess || 'Appeal submitted for review.');
+  };
+
+  const handleApproveAppeal = (appealId: string, decisionNote?: string) => {
+    const appeal = appeals.find((a) => a.id === appealId);
+    setAppeals((prev) =>
+      prev.map((a) =>
+        a.id === appealId
+          ? {
+              ...a,
+              status: 'approved' as const,
+              reviewedAt: new Date().toISOString(),
+              reviewedBy: currentUser?.username || 'Super Admin',
+              decisionNote,
+            }
+          : a
+      )
+    );
+
+    if (appeal) {
+      setUsers((prev) =>
+        prev.map((u) => {
+          if (u.id === appeal.userId || u.username === appeal.username) {
+            const restored: UserAccount = {
+              ...u,
+              moderationStatus: 'active',
+              penaltyReason: undefined,
+              restrictedUntil: undefined,
+              penaltyExpiresAt: undefined,
+            };
+            saveUserToSupabase(restored).catch(console.warn);
+            if (currentUser?.id === restored.id) {
+              setCurrentUser(restored);
+            }
+            return restored;
+          }
+          return u;
+        })
+      );
+      showToast('Appeal approved and moderation penalty lifted.');
+    }
+  };
+
+  const handleRejectAppeal = (appealId: string, decisionNote?: string) => {
+    setAppeals((prev) =>
+      prev.map((a) =>
+        a.id === appealId
+          ? {
+              ...a,
+              status: 'rejected' as const,
+              reviewedAt: new Date().toISOString(),
+              reviewedBy: currentUser?.username || 'Super Admin',
+              decisionNote,
+            }
+          : a
+      )
+    );
+    showToast('Appeal rejected.');
+  };
+
+  // Purge Fake Account "marco" permanently from database and lists
+  const handlePurgeMarco = () => {
+    purgeDummyMarcoAccountFromSupabase();
+    setUsers((prev) =>
+      prev.filter(
+        (u) =>
+          !u.username?.toLowerCase().includes('marco') &&
+          !u.email?.toLowerCase().includes('marco')
+      )
+    );
+    setDoctors((prev) =>
+      prev.filter(
+        (d) =>
+          !d.username?.toLowerCase().includes('marco') &&
+          !d.email?.toLowerCase().includes('marco') &&
+          !d.realName?.toLowerCase().includes('marco')
+      )
+    );
+    setPosts((prev) =>
+      prev.filter(
+        (p) =>
+          !p.authorUsername?.toLowerCase().includes('marco') &&
+          !p.authorRealName?.toLowerCase().includes('marco')
+      )
+    );
+    showToast('تم حذف حساب marco الوهمي نهائياً من قاعدة البيانات وقوائم المستخدمين.');
+  };
+
+  // Permanent deletion of a specific user account by Administrator
+  const handleDeleteUser = (userId: string, emailOrUsername?: string) => {
+    setUsers((prev) => prev.filter((u) => u.id !== userId));
+    setDoctors((prev) => prev.filter((d) => d.id !== userId && d.userId !== userId));
+    if (emailOrUsername) {
+      setPosts((prev) =>
+        prev.filter(
+          (p) =>
+            p.authorUsername !== emailOrUsername &&
+            p.authorRealName !== emailOrUsername
+        )
+      );
+    }
+    showToast('User account permanently deleted.');
   };
 
   // STRICT RULE: ONLY VERIFIED DOCTORS CAN SET CLINIC LOCATION
@@ -974,6 +1234,8 @@ export default function App() {
           onRequestAuth={() => setIsAuthModalOpen(true)}
           unreadNotificationsCount={unreadNotificationsCount}
           onOpenNotifications={() => setIsNotificationsModalOpen(true)}
+          onOpenAppealModal={() => setIsAppealModalOpen(true)}
+          onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
         />
 
         {/* Dynamic Body Content by Active Tab */}
@@ -998,6 +1260,9 @@ export default function App() {
                 doctors={doctors}
                 onOpenRatingModal={setRatingModalDoctor}
                 onLikePost={handleLikePost}
+                onLikeComment={handleLikeComment}
+                onReportContent={handleReportContent}
+                onOpenAppealModal={() => setIsAppealModalOpen(true)}
               />
             )}
 
@@ -1138,6 +1403,70 @@ export default function App() {
             saveUserToSupabase(newDocUser).catch(() => {});
           }}
         />
+
+        {/* Account Restriction Appeals Modal */}
+        <AccountAppealModal
+          isOpen={isAppealModalOpen}
+          onClose={() => setIsAppealModalOpen(false)}
+          currentUser={currentUser}
+          currentLang={lang}
+          onSubmitAppeal={handleSubmitAppeal}
+        />
+
+        {/* Admin & Moderator Dashboard Modal */}
+        {isAdminDashboardOpen && (
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
+                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                    {lang === 'ar' ? 'لوحة الإشراف والإدارة والرقابة' : 'Moderation & Administration Portal'}
+                  </h3>
+                </div>
+                <button
+                  onClick={() => setIsAdminDashboardOpen(false)}
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer"
+                >
+                  {lang === 'ar' ? 'إغلاق' : 'Close'}
+                </button>
+              </div>
+              <AdminModeratorDashboard
+                currentUser={currentUser}
+                doctors={doctors}
+                users={users}
+                lang={lang}
+                onApproveDoctor={(docId) => handleVerifyDoctor(docId, 'verified')}
+                onRejectDoctor={(docId) => handleVerifyDoctor(docId, 'rejected')}
+                onToggleModeratorRole={(userId) => {
+                  setUsers((prev) =>
+                    prev.map((u) =>
+                      u.id === userId ? { ...u, role: u.role === 'moderator' ? 'patient' : 'moderator' } : u
+                    )
+                  );
+                }}
+                onLiftModerationPenalty={(userId) => {
+                  setUsers((prev) =>
+                    prev.map((u) =>
+                      u.id === userId
+                        ? { ...u, moderationStatus: 'active', penaltyReason: undefined, restrictedUntil: undefined, penaltyExpiresAt: undefined }
+                        : u
+                    )
+                  );
+                }}
+                onRequestAuth={() => setIsAuthModalOpen(true)}
+                reports={reports}
+                onDismissReport={handleDismissReport}
+                onTakeActionOnReport={handleTakeActionOnReport}
+                appeals={appeals}
+                onApproveAppeal={handleApproveAppeal}
+                onRejectAppeal={handleRejectAppeal}
+                onDeleteUser={handleDeleteUser}
+                onPurgeDummyMarcoAccount={handlePurgeMarco}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Subtle & Discreet Layout Footer */}

@@ -26,6 +26,8 @@ interface HeaderProps {
   onRequestAuth: () => void;
   unreadNotificationsCount?: number;
   onOpenNotifications?: () => void;
+  onOpenAppealModal?: () => void;
+  onOpenAdminDashboard?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -37,6 +39,8 @@ export const Header: React.FC<HeaderProps> = ({
   onRequestAuth,
   unreadNotificationsCount = 0,
   onOpenNotifications,
+  onOpenAppealModal,
+  onOpenAdminDashboard,
 }) => {
   const t = translations[lang];
 
@@ -139,6 +143,20 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
+          {/* Admin / Moderator Dashboard Shield Button */}
+          {(isSuperAdmin || isModerator) && onOpenAdminDashboard && (
+            <button
+              id="header-admin-dashboard-btn"
+              type="button"
+              onClick={onOpenAdminDashboard}
+              className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 shadow-2xs hover:bg-indigo-100 transition cursor-pointer flex items-center gap-1"
+              title={t.adminDashboard}
+            >
+              <ShieldCheck size={15} className="text-indigo-600 dark:text-indigo-400" />
+              <span className="text-[11px] font-bold hidden sm:inline">{t.adminDashboard}</span>
+            </button>
+          )}
+
           {/* Notifications Center Bell */}
           <button
             id="header-notifications-btn"
@@ -184,22 +202,46 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Moderation Alert Banner if user is restricted or banned */}
       {currentUser && currentUser.moderationStatus === 'banned' && (
-        <div className="mt-2.5 p-2.5 rounded-xl bg-rose-600 text-white text-xs shadow-xs flex items-start gap-2">
-          <AlertTriangle size={16} className="shrink-0 mt-0.5 text-rose-200" />
-          <div className="space-y-0.5">
-            <p className="font-bold">{t.bannedAlertTitle}</p>
-            <p className="text-[11px] text-rose-100">{t.bannedAlertDesc}</p>
+        <div id="header-banned-alert" className="mt-2.5 p-2.5 rounded-xl bg-rose-600 text-white text-xs shadow-xs flex items-center justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5 text-rose-200" />
+            <div className="space-y-0.5">
+              <p className="font-bold">{t.bannedAlertTitle}</p>
+              <p className="text-[11px] text-rose-100">{t.bannedAlertDesc}</p>
+            </div>
           </div>
+          {onOpenAppealModal && (
+            <button
+              id="header-appeal-btn-banned"
+              type="button"
+              onClick={onOpenAppealModal}
+              className="px-3 py-1.5 rounded-lg bg-white text-rose-700 font-bold text-xs hover:bg-rose-50 shadow-xs shrink-0 cursor-pointer"
+            >
+              {t.submitAppeal}
+            </button>
+          )}
         </div>
       )}
 
       {currentUser && currentUser.moderationStatus === 'restricted_48h' && (
-        <div className="mt-2.5 p-2.5 rounded-xl bg-amber-500 text-white text-xs shadow-xs flex items-start gap-2">
-          <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-200" />
-          <div className="space-y-0.5">
-            <p className="font-bold">{t.restrictedAlertTitle}</p>
-            <p className="text-[11px] text-amber-100">{t.restrictedAlertDesc}</p>
+        <div id="header-restricted-alert" className="mt-2.5 p-2.5 rounded-xl bg-amber-500 text-white text-xs shadow-xs flex items-center justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-200" />
+            <div className="space-y-0.5">
+              <p className="font-bold">{t.restrictedAlertTitle}</p>
+              <p className="text-[11px] text-amber-100">{t.restrictedAlertDesc}</p>
+            </div>
           </div>
+          {onOpenAppealModal && (
+            <button
+              id="header-appeal-btn-restricted"
+              type="button"
+              onClick={onOpenAppealModal}
+              className="px-3 py-1.5 rounded-lg bg-white text-amber-800 font-bold text-xs hover:bg-amber-50 shadow-xs shrink-0 cursor-pointer"
+            >
+              {t.submitAppeal}
+            </button>
+          )}
         </div>
       )}
     </header>

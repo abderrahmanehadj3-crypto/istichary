@@ -19,16 +19,23 @@ import {
   ExternalLink,
   ChevronDown,
   Info,
+  Trash2,
+  Flag,
+  RotateCcw,
+  Check,
 } from 'lucide-react';
 import {
   UserAccount,
   DoctorProfile,
   Language,
   VerificationDocument,
+  AnonymousReport,
+  AccountAppeal,
 } from '../types';
 import { translations } from '../i18n/translations';
 import { RoleAvatar } from './RoleAvatar';
 import { AdminVercelLink } from './AdminVercelLink';
+import { LiveRelativeTimestamp } from './LiveRelativeTimestamp';
 
 interface AdminModeratorDashboardProps {
   currentUser: UserAccount | null;
@@ -40,6 +47,19 @@ interface AdminModeratorDashboardProps {
   onToggleModeratorRole?: (userId: string) => void;
   onLiftModerationPenalty?: (userId: string) => void;
   onRequestAuth: () => void;
+  reports?: AnonymousReport[];
+  onDismissReport?: (reportId: string) => void;
+  onTakeActionOnReport?: (
+    reportId: string,
+    action: 'ban_user' | 'restrict_48h' | 'delete_content',
+    targetUserId?: string,
+    targetPostId?: string
+  ) => void;
+  appeals?: AccountAppeal[];
+  onApproveAppeal?: (appealId: string, decisionNote?: string) => void;
+  onRejectAppeal?: (appealId: string, decisionNote?: string) => void;
+  onDeleteUser?: (userId: string, emailOrUsername?: string) => void;
+  onPurgeDummyMarcoAccount?: () => void;
 }
 
 export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = ({
@@ -52,6 +72,14 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
   onToggleModeratorRole,
   onLiftModerationPenalty,
   onRequestAuth,
+  reports = [],
+  onDismissReport,
+  onTakeActionOnReport,
+  appeals = [],
+  onApproveAppeal,
+  onRejectAppeal,
+  onDeleteUser,
+  onPurgeDummyMarcoAccount,
 }) => {
   const t = translations[lang];
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'verified' | 'rejected'>('pending');
@@ -59,8 +87,10 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
   const [activeDocPreview, setActiveDocPreview] = useState<VerificationDocument | null>(null);
   const [rejectingDocId, setRejectingDocId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState<string>('');
-  const [adminTab, setAdminTab] = useState<'queue' | 'team' | 'moderation'>('queue');
+  const [adminTab, setAdminTab] = useState<'queue' | 'team' | 'reports' | 'appeals' | 'moderation'>('queue');
   const [searchQuery, setSearchQuery] = useState('');
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [marcoPurgedNotice, setMarcoPurgedNotice] = useState(false);
 
   // Access Control Check: STRICT PRIVACY
   const isSuperAdmin = currentUser?.role === 'super_admin';
@@ -175,35 +205,81 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
       {/* External Vercel Admin Console */}
       <AdminVercelLink variant="card" currentUser={currentUser} />
 
-      {/* Admin Tab Navigation (Super Admin can see team/moderation) */}
-      {isSuperAdmin && (
-        <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold">
-          <button
-            id="tab-btn-queue"
-            onClick={() => setAdminTab('queue')}
-            className={`flex-1 py-1.5 px-3 rounded-lg transition ${
-              adminTab === 'queue'
-                ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-xs'
-                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-            }`}
-          >
-            {t.verificationQueue} ({pendingCount})
-          </button>
+      {/* Admin Tab Navigation */}
+      <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold overflow-x-auto">
+        <button
+          id="tab-btn-queue"
+          onClick={() => setAdminTab('queue')}
+          className={`py-1.5 px-3 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
+            adminTab === 'queue'
+              ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          <span>{t.verificationQueue}</span>
+          <span className="px-1.5 py-0.2 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 text-[10px]">
+            {pendingCount}
+          </span>
+        </button>
+
+        {isSuperAdmin && (
           <button
             id="tab-btn-team"
             onClick={() => setAdminTab('team')}
-            className={`flex-1 py-1.5 px-3 rounded-lg transition ${
+            className={`py-1.5 px-3 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
               adminTab === 'team'
                 ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            {t.teamManagement}
+            <span>{t.teamManagement}</span>
+            <span className="px-1.5 py-0.2 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-[10px]">
+              {users.length}
+            </span>
           </button>
+        )}
+
+        <button
+          id="tab-btn-reports"
+          onClick={() => setAdminTab('reports')}
+          className={`py-1.5 px-3 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
+            adminTab === 'reports'
+              ? 'bg-white dark:bg-slate-900 text-rose-600 dark:text-rose-400 shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          <Flag size={13} />
+          <span>{t.reportsQueue}</span>
+          {reports.filter((r) => r.status === 'pending').length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-bold">
+              {reports.filter((r) => r.status === 'pending').length}
+            </span>
+          )}
+        </button>
+
+        <button
+          id="tab-btn-appeals"
+          onClick={() => setAdminTab('appeals')}
+          className={`py-1.5 px-3 rounded-lg transition whitespace-nowrap flex items-center gap-1.5 ${
+            adminTab === 'appeals'
+              ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+          }`}
+        >
+          <RotateCcw size={13} />
+          <span>{t.appealsQueue}</span>
+          {appeals.filter((a) => a.status === 'pending').length > 0 && (
+            <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+              {appeals.filter((a) => a.status === 'pending').length}
+            </span>
+          )}
+        </button>
+
+        {isSuperAdmin && (
           <button
             id="tab-btn-moderation"
             onClick={() => setAdminTab('moderation')}
-            className={`flex-1 py-1.5 px-3 rounded-lg transition ${
+            className={`py-1.5 px-3 rounded-lg transition whitespace-nowrap ${
               adminTab === 'moderation'
                 ? 'bg-white dark:bg-slate-900 text-sky-600 dark:text-sky-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -211,8 +287,8 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
           >
             Governance
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Verification Queue View */}
       {adminTab === 'queue' && (
@@ -491,16 +567,58 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
         </div>
       )}
 
-      {/* Review Team Management Tab (Super Admin Only) */}
+      {/* Review Team & User Management Tab (Super Admin Only) */}
       {isSuperAdmin && adminTab === 'team' && (
         <div className="space-y-3">
+          {/* Purge Marco Fake Account Card */}
+          <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 dark:bg-amber-800 text-amber-900 dark:text-amber-100 uppercase">
+                    System Maintenance
+                  </span>
+                  <h4 className="font-bold text-xs sm:text-sm text-amber-900 dark:text-amber-200">
+                    حذف حساب "marco" الوهمي نهائياً
+                  </h4>
+                </div>
+                <p className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                  حذف حساب المستخدم الوهمي "marco" وجميع سجلاته وتفاعلاته العشوائية نهائياً من قاعدة بيانات Supabase وقوائم النظام.
+                </p>
+              </div>
+
+              <button
+                id="btn-purge-marco-account"
+                type="button"
+                onClick={() => {
+                  if (onPurgeDummyMarcoAccount) {
+                    onPurgeDummyMarcoAccount();
+                    setMarcoPurgedNotice(true);
+                    setTimeout(() => setMarcoPurgedNotice(false), 4000);
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs transition shrink-0 cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 size={13} />
+                <span>حذف حساب marco الآن</span>
+              </button>
+            </div>
+
+            {marcoPurgedNotice && (
+              <div className="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 text-emerald-900 dark:text-emerald-200 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 size={14} className="text-emerald-600 dark:text-emerald-400" />
+                <span>تم حذف الحساب الوهمي marco نهائياً من قاعدة بيانات Supabase بنجاح.</span>
+              </div>
+            )}
+          </div>
+
           <div className="p-3 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
             <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
               <Users size={16} className="text-sky-600" />
               <span>{t.teamManagement}</span>
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Appoint trusted medical reviewers to inspect doctor medical licenses and diplomas without exposing certificates to public patients.
+              إدارة صلاحيات المشرفين وحذف أو تقييد حسابات المستخدمين المخالفة.
             </p>
           </div>
 
@@ -518,6 +636,16 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
                       <span className="px-2 py-0.2 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 capitalize">
                         {u.role.replace('_', ' ')}
                       </span>
+                      {u.moderationStatus === 'banned' && (
+                        <span className="px-1.5 py-0.2 rounded-md text-[10px] font-bold bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300">
+                          محظور
+                        </span>
+                      )}
+                      {u.moderationStatus === 'restricted_48h' && (
+                        <span className="px-1.5 py-0.2 rounded-md text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                          مقيد 48س
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] text-slate-400 font-mono">
                       {u.email}
@@ -525,30 +653,318 @@ export const AdminModeratorDashboard: React.FC<AdminModeratorDashboardProps> = (
                   </div>
                 </div>
 
-                <div>
+                <div className="flex items-center gap-1.5">
                   {u.role === 'super_admin' ? (
                     <span className="text-[11px] font-bold text-amber-500">
                       Super Admin (You)
                     </span>
-                  ) : u.role === 'moderator' ? (
-                    <button
-                      onClick={() => onToggleModeratorRole && onToggleModeratorRole(u.id)}
-                      className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 font-semibold text-[11px] hover:bg-rose-100 transition"
-                    >
-                      {t.revokeModerator}
-                    </button>
                   ) : (
-                    <button
-                      onClick={() => onToggleModeratorRole && onToggleModeratorRole(u.id)}
-                      className="px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800 font-semibold text-[11px] hover:bg-sky-100 transition"
-                    >
-                      {t.appointModerator}
-                    </button>
+                    <>
+                      {u.moderationStatus && u.moderationStatus !== 'active' && onLiftModerationPenalty && (
+                        <button
+                          id={`btn-lift-penalty-${u.id}`}
+                          type="button"
+                          onClick={() => onLiftModerationPenalty(u.id)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-semibold text-[11px] hover:bg-emerald-100 transition cursor-pointer"
+                        >
+                          رفع العقوبة
+                        </button>
+                      )}
+
+                      {u.role === 'moderator' ? (
+                        <button
+                          id={`btn-revoke-mod-${u.id}`}
+                          type="button"
+                          onClick={() => onToggleModeratorRole && onToggleModeratorRole(u.id)}
+                          className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 font-semibold text-[11px] hover:bg-rose-100 transition cursor-pointer"
+                        >
+                          {t.revokeModerator}
+                        </button>
+                      ) : (
+                        <button
+                          id={`btn-appoint-mod-${u.id}`}
+                          type="button"
+                          onClick={() => onToggleModeratorRole && onToggleModeratorRole(u.id)}
+                          className="px-2.5 py-1 rounded-lg bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 border border-sky-200 dark:border-sky-800 font-semibold text-[11px] hover:bg-sky-100 transition cursor-pointer"
+                        >
+                          {t.appointModerator}
+                        </button>
+                      )}
+
+                      {/* Delete User Account Button */}
+                      {confirmDeleteUserId === u.id ? (
+                        <div className="flex items-center gap-1">
+                          <button
+                            id={`btn-confirm-delete-user-${u.id}`}
+                            type="button"
+                            onClick={() => {
+                              if (onDeleteUser) {
+                                onDeleteUser(u.id, u.email || u.username);
+                              }
+                              setConfirmDeleteUserId(null);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-bold text-[11px] hover:bg-rose-700 transition cursor-pointer"
+                          >
+                            تأكيد الحذف
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeleteUserId(null)}
+                            className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[11px]"
+                          >
+                            إلغاء
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          id={`btn-delete-user-${u.id}`}
+                          type="button"
+                          onClick={() => setConfirmDeleteUserId(u.id)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition cursor-pointer"
+                          title="حذف هذا المستخدم نهائياً"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* 🛡️ Anonymous Reports Queue Tab (100% Guaranteed Confidentiality) */}
+      {adminTab === 'reports' && (
+        <div className="space-y-3">
+          <div className="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+            <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+              <ShieldCheck size={18} />
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                {t.reportsQueue} - سرية تامة ومجهولية 100%
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              {t.anonymousReportNotice} هوية المبلّغ مشفرة ومحجوبة تماماً حتى عن المشرفين وإدارة المنصة لضمان بيئة آمنة للمرضى والأطباء.
+            </p>
+          </div>
+
+          {reports.length === 0 ? (
+            <div className="p-8 text-center bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs text-slate-400">
+              {t.noReports}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {reports.map((report) => (
+                <div
+                  key={report.id}
+                  id={`report-item-${report.id}`}
+                  className={`p-4 bg-white dark:bg-slate-800 rounded-2xl border transition space-y-3 text-xs ${
+                    report.status === 'pending'
+                      ? 'border-rose-200 dark:border-rose-900/60 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 opacity-75'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
+                          {report.targetType === 'post' ? 'بلاغ عن منشور' : 'بلاغ عن تعليق'}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                          {report.reason}
+                        </span>
+                        <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                          <LiveRelativeTimestamp timestamp={report.createdAt} lang={lang} />
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                        الطرف المبلّغ عنه: <span className="font-mono text-rose-600">@{report.reportedAuthorUsername}</span>
+                        {report.reportedAuthorRealName && ` (${report.reportedAuthorRealName})`}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        report.status === 'pending'
+                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                          : report.status === 'resolved'
+                          ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                          : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300'
+                      }`}>
+                        {report.status === 'pending' ? 'قيد المراجعة' : report.status === 'resolved' ? 'تم اتخاذ إجراء' : 'تم التجاهل'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Content snippet */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-[11px] text-slate-700 dark:text-slate-300 italic">
+                    "{report.contentSnippet}"
+                  </div>
+
+                  {report.details && (
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                      <span className="font-bold text-slate-700 dark:text-slate-300">ملاحظات إضافية:</span> {report.details}
+                    </div>
+                  )}
+
+                  {/* Action buttons if pending */}
+                  {report.status === 'pending' && (
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700 flex-wrap">
+                      {onTakeActionOnReport && (
+                        <>
+                          <button
+                            id={`btn-report-restrict-${report.id}`}
+                            type="button"
+                            onClick={() =>
+                              onTakeActionOnReport(
+                                report.id,
+                                'restrict_48h',
+                                report.reportedAuthorUsername,
+                                report.postId
+                              )
+                            }
+                            className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[11px] font-bold border border-amber-200 dark:border-amber-800 transition cursor-pointer"
+                          >
+                            تقييد الحساب 48 ساعة
+                          </button>
+                          <button
+                            id={`btn-report-ban-${report.id}`}
+                            type="button"
+                            onClick={() =>
+                              onTakeActionOnReport(
+                                report.id,
+                                'ban_user',
+                                report.reportedAuthorUsername,
+                                report.postId
+                              )
+                            }
+                            className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold transition cursor-pointer"
+                          >
+                            حظر المستخدم نهائياً
+                          </button>
+                        </>
+                      )}
+                      {onDismissReport && (
+                        <button
+                          id={`btn-report-dismiss-${report.id}`}
+                          type="button"
+                          onClick={() => onDismissReport(report.id)}
+                          className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 text-slate-700 text-[11px] font-semibold transition cursor-pointer"
+                        >
+                          تجاهل البلاغ
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ⚖️ Account Restriction Appeals Tab */}
+      {adminTab === 'appeals' && (
+        <div className="space-y-3">
+          <div className="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 space-y-2">
+            <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400">
+              <RotateCcw size={18} />
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                {t.appealsQueue}
+              </h3>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+              مراجعة الطعون وطلبات إعادة النظر الرسمية المقدمة من المستخدمين المقيدة حساباتهم أو المحظورة.
+            </p>
+          </div>
+
+          {appeals.length === 0 ? (
+            <div className="p-8 text-center bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs text-slate-400">
+              {t.noAppeals}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {appeals.map((appeal) => (
+                <div
+                  key={appeal.id}
+                  id={`appeal-item-${appeal.id}`}
+                  className={`p-4 bg-white dark:bg-slate-800 rounded-2xl border transition space-y-3 text-xs ${
+                    appeal.status === 'pending'
+                      ? 'border-blue-200 dark:border-blue-900/60 shadow-xs'
+                      : 'border-slate-200 dark:border-slate-700 opacity-75'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                          {appeal.userRole}
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                          {appeal.appealCategory}
+                        </span>
+                        <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                          <LiveRelativeTimestamp timestamp={appeal.createdAt} lang={lang} />
+                        </span>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                        المستخدم: <span className="font-mono text-sky-600">@{appeal.username}</span> ({appeal.email})
+                      </div>
+                      <div className="text-[11px] text-rose-600 dark:text-rose-400 font-medium">
+                        نوع العقوبة: {appeal.penaltyStatus === 'banned' ? 'حظر دائم' : 'تقييد 48 ساعة'}
+                        {appeal.originalReason && ` (السبب الأصلي: ${appeal.originalReason})`}
+                      </div>
+                    </div>
+
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                      appeal.status === 'pending'
+                        ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                        : appeal.status === 'approved'
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        : 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                    }`}>
+                      {appeal.status === 'pending' ? 'قيد المراجعة' : appeal.status === 'approved' ? 'مقبول / رُفعت العقوبة' : 'مرفوض'}
+                    </span>
+                  </div>
+
+                  {/* Justification Text */}
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 text-[11px] text-slate-800 dark:text-slate-200 leading-relaxed">
+                    <p className="font-bold text-slate-900 dark:text-white mb-1">بيان الاستئناف وتبرير المستخدم:</p>
+                    {appeal.justification}
+                  </div>
+
+                  {/* Approve / Reject CTA */}
+                  {appeal.status === 'pending' && (
+                    <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                      {onApproveAppeal && (
+                        <button
+                          id={`btn-approve-appeal-${appeal.id}`}
+                          type="button"
+                          onClick={() => onApproveAppeal(appeal.id, 'تمت مراجعة الاستئناف وقبوله ورفع العقوبة')}
+                          className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Check size={13} />
+                          <span>قبول الاستئناف ورفع العقوبة</span>
+                        </button>
+                      )}
+                      {onRejectAppeal && (
+                        <button
+                          id={`btn-reject-appeal-${appeal.id}`}
+                          type="button"
+                          onClick={() => onRejectAppeal(appeal.id, 'تمت مراجعة الاستئناف وتأكيد بقاء العقوبة')}
+                          className="px-3 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 text-xs font-bold transition cursor-pointer"
+                        >
+                          رفض الاستئناف
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

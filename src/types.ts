@@ -52,6 +52,9 @@ export interface UserAccount {
   moderationStatus: ModerationStatus;
   restrictionExpiresAt?: string;
   penaltyReason?: string;
+  penaltyExpiresAt?: string;
+  hasPendingAppeal?: boolean;
+  activeAppealId?: string;
 }
 
 export type SpecializationId =
@@ -176,3 +179,47 @@ export interface AppNotification {
   timestamp: string;
   isRead: boolean;
 }
+
+export type ReportReason =
+  | 'medical_misinformation'
+  | 'abusive_language'
+  | 'commercial_spam'
+  | 'impersonation_fake_license'
+  | 'patient_privacy_violation'
+  | 'other';
+
+export interface AnonymousReport {
+  id: string;
+  targetType: 'post' | 'comment';
+  targetId: string; // post ID or comment ID
+  postId: string;
+  commentId?: string;
+  reportedContentSnippet: string;
+  reportedUsername: string;
+  reportedRealName?: string;
+  reason: ReportReason | string;
+  reasonLabel?: string;
+  details?: string;
+  createdAt: string; // ISO string
+  status: 'pending' | 'reviewed' | 'action_taken' | 'dismissed';
+  isAnonymous: true;
+}
+
+export interface AccountAppeal {
+  id: string;
+  userId: string;
+  username: string;
+  userEmail: string;
+  userRole: UserRole;
+  originalPenalty: ModerationStatus;
+  penaltyReason?: string;
+  appealCategory: 'false_positive_ai' | 'medical_context_misunderstanding' | 'rehabilitation_request' | 'other';
+  appealReason: string;
+  appealDetails: string;
+  createdAt: string; // ISO string
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedAt?: string;
+  reviewedBy?: string;
+  decisionNote?: string;
+}
+

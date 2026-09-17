@@ -264,4 +264,22 @@ export const arTranslations: Translations = {
   commentUpdatedSuccess: 'تم تعديل الرد بنجاح.',
   commentDeletedSuccess: 'تم حذف الرد.',
   doctorAuthorBadge: 'طبيب كاتب',
+
+  // Anonymous Reports & Appeals & Fake Account Purge
+  anonymousReporting: 'نظام الإبلاغ المجهول (100% سري)',
+  reportContent: 'إبلاغ عن محتوى',
+  reportSuccessNotice: 'تم إرسال بلاغك بهوية مجهولة تماماً. لن يعلم الطرف المُبلّغ عنه بهويتك أبداً.',
+  submitAppeal: 'تقديم طلب استئناف رسمي',
+  appealSubmittedSuccess: 'تم تقديم طلب الاستئناف بنجاح وسيقوم فريق الإدارة بمراجعته.',
+  appealUnderReview: 'طلب الاستئناف قيد المراجعة الرسمية',
+  purgeMarcoAccount: 'حذف حساب Marco الوهمي نهائياً من قاعدة البيانات',
+  purgeMarcoSuccess: 'تم حذف حساب Marco الوهمي وكافة متعلقاته نهائياً من قاعدة البيانات.',
+  reportsQueue: 'البلاغات المجهولة',
+  appealsQueue: 'طلبات الاستئناف',
+  approveAppeal: 'قبول الاستئناف ورفع العقوبة',
+  rejectAppeal: 'رفض الاستئناف',
+  appealApprovedSuccess: 'تم قبول الاستئناف واستعادة نشاط الحساب بنجاح.',
+  appealRejectedSuccess: 'تم رفض طلب الاستئناف.',
+  deleteUserPermanently: 'حذف الحساب نهائياً',
 };
+

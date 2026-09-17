@@ -262,4 +262,22 @@ export interface Translations {
   commentUpdatedSuccess: string;
   commentDeletedSuccess: string;
   doctorAuthorBadge: string;
+
+  // Anonymous Reports & Appeals & Fake Account Purge
+  anonymousReporting: string;
+  reportContent: string;
+  reportSuccessNotice: string;
+  submitAppeal: string;
+  appealSubmittedSuccess: string;
+  appealUnderReview: string;
+  purgeMarcoAccount: string;
+  purgeMarcoSuccess: string;
+  reportsQueue: string;
+  appealsQueue: string;
+  approveAppeal: string;
+  rejectAppeal: string;
+  appealApprovedSuccess: string;
+  appealRejectedSuccess: string;
+  deleteUserPermanently: string;
 }
+

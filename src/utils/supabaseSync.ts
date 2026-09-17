@@ -6,6 +6,8 @@ import {
   ConsultationComment,
   SpecializationId,
   UserRole,
+  AnonymousReport,
+  AccountAppeal,
 } from '../types';
 import { SPECIALIZATIONS } from '../data/mockData';
 
@@ -209,13 +211,15 @@ export async function saveConsultationToSupabase(
 }
 
 /**
- * 3. UPDATE CONSULTATION COMMENTS / RESPONSES
- * Updates doctor replies and clinical status in public.consultations
+ * 3. UPDATE CONSULTATION COMMENTS & INTERACTIONS
+ * Updates doctor replies, comments, likes, and clinical status in public.consultations.
+ * Uses upsert fallback to guarantee data is never lost even if row is created in offline state.
  */
 export async function updateConsultationCommentsInSupabase(
   postId: string,
   comments: ConsultationComment[],
-  isClosed?: boolean
+  isClosed?: boolean,
+  fallbackPost?: ConsultationPost
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const doctorComment = comments.find((c) => c.authorRole === 'doctor');
@@ -240,19 +244,39 @@ export async function updateConsultationCommentsInSupabase(
       } catch {
         detailsObj = { description: existing.details };
       }
+    } else if (fallbackPost) {
+      detailsObj = {
+        user_id: fallbackPost.authorId,
+        authorId: fallbackPost.authorId,
+        authorUsername: fallbackPost.authorUsername,
+        authorRole: fallbackPost.authorRole || 'patient',
+        authorRealName: fallbackPost.authorRealName || null,
+        authorSpecialty: fallbackPost.authorSpecialty || null,
+        title: fallbackPost.title,
+        description: fallbackPost.description,
+        specializationId: fallbackPost.specializationId,
+        urgency: fallbackPost.urgency,
+        likesCount: fallbackPost.likesCount || 0,
+        likedByUserIds: fallbackPost.likedByUserIds || [],
+        createdAt: fallbackPost.createdAt,
+      };
     }
 
     detailsObj.comments = comments;
     if (isClosed !== undefined) detailsObj.isClosed = isClosed;
     detailsObj.updatedAt = new Date().toISOString();
 
+    const consultationPayload: Record<string, any> = {
+      id: postId,
+      patient_name: existing?.patient_name || fallbackPost?.authorRealName || fallbackPost?.authorUsername || 'Patient',
+      status,
+      details: JSON.stringify(detailsObj),
+      created_at: existing?.created_at || fallbackPost?.createdAt || new Date().toISOString(),
+    };
+
     const { error } = await supabase
       .from('consultations')
-      .update({
-        status,
-        details: JSON.stringify(detailsObj),
-      })
-      .eq('id', postId);
+      .upsert(consultationPayload, { onConflict: 'id' });
 
     // Also update posts table if available
     try {
@@ -265,6 +289,89 @@ export async function updateConsultationCommentsInSupabase(
         })
         .eq('id', postId);
     } catch {}
+
+    return { success: !error, error: error?.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * 3B. UPDATE CONSULTATION INTERACTIONS (Likes, Upvotes, Closure)
+ * Directly persists post interaction counters and upvotes to Supabase so they never disappear.
+ */
+export async function updateConsultationInteractionsInSupabase(
+  postId: string,
+  updates: {
+    likesCount?: number;
+    likedByUserIds?: string[];
+    comments?: ConsultationComment[];
+    isClosed?: boolean;
+  },
+  fallbackPost?: ConsultationPost
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data: existing } = await supabase
+      .from('consultations')
+      .select('*')
+      .eq('id', postId)
+      .maybeSingle();
+
+    let detailsObj: any = {};
+    if (existing?.details) {
+      try {
+        detailsObj = typeof existing.details === 'object' ? existing.details : JSON.parse(existing.details);
+      } catch {
+        detailsObj = { description: existing.details };
+      }
+    } else if (fallbackPost) {
+      detailsObj = {
+        user_id: fallbackPost.authorId,
+        authorId: fallbackPost.authorId,
+        authorUsername: fallbackPost.authorUsername,
+        authorRole: fallbackPost.authorRole || 'patient',
+        authorRealName: fallbackPost.authorRealName || null,
+        authorSpecialty: fallbackPost.authorSpecialty || null,
+        title: fallbackPost.title,
+        description: fallbackPost.description,
+        specializationId: fallbackPost.specializationId,
+        urgency: fallbackPost.urgency,
+        comments: fallbackPost.comments || [],
+        createdAt: fallbackPost.createdAt,
+      };
+    }
+
+    if (typeof updates.likesCount === 'number') {
+      detailsObj.likesCount = updates.likesCount;
+    }
+    if (Array.isArray(updates.likedByUserIds)) {
+      detailsObj.likedByUserIds = updates.likedByUserIds;
+    }
+    if (Array.isArray(updates.comments)) {
+      detailsObj.comments = updates.comments;
+    }
+    if (updates.isClosed !== undefined) {
+      detailsObj.isClosed = updates.isClosed;
+    }
+    detailsObj.updatedAt = new Date().toISOString();
+
+    let status = existing?.status || 'waiting_doctor';
+    if (updates.isClosed) {
+      status = 'completed';
+    }
+
+    const { error } = await supabase
+      .from('consultations')
+      .upsert(
+        {
+          id: postId,
+          patient_name: existing?.patient_name || fallbackPost?.authorRealName || fallbackPost?.authorUsername || 'Patient',
+          status,
+          details: JSON.stringify(detailsObj),
+          created_at: existing?.created_at || fallbackPost?.createdAt || new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
 
     return { success: !error, error: error?.message };
   } catch (err: any) {
@@ -288,6 +395,101 @@ export async function deleteConsultationFromSupabase(postId: string): Promise<{ 
 }
 
 /**
+ * 4B. PERMANENTLY DELETE USER ACCOUNT FROM SUPABASE
+ * Removes the user row from public.users and associated records.
+ */
+export async function deleteUserFromSupabase(
+  userId: string,
+  emailOrUsername?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Delete from users table by ID
+    const { error: err1 } = await supabase.from('users').delete().eq('id', userId);
+    
+    // 2. Also delete by email if provided
+    if (emailOrUsername) {
+      await supabase.from('users').delete().eq('email', emailOrUsername);
+      await supabase.from('users').delete().ilike('full_name', `%${emailOrUsername.replace('@', '')}%`);
+    }
+
+    // 3. Remove consultations created by this user if they exist
+    await supabase.from('consultations').delete().eq('patient_name', emailOrUsername || userId);
+
+    return { success: !err1, error: err1?.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * 4C. PURGE DUMMY "MARCO" ACCOUNT PERMANENTLY
+ * Specifically eradicates the unwanted dummy account "marco" from Supabase database
+ * and all consultation/user lists.
+ */
+export async function purgeDummyMarcoAccountFromSupabase(): Promise<{ success: boolean; deletedCount?: number }> {
+  try {
+    // Delete all users matching "marco"
+    const { error: userErr } = await supabase
+      .from('users')
+      .delete()
+      .or('full_name.ilike.%marco%,email.ilike.%marco%,id.ilike.%marco%');
+
+    // Delete all consultations matching "marco"
+    const { error: consultErr } = await supabase
+      .from('consultations')
+      .delete()
+      .or('patient_name.ilike.%marco%,details.ilike.%marco%');
+
+    // Clean browser localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const usersRaw = localStorage.getItem('istichary_users');
+        if (usersRaw) {
+          const users = JSON.parse(usersRaw);
+          if (Array.isArray(users)) {
+            const filtered = users.filter((u: any) =>
+              !u.username?.toLowerCase().includes('marco') &&
+              !u.realName?.toLowerCase().includes('marco') &&
+              !u.email?.toLowerCase().includes('marco')
+            );
+            localStorage.setItem('istichary_users', JSON.stringify(filtered));
+          }
+        }
+
+        const currentUserRaw = localStorage.getItem('istichary_user');
+        if (currentUserRaw) {
+          const cu = JSON.parse(currentUserRaw);
+          if (
+            cu?.username?.toLowerCase().includes('marco') ||
+            cu?.realName?.toLowerCase().includes('marco') ||
+            cu?.email?.toLowerCase().includes('marco')
+          ) {
+            localStorage.removeItem('istichary_user');
+          }
+        }
+
+        const postsRaw = localStorage.getItem('istichary_posts');
+        if (postsRaw) {
+          const posts = JSON.parse(postsRaw);
+          if (Array.isArray(posts)) {
+            const filtered = posts.filter((p: any) =>
+              !p.authorUsername?.toLowerCase().includes('marco') &&
+              !p.authorRealName?.toLowerCase().includes('marco')
+            );
+            localStorage.setItem('istichary_posts', JSON.stringify(filtered));
+          }
+        }
+      } catch (e) {}
+    }
+
+    return { success: !userErr && !consultErr };
+  } catch (err) {
+    console.warn('[SupabaseSync] Error purging marco:', err);
+    return { success: false };
+  }
+}
+
+/**
  * 5. FETCH CONSULTATIONS FROM SUPABASE
  * Loads public consultations directly from the Supabase production project,
  * linking every post to its user_id and preserving full metadata.
@@ -305,7 +507,15 @@ export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost
     }
 
     // Map each database row into ConsultationPost
-    return data.map((row: any): ConsultationPost => {
+    return data
+      .filter((row: any) => {
+        // Exclude system reports, appeals, and any dummy "marco" records
+        if (row.status === 'report' || row.status === 'appeal') return false;
+        const pName = String(row.patient_name || '').toLowerCase();
+        if (pName.includes('marco')) return false;
+        return true;
+      })
+      .map((row: any): ConsultationPost => {
       const id = String(row.id);
       
       let meta: any = {};
@@ -321,8 +531,9 @@ export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost
         }
       }
 
-      const authorId = String(meta.user_id || meta.authorId || row.patient_id || row.user_id || 'remote-patient');
+      // Check author in meta as well
       const authorUsername = String(meta.authorUsername || row.patient_name || 'Patient');
+      const authorId = String(meta.user_id || meta.authorId || row.patient_id || row.user_id || 'remote-patient');
 
       // Title & Description resolution
       let title = meta.title;
@@ -357,7 +568,7 @@ export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost
           authorSpecialty: row.doctor_specialty || row.specialty || 'General Medicine',
           isVerifiedDoctor: true,
           content: row.clinical_summary || 'Clinical assessment received. Please follow standard prescribed guidelines.',
-          timestamp: row.updated_at ? new Date(row.updated_at).toLocaleDateString() : 'Recent',
+          timestamp: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
         });
       }
 
@@ -381,8 +592,9 @@ export async function fetchConsultationsFromSupabase(): Promise<ConsultationPost
         isEdited: !!meta.isEdited,
         comments,
         likesCount: typeof meta.likesCount === 'number' ? meta.likesCount : 0,
+        likedByUserIds: Array.isArray(meta.likedByUserIds) ? meta.likedByUserIds : [],
       };
-    });
+    }).filter((post) => !post.authorUsername.toLowerCase().includes('marco') && !(post.authorRealName || '').toLowerCase().includes('marco'));
   } catch (err) {
     console.warn('[SupabaseSync] Failed to fetch consultations:', err);
     return [];
@@ -413,11 +625,21 @@ export async function fetchUsersFromSupabase(): Promise<{
     for (const row of data) {
       const id = String(row.id);
       const email = String(row.email || '');
+      const fullName = row.full_name || '';
+
+      // Strictly ignore any marco dummy account
+      if (
+        fullName.toLowerCase().includes('marco') ||
+        email.toLowerCase().includes('marco') ||
+        id.toLowerCase().includes('marco')
+      ) {
+        continue;
+      }
+
       const rawRole = String(row.role || 'patient').toLowerCase();
       const isDoctor = rawRole.includes('doc');
       const role: UserRole = isDoctor ? 'doctor' : (rawRole === 'super_admin' ? 'super_admin' : (rawRole === 'moderator' ? 'moderator' : 'patient'));
 
-      const fullName = row.full_name || '';
       const username = fullName.startsWith('@')
         ? fullName
         : `@${(fullName || email.split('@')[0] || 'user').toLowerCase().replace(/\s+/g, '_')}`;
@@ -572,3 +794,252 @@ export async function testSupabaseConnection(): Promise<SyncStatus> {
     };
   }
 }
+
+/**
+ * 9. ANONYMOUS REPORTS PERSISTENCE
+ * Persists reports to Supabase with status 'report' so they are permanent across all sessions,
+ * while strictly maintaining 100% reporter anonymity.
+ */
+export async function saveReportToSupabase(report: AnonymousReport): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Save in localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const existingRaw = localStorage.getItem('istichary_reports');
+        const list: AnonymousReport[] = existingRaw ? JSON.parse(existingRaw) : [];
+        const filtered = list.filter((r) => r.id !== report.id);
+        filtered.unshift(report);
+        localStorage.setItem('istichary_reports', JSON.stringify(filtered));
+      } catch {}
+    }
+
+    // 2. Save in Supabase consultations table with status: 'report'
+    const reportPayload = {
+      id: report.id,
+      patient_name: 'ANONYMOUS_REPORTER',
+      status: 'report',
+      details: JSON.stringify(report),
+      created_at: report.createdAt || new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from('consultations')
+      .upsert(reportPayload, { onConflict: 'id' });
+
+    return { success: !error, error: error?.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+export async function fetchReportsFromSupabase(): Promise<AnonymousReport[]> {
+  try {
+    const { data, error } = await supabase
+      .from('consultations')
+      .select('*')
+      .eq('status', 'report')
+      .order('created_at', { ascending: false });
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const reports: AnonymousReport[] = [];
+      for (const row of data) {
+        if (row.details) {
+          try {
+            const parsed = typeof row.details === 'object' ? row.details : JSON.parse(row.details);
+            reports.push(parsed);
+          } catch {}
+        }
+      }
+      return reports;
+    }
+
+    // Fallback to localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = localStorage.getItem('istichary_reports');
+      if (raw) return JSON.parse(raw);
+    }
+    return [];
+  } catch (err) {
+    console.warn('[SupabaseSync] Failed to fetch reports:', err);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = localStorage.getItem('istichary_reports');
+      if (raw) return JSON.parse(raw);
+    }
+    return [];
+  }
+}
+
+export const getReportsFromSupabase = fetchReportsFromSupabase;
+
+export async function updateReportStatusInSupabase(
+  reportId: string,
+  newStatus: AnonymousReport['status']
+): Promise<{ success: boolean }> {
+  try {
+    // 1. Update localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const raw = localStorage.getItem('istichary_reports');
+        if (raw) {
+          const list: AnonymousReport[] = JSON.parse(raw);
+          const updated = list.map((r) => (r.id === reportId ? { ...r, status: newStatus } : r));
+          localStorage.setItem('istichary_reports', JSON.stringify(updated));
+        }
+      } catch {}
+    }
+
+    // 2. Update Supabase
+    const { data: existing } = await supabase
+      .from('consultations')
+      .select('*')
+      .eq('id', reportId)
+      .maybeSingle();
+
+    if (existing?.details) {
+      const parsed = typeof existing.details === 'object' ? existing.details : JSON.parse(existing.details);
+      parsed.status = newStatus;
+      await supabase
+        .from('consultations')
+        .update({ details: JSON.stringify(parsed) })
+        .eq('id', reportId);
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false };
+  }
+}
+
+/**
+ * 10. ACCOUNT APPEALS PERSISTENCE
+ * Allows restricted or banned users to submit formal appeals that persist in Supabase
+ * and can be reviewed by super-admins/moderators.
+ */
+export async function saveAppealToSupabase(appeal: AccountAppeal): Promise<{ success: boolean; error?: string }> {
+  try {
+    // 1. Save in localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const existingRaw = localStorage.getItem('istichary_appeals');
+        const list: AccountAppeal[] = existingRaw ? JSON.parse(existingRaw) : [];
+        const filtered = list.filter((a) => a.id !== appeal.id);
+        filtered.unshift(appeal);
+        localStorage.setItem('istichary_appeals', JSON.stringify(filtered));
+      } catch {}
+    }
+
+    // 2. Save to Supabase consultations table with status: 'appeal'
+    const appealPayload = {
+      id: appeal.id,
+      patient_name: appeal.username || appeal.userEmail,
+      status: 'appeal',
+      details: JSON.stringify(appeal),
+      created_at: appeal.createdAt || new Date().toISOString(),
+    };
+
+    const { error } = await supabase
+      .from('consultations')
+      .upsert(appealPayload, { onConflict: 'id' });
+
+    return { success: !error, error: error?.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+export async function fetchAppealsFromSupabase(): Promise<AccountAppeal[]> {
+  try {
+    const { data, error } = await supabase
+      .from('consultations')
+      .select('*')
+      .eq('status', 'appeal')
+      .order('created_at', { ascending: false });
+
+    if (!error && Array.isArray(data) && data.length > 0) {
+      const appeals: AccountAppeal[] = [];
+      for (const row of data) {
+        if (row.details) {
+          try {
+            const parsed = typeof row.details === 'object' ? row.details : JSON.parse(row.details);
+            appeals.push(parsed);
+          } catch {}
+        }
+      }
+      return appeals;
+    }
+
+    // Fallback to localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = localStorage.getItem('istichary_appeals');
+      if (raw) return JSON.parse(raw);
+    }
+    return [];
+  } catch (err) {
+    console.warn('[SupabaseSync] Failed to fetch appeals:', err);
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const raw = localStorage.getItem('istichary_appeals');
+      if (raw) return JSON.parse(raw);
+    }
+    return [];
+  }
+}
+
+export const getAppealsFromSupabase = fetchAppealsFromSupabase;
+
+export async function updateAppealStatusInSupabase(
+  appealId: string,
+  newStatus: AccountAppeal['status'],
+  moderatorUsername?: string,
+  decisionNote?: string
+): Promise<{ success: boolean }> {
+  try {
+    const now = new Date().toISOString();
+
+    // 1. Update in localStorage
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const raw = localStorage.getItem('istichary_appeals');
+        if (raw) {
+          const list: AccountAppeal[] = JSON.parse(raw);
+          const updated = list.map((a) =>
+            a.id === appealId
+              ? {
+                  ...a,
+                  status: newStatus,
+                  reviewedAt: now,
+                  reviewedBy: moderatorUsername,
+                  decisionNote,
+                }
+              : a
+          );
+          localStorage.setItem('istichary_appeals', JSON.stringify(updated));
+        }
+      } catch {}
+    }
+
+    // 2. Update in Supabase
+    const { data: existing } = await supabase
+      .from('consultations')
+      .select('*')
+      .eq('id', appealId)
+      .maybeSingle();
+
+    if (existing?.details) {
+      const parsed = typeof existing.details === 'object' ? existing.details : JSON.parse(existing.details);
+      parsed.status = newStatus;
+      parsed.reviewedAt = now;
+      parsed.reviewedBy = moderatorUsername;
+      parsed.decisionNote = decisionNote;
+
+      await supabase
+        .from('consultations')
+        .update({ details: JSON.stringify(parsed) })
+        .eq('id', appealId);
+    }
+
+    return { success: true };
+  } catch {
+    return { success: false };
+  }
+}
+

@@ -25,6 +25,8 @@ import {
   Pencil,
   Trash2,
   Check,
+  Flag,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   ConsultationPost,
@@ -33,6 +35,7 @@ import {
   Language,
   SpecializationId,
   DoctorProfile,
+  AnonymousReport,
 } from '../types';
 import { translations, getSpecialtyLabel, getUrgencyLabel } from '../i18n/translations';
 import { SPECIALIZATIONS, MOCK_DOCTORS } from '../data/mockData';
@@ -40,6 +43,8 @@ import { RoleAvatar } from './RoleAvatar';
 import { evaluateContent, checkUserCanPost } from '../utils/moderation';
 import { formatRelativeTime, formatPostPublishedTime } from '../utils/timeAgo';
 import { generateUUID } from '../utils/supabaseSync';
+import { LiveRelativeTimestamp } from './LiveRelativeTimestamp';
+import { AnonymousReportModal } from './AnonymousReportModal';
 
 interface PublicConsultationsViewProps {
   posts: ConsultationPost[];
@@ -58,6 +63,9 @@ interface PublicConsultationsViewProps {
   doctors?: DoctorProfile[];
   onOpenRatingModal?: (doctor: DoctorProfile) => void;
   onLikePost?: (postId: string) => void;
+  onLikeComment?: (postId: string, commentId: string) => void;
+  onReportContent?: (report: AnonymousReport) => void;
+  onOpenAppealModal?: () => void;
 }
 
 export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = ({
@@ -77,10 +85,30 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
   doctors = MOCK_DOCTORS,
   onOpenRatingModal,
   onLikePost,
+  onLikeComment,
+  onReportContent,
+  onOpenAppealModal,
 }) => {
   const t = translations[lang];
   const [selectedSpecialty, setSelectedSpecialty] = useState<SpecializationId | 'followed'>('all');
   const [expandedPostIds, setExpandedPostIds] = useState<Record<string, boolean>>({});
+  const [reportModalData, setReportModalData] = useState<{
+    isOpen: boolean;
+    targetType: 'post' | 'comment';
+    targetId: string;
+    postId: string;
+    commentId?: string;
+    authorUsername: string;
+    authorRealName?: string;
+    contentSnippet: string;
+  }>({
+    isOpen: false,
+    targetType: 'post',
+    targetId: '',
+    postId: '',
+    authorUsername: '',
+    contentSnippet: '',
+  });
   const [isComposerOpen, setIsComposerOpen] = useState(false);
 
   // New Post Form State
@@ -373,7 +401,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
       : null;
 
     const newComment: ConsultationComment = {
-      id: `comm-${Date.now()}`,
+      id: generateUUID(),
       postId,
       authorId: currentUser.id,
       authorDoctorId: docProfile?.id || (isDoctor ? currentUser.id : undefined),
@@ -386,6 +414,8 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
       content: text,
       timestamp: new Date().toISOString(),
       isDoctorRecommendation: isDoctor,
+      likesCount: 0,
+      likedByUserIds: [],
     };
 
     onAddComment(postId, newComment);
@@ -395,6 +425,51 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
 
   return (
     <div id="public-consultations-feed" className="space-y-4 pb-12">
+      {/* Moderation Restriction Notice with Appeal CTA */}
+      {currentUser && (currentUser.moderationStatus === 'banned' || currentUser.moderationStatus === 'restricted_48h') && (
+        <div
+          id="feed-restriction-banner"
+          className={`p-4 rounded-2xl border flex items-start justify-between gap-3 ${
+            currentUser.moderationStatus === 'banned'
+              ? 'bg-rose-50 dark:bg-rose-950/70 border-rose-200 dark:border-rose-900 text-rose-900 dark:text-rose-200'
+              : 'bg-amber-50 dark:bg-amber-950/70 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200'
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                currentUser.moderationStatus === 'banned' ? 'bg-rose-600 text-white' : 'bg-amber-500 text-white'
+              }`}
+            >
+              <ShieldAlert size={18} />
+            </div>
+            <div className="space-y-1">
+              <h4 className="font-bold text-xs sm:text-sm">
+                {currentUser.moderationStatus === 'banned' ? t.bannedAlertTitle : t.restrictedAlertTitle}
+              </h4>
+              <p className="text-[11px] opacity-90 leading-relaxed">
+                {currentUser.moderationStatus === 'banned' ? t.bannedAlertDesc : t.restrictedAlertDesc}
+              </p>
+              {currentUser.penaltyReason && (
+                <p className="text-[10px] font-mono opacity-80">
+                  {currentUser.penaltyReason}
+                </p>
+              )}
+            </div>
+          </div>
+          {onOpenAppealModal && (
+            <button
+              id="btn-feed-submit-appeal"
+              type="button"
+              onClick={onOpenAppealModal}
+              className="px-3.5 py-2 rounded-xl bg-white dark:bg-slate-900 font-bold text-xs shadow-xs hover:shadow transition shrink-0 cursor-pointer text-slate-800 dark:text-white border border-slate-200 dark:border-slate-700"
+            >
+              {t.submitAppeal}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* 1. PROMINENT POST INPUT FIELD AT THE TOP */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-sky-200 dark:border-slate-700 p-4 shadow-sm space-y-3">
         {!isComposerOpen ? (
@@ -703,8 +778,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                         )}
                       </div>
                       <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                        <Clock size={11} />
-                        <span>{formatPostPublishedTime(post.createdAt, lang)}</span>
+                        <LiveRelativeTimestamp timestamp={post.createdAt} lang={lang} />
                         {post.isEdited && (
                           <span className="text-[10px] text-slate-400 font-medium italic">
                             ({t.editedBadge})
@@ -928,6 +1002,32 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                         {post.comments.length} {post.comments.length === 1 ? 'Specialist Response' : 'Clinical Responses'}
                       </span>
                     </div>
+
+                    {/* Anonymous Report Button for Post */}
+                    <button
+                      id={`btn-report-post-${post.id}`}
+                      type="button"
+                      onClick={() => {
+                        if (!currentUser) {
+                          onRequestAuth();
+                          return;
+                        }
+                        setReportModalData({
+                          isOpen: true,
+                          targetType: 'post',
+                          targetId: post.id,
+                          postId: post.id,
+                          authorUsername: post.authorUsername,
+                          authorRealName: post.authorRealName,
+                          contentSnippet: post.title ? `${post.title}: ${post.description}` : post.description,
+                        });
+                      }}
+                      className="flex items-center gap-1 text-[11px] font-medium text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 transition cursor-pointer"
+                      title={t.reportContent}
+                    >
+                      <Flag size={12} />
+                      <span className="hidden sm:inline">{t.reportContent}</span>
+                    </button>
                   </div>
 
                   <button
@@ -1033,8 +1133,7 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                                     </div>
 
                                     <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-                                      <Clock size={10} />
-                                      <span>{formatRelativeTime(comment.timestamp, lang)}</span>
+                                      <LiveRelativeTimestamp timestamp={comment.timestamp} lang={lang} />
                                       {comment.isEdited && (
                                         <span className="text-[10px] text-slate-400 font-medium italic">
                                           ({t.editedBadge})
@@ -1045,6 +1144,43 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
                                 </div>
 
                                 <div className="flex items-center gap-1.5 flex-wrap">
+                                  {/* Like Comment Button */}
+                                  <button
+                                    id={`btn-like-comment-${comment.id}`}
+                                    type="button"
+                                    onClick={() => onLikeComment && onLikeComment(post.id, comment.id)}
+                                    className="px-2 py-1 rounded-xl text-[11px] font-semibold text-slate-500 hover:text-rose-500 dark:text-slate-400 dark:hover:text-rose-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 transition flex items-center gap-1 cursor-pointer"
+                                    title="Like response"
+                                  >
+                                    <Heart size={11} className={comment.likesCount ? 'fill-rose-500 text-rose-500' : ''} />
+                                    <span>{comment.likesCount || 0}</span>
+                                  </button>
+
+                                  {/* Anonymous Report Comment Button */}
+                                  <button
+                                    id={`btn-report-comment-${comment.id}`}
+                                    type="button"
+                                    onClick={() => {
+                                      if (!currentUser) {
+                                        onRequestAuth();
+                                        return;
+                                      }
+                                      setReportModalData({
+                                        isOpen: true,
+                                        targetType: 'comment',
+                                        targetId: comment.id,
+                                        postId: post.id,
+                                        commentId: comment.id,
+                                        authorUsername: comment.authorUsername,
+                                        authorRealName: comment.authorRealName,
+                                        contentSnippet: comment.content,
+                                      });
+                                    }}
+                                    className="p-1.5 rounded-xl text-slate-400 hover:text-rose-500 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
+                                    title={t.reportContent}
+                                  >
+                                    <Flag size={11} />
+                                  </button>
                                   {/* Author Edit & Delete Comment Buttons */}
                                   {isCommentAuthor && (
                                     <div className="flex items-center gap-1">
@@ -1267,6 +1403,25 @@ export const PublicConsultationsView: React.FC<PublicConsultationsViewProps> = (
           })
         )}
       </div>
+
+      {/* 100% Anonymous Report Modal */}
+      <AnonymousReportModal
+        isOpen={reportModalData.isOpen}
+        onClose={() => setReportModalData((prev) => ({ ...prev, isOpen: false }))}
+        targetType={reportModalData.targetType}
+        targetId={reportModalData.targetId}
+        postId={reportModalData.postId}
+        commentId={reportModalData.commentId}
+        authorUsername={reportModalData.authorUsername}
+        authorRealName={reportModalData.authorRealName}
+        contentSnippet={reportModalData.contentSnippet}
+        currentLang={lang}
+        onSubmitReport={(report) => {
+          if (onReportContent) {
+            onReportContent(report);
+          }
+        }}
+      />
     </div>
   );
 };

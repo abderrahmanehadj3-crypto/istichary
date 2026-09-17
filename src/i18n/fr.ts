@@ -264,4 +264,22 @@ export const frTranslations: Translations = {
   commentUpdatedSuccess: 'Réponse modifiée avec succès.',
   commentDeletedSuccess: 'Réponse supprimée.',
   doctorAuthorBadge: 'Médecin Auteur',
+
+  // Anonymous Reports & Appeals & Fake Account Purge
+  anonymousReporting: 'Système de Signalement Anonyme (100% Confidentiel)',
+  reportContent: 'Signaler un contenu',
+  reportSuccessNotice: 'Votre signalement a été soumis avec un anonymat total. La personne signalée ne connaîtra jamais votre identité.',
+  submitAppeal: 'Déposer un recours officiel',
+  appealSubmittedSuccess: 'Votre demande de recours a été transmise avec succès et est en cours d’examen.',
+  appealUnderReview: 'Recours en cours d’examen officiel',
+  purgeMarcoAccount: 'Purger définitivement le compte fictif Marco de la base de données',
+  purgeMarcoSuccess: 'Le compte fictif Marco et tous ses enregistrements ont été purgés de Supabase.',
+  reportsQueue: 'Signalements Anonymes',
+  appealsQueue: 'Recours de Comptes',
+  approveAppeal: 'Approuver le recours & restaurer le compte',
+  rejectAppeal: 'Rejeter le recours',
+  appealApprovedSuccess: 'Recours validé et compte réactivé avec succès.',
+  appealRejectedSuccess: 'Recours examiné et rejeté.',
+  deleteUserPermanently: 'Supprimer définitivement le compte',
 };
+
