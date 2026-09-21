@@ -14,7 +14,8 @@ export interface Wilaya {
 }
 
 export interface DriverDetails {
-  facePhotoUrl?: string;
+  facePhotoUrl?: string; // Private live biometric face photo (admin only)
+  publicAvatarUrl?: string; // Public avatar visible to customers
   firstName: string;
   lastName: string;
   birthDate: string;

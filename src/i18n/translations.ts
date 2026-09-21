@@ -45,6 +45,8 @@ export interface AppTranslations {
   driverWizardTitle: string;
   step1Title: string;
   step1Desc: string;
+  facePhotoConfidentialNotice: string;
+  publicAvatarChoice: string;
   takeFacePhoto: string;
   retakeFacePhoto: string;
   facePhotoRequired: string;
@@ -57,6 +59,12 @@ export interface AppTranslations {
   step3Title: string;
   phoneVerifyDesc: string;
   step4Title: string;
+  licenseAntiFraudNotice: string;
+  licenseGuideTitle: string;
+  licenseGuideItems: string;
+  openLiveScanner: string;
+  captureNow: string;
+  retakeLive: string;
   licenseNumber: string;
   licenseExpiration: string;
   licenseFrontPhoto: string;
@@ -75,6 +83,10 @@ export interface AppTranslations {
   nextStep: string;
   prevStep: string;
   submitDriverApp: string;
+
+  // Google Sign-up Phone Verification
+  googlePhoneVerifyTitle: string;
+  googlePhoneVerifyDesc: string;
 
   // Customer Orders & Delivery
   selectWilaya: string;
@@ -198,6 +210,8 @@ export const translations: Record<Language, AppTranslations> = {
     driverWizardTitle: 'توثيق حساب السائق (كابتن سريع)',
     step1Title: 'الخطوة 1: صورة الوجه الحية (Selfie)',
     step1Desc: 'يرجى التقاط صورة واضحة ومباشرة لوجهك عبر كاميرا الجهاز للتحقق من الهوية.',
+    facePhotoConfidentialNotice: 'صورة الوجه الحية سرية وخاصة: محفوظة حصرياً للإدارة لتوثيق الهوية البيومترية ومنع التزوير، ولن تظهر للزبائن.',
+    publicAvatarChoice: 'صورة الحساب العامة للزبائن (اختياري)',
     takeFacePhoto: 'فتح الكاميرا والتقاط الصورة',
     retakeFacePhoto: 'إعادة التقاط صورة الوجه',
     facePhotoRequired: 'صورة الوجه المباشرة إلزامية لإتمام التوثيق',
@@ -210,6 +224,12 @@ export const translations: Record<Language, AppTranslations> = {
     step3Title: 'الخطوة 3: توثيق رقم الهاتف عبر SMS',
     phoneVerifyDesc: 'يرجى إدخال رقم هاتفك الجزائري الفعال للاتصال بك وتلقي رمز التحقق.',
     step4Title: 'الخطوة 4: رخصة السياقة',
+    licenseAntiFraudNotice: 'منعاً للتزوير: تم تعطيل رفع الصور من الذاكرة لضمان الشفافية. يجب فتح الكاميرا وتصوير رخصة السياقة مباشرة داخل الإطار.',
+    licenseGuideTitle: 'دليل التصوير الواضح لرخصة السياقة',
+    licenseGuideItems: 'تأكد من وجودك في بيئة ساطعة وجيدة الإضاءة، وتأكد أن الاسم واللقب ورقم الرخصة مقروءة بوضوح ودون لمعان.',
+    openLiveScanner: 'فتح الماسح الضوئي الحي لرخصة السياقة',
+    captureNow: 'التقاط الصورة الحية الآن',
+    retakeLive: 'إعادة المسح عبر الكاميرا',
     licenseNumber: 'رقم رخصة السياقة',
     licenseExpiration: 'تاريخ انتهاء الصلاحية',
     licenseFrontPhoto: 'صورة رخصة السياقة (الوجه الأمامي)',
@@ -228,6 +248,9 @@ export const translations: Record<Language, AppTranslations> = {
     nextStep: 'التالي',
     prevStep: 'السابق',
     submitDriverApp: 'إرسال ملف السائق للاعتماد الفوري',
+
+    googlePhoneVerifyTitle: 'توثيق رقم الهاتف لحساب Google',
+    googlePhoneVerifyDesc: 'يرجى إدخال وتوثيق رقم هاتفك الجزائري لاستلام إشعارات الطلبات وتأكيد حسابك عبر رمز SMS',
 
     selectWilaya: 'اختر الولاية',
     newOrder: 'طلب توصيل جديد',
@@ -345,6 +368,8 @@ export const translations: Record<Language, AppTranslations> = {
     driverWizardTitle: 'Vérification du Livreur (Capitaine Sari3)',
     step1Title: 'Étape 1 : Photo selfie en direct',
     step1Desc: 'Veuillez capturer une photo nette de votre visage via la caméra.',
+    facePhotoConfidentialNotice: 'Cette photo biométrique est strictement confidentielle : accessible uniquement au tableau de bord administrateur pour la sécurité, jamais visible par les clients.',
+    publicAvatarChoice: 'Photo de profil public pour les clients (optionnel)',
     takeFacePhoto: 'Ouvrir la caméra et capturer',
     retakeFacePhoto: 'Reprendre la photo du visage',
     facePhotoRequired: 'La photo en direct est obligatoire pour la vérification.',
@@ -357,6 +382,12 @@ export const translations: Record<Language, AppTranslations> = {
     step3Title: 'Étape 3 : Vérification du numéro de téléphone',
     phoneVerifyDesc: 'Renseignez votre numéro de mobile algérien actif pour le code SMS.',
     step4Title: 'Étape 4 : Permis de conduire',
+    licenseAntiFraudNotice: 'Anti-fraude : le téléversement depuis les fichiers est désactivé. Veuillez capturer votre permis en direct via la caméra dans le cadre lumineux.',
+    licenseGuideTitle: 'Guide de capture claire du permis',
+    licenseGuideItems: "Assurez-vous d'être dans un endroit bien éclairé, sans reflet, avec nom et prénom parfaitement lisibles.",
+    openLiveScanner: 'Ouvrir le scanner direct du permis',
+    captureNow: 'Capturer le cliché en direct',
+    retakeLive: 'Recommencer la capture',
     licenseNumber: 'Numéro de permis',
     licenseExpiration: "Date d'expiration",
     licenseFrontPhoto: 'Photo recto du permis',
@@ -375,6 +406,9 @@ export const translations: Record<Language, AppTranslations> = {
     nextStep: 'Suivant',
     prevStep: 'Précédent',
     submitDriverApp: 'Soumettre mon dossier de validation',
+
+    googlePhoneVerifyTitle: 'Vérification du numéro pour Google',
+    googlePhoneVerifyDesc: 'Veuillez entrer votre numéro algérien pour recevoir le code SMS et activer votre compte',
 
     selectWilaya: 'Sélectionner la Wilaya',
     newOrder: 'Nouvelle livraison',
@@ -492,6 +526,8 @@ export const translations: Record<Language, AppTranslations> = {
     driverWizardTitle: 'Courier Onboarding & Verification',
     step1Title: 'Step 1: Live Face Selfie',
     step1Desc: 'Please capture a clear, real-time photo of your face using your camera.',
+    facePhotoConfidentialNotice: 'Live biometric face capture is strictly confidential: accessible ONLY to the admin dashboard for identity verification and anti-fraud security, never shown to customers.',
+    publicAvatarChoice: 'Public profile photo for customers (optional)',
     takeFacePhoto: 'Open Camera & Capture',
     retakeFacePhoto: 'Retake Face Photo',
     facePhotoRequired: 'Live selfie is required for identity verification.',
@@ -504,6 +540,12 @@ export const translations: Record<Language, AppTranslations> = {
     step3Title: 'Step 3: Phone Verification via SMS',
     phoneVerifyDesc: 'Enter your active Algerian phone number to receive the verification OTP.',
     step4Title: "Step 4: Driver's License",
+    licenseAntiFraudNotice: 'Anti-Fraud Rule: File upload is disabled. Capture your driver license live using the camera inside the illuminated guide frame.',
+    licenseGuideTitle: 'Clear License Capture Guide',
+    licenseGuideItems: 'Ensure bright lighting, no glare or flash reflection, and clearly readable name, surname, and license number.',
+    openLiveScanner: 'Open Live License Camera Scanner',
+    captureNow: 'Capture Live Photo Now',
+    retakeLive: 'Re-scan with Camera',
     licenseNumber: 'License Number',
     licenseExpiration: 'Expiration Date',
     licenseFrontPhoto: 'License Front Photo',
@@ -522,6 +564,9 @@ export const translations: Record<Language, AppTranslations> = {
     nextStep: 'Next',
     prevStep: 'Back',
     submitDriverApp: 'Submit Driver Verification',
+
+    googlePhoneVerifyTitle: 'Phone Verification for Google Account',
+    googlePhoneVerifyDesc: 'Please enter and verify your active Algerian phone number to receive delivery alerts and activate your account via SMS code',
 
     selectWilaya: 'Select Wilaya (Province)',
     newOrder: 'New Delivery Order',
@@ -639,6 +684,8 @@ export const translations: Record<Language, AppTranslations> = {
     driverWizardTitle: 'Верификация курьера (Капитан Sari3)',
     step1Title: 'Шаг 1: Живое селфи лица',
     step1Desc: 'Сделайте четкое фото лица через камеру устройства.',
+    facePhotoConfidentialNotice: 'Живое биометрическое фото лица строго конфиденциально: доступно ТОЛЬКО администраторам для проверки безопасности и защиты от мошенничества, клиенты его не увидят.',
+    publicAvatarChoice: 'Публичное фото профиля для клиентов (опционально)',
     takeFacePhoto: 'Открыть камеру и сделать снимок',
     retakeFacePhoto: 'Переснять фото лица',
     facePhotoRequired: 'Живое селфи обязательно для проверки личности.',
@@ -651,6 +698,12 @@ export const translations: Record<Language, AppTranslations> = {
     step3Title: 'Шаг 3: Подтверждение телефона через SMS',
     phoneVerifyDesc: 'Укажите действующий алжирский номер для получения SMS-кода.',
     step4Title: 'Шаг 4: Водительское удостоверение',
+    licenseAntiFraudNotice: 'Защита от подделок: загрузка файлов отключена. Сфотографируйте права вживую через камеру внутри рамки.',
+    licenseGuideTitle: 'Инструкция по четкому снимку прав',
+    licenseGuideItems: 'Снимайте при ярком свете, без бликов, имя, фамилия и номер удостоверения должны читаться идеально.',
+    openLiveScanner: 'Открыть сканер прав через камеру',
+    captureNow: 'Сделать снимок сейчас',
+    retakeLive: 'Переснять через камеру',
     licenseNumber: 'Номер удостоверения',
     licenseExpiration: 'Срок действия',
     licenseFrontPhoto: 'Фото лицевой стороны',
@@ -669,6 +722,9 @@ export const translations: Record<Language, AppTranslations> = {
     nextStep: 'Далее',
     prevStep: 'Назад',
     submitDriverApp: 'Отправить заявку на проверку',
+
+    googlePhoneVerifyTitle: 'Подтверждение номера для Google',
+    googlePhoneVerifyDesc: 'Пожалуйста, укажите и подтвердите ваш алжирский номер телефона для активации аккаунта через SMS-код',
 
     selectWilaya: 'Выберите Вилайет (провинцию)',
     newOrder: 'Новый заказ доставки',
