@@ -4,10 +4,40 @@
 
 @layer base {
   body {
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Cairo', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
 }
 
+/* Custom sleek and stretched aerodynamic font for Sari3 logo and speed accents */
+.font-sari3-logo {
+  font-family: 'Changa', 'Cairo', sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  transform: skewX(-8deg);
+  display: inline-block;
+}
+
+.font-sari3-stretched {
+  font-family: 'Changa', sans-serif;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  transform: scaleX(1.12);
+  display: inline-block;
+}
+
+/* Leaflet map styles */
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 1rem;
+  z-index: 10;
+}
+
+.dark .leaflet-container {
+  background-color: #121214 !important;
+}
+
+/* Hide scrollbar */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
@@ -17,44 +47,24 @@
   scrollbar-width: none;
 }
 
-@keyframes ecgPulse {
+/* Custom pulsing radar animation for driver dispatch */
+@keyframes radarPing {
   0% {
-    stroke-dashoffset: 240;
-    opacity: 0.7;
+    transform: scale(0.95);
+    opacity: 0.8;
   }
   50% {
-    stroke-dashoffset: 0;
-    opacity: 1;
+    transform: scale(1.6);
+    opacity: 0.15;
   }
   100% {
-    stroke-dashoffset: -240;
-    opacity: 0.7;
+    transform: scale(2.2);
+    opacity: 0;
   }
 }
 
-@keyframes heartBeatScale {
-  0%, 100% {
-    transform: scale(1);
-  }
-  14% {
-    transform: scale(1.24);
-  }
-  28% {
-    transform: scale(1);
-  }
-  42% {
-    transform: scale(1.16);
-  }
-  56% {
-    transform: scale(1);
-  }
+.animate-radar {
+  animation: radarPing 2.4s cubic-bezier(0, 0.2, 0.8, 1) infinite;
 }
 
-.animate-heartbeat-trace {
-  animation: ecgPulse 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-
-.animate-heartbeat-pulse {
-  animation: heartBeatScale 1.3s ease-in-out infinite;
-}
 

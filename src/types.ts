@@ -1,225 +1,112 @@
-export type Language = 'en' | 'ar' | 'fr';
-export type ThemeMode = 'light' | 'dark';
+export type UserRole = 'customer' | 'driver';
 
-export type UserRole = 'patient' | 'doctor' | 'moderator' | 'super_admin';
+export type Language = 'ar' | 'fr' | 'en' | 'ru';
 
-export type VerificationStatus = 'verified' | 'pending' | 'rejected';
+export type ThemeMode = 'dark' | 'light';
 
-export type ModerationStatus = 'active' | 'restricted_48h' | 'banned';
-
-export interface VerificationDocument {
-  id: string;
-  title: string;
-  type: 'medical_license' | 'board_diploma' | 'council_id' | 'identity_proof';
-  fileName: string;
-  fileSize: string;
-  uploadedAt: string;
-  previewNote: string;
+export interface Wilaya {
+  id: number;
+  code: string;
+  nameAr: string;
+  nameFr: string;
+  lat: number;
+  lng: number;
 }
 
-export interface UserAccount {
-  id: string;
-  username: string; // e.g. "@alex_m" or "@dr_vance"
-  email: string; // STRICTLY PRIVATE: Never displayed publicly to other users
-  role: UserRole;
-  password?: string;
-  followingDoctorIds?: string[]; // IDs of doctors followed by this user
-  
-  // Doctor-specific fields
-  realName?: string;
-  showRealName?: boolean;
-  specialty?: string; // MANDATORY: Every doctor's specialty is explicitly defined
-  specializationId?: SpecializationId;
-  verificationStatus?: VerificationStatus;
-  medicalLicenseNumber?: string;
-  hospitalOrClinic?: string;
-  
-  // Strictly restricted clinic location fields (ONLY editable by verified doctors)
-  clinicCity?: string;
-  clinicAddress?: string;
-  clinicRegion?: string;
-  clinicWorkingHours?: string;
-  clinicPhone?: string;
-
-  verificationDocuments?: VerificationDocument[]; // Accessible ONLY by Super Admin & Moderators
-  rejectionReason?: string;
-  
-  // Inactivity tracking (12-month rule)
-  lastLoginDate: string; // ISO string
-  isDeactivatedInactive: boolean;
-  
-  // AI Moderation & Auto-Penalties
-  moderationStatus: ModerationStatus;
-  restrictionExpiresAt?: string;
-  penaltyReason?: string;
-  penaltyExpiresAt?: string;
-  hasPendingAppeal?: boolean;
-  activeAppealId?: string;
+export interface DriverDetails {
+  facePhotoUrl?: string;
+  firstName: string;
+  lastName: string;
+  birthDate: string;
+  age: number; // Strictly >= 20
+  phone: string;
+  phoneVerified: boolean;
+  licenseFrontUrl?: string;
+  licenseBackUrl?: string;
+  licenseNumber: string;
+  licenseExpirationDate: string;
+  vehicleRegType: 'permanent' | 'temporary'; // بطاقة رمادية نهائية / مؤقتة
+  vehiclePlate: string;
+  vehicleBrand: string;
+  vehicleModel: string;
+  vehicleType: 'motorcycle' | 'car' | 'van';
+  verificationStatus: 'verified' | 'pending' | 'rejected';
+  isOnline: boolean;
+  rating: number;
+  totalDeliveries: number;
+  currentCoords?: { lat: number; lng: number };
 }
 
-export type SpecializationId =
-  | 'all'
-  | 'cardiology'
-  | 'neurology'
-  | 'pediatrics'
-  | 'dermatology'
-  | 'general'
-  | 'orthopedics'
-  | 'dentistry'
-  | 'psychiatry'
-  | 'laboratory';
-
-export interface Specialization {
-  id: SpecializationId;
-  name: string;
-  iconName: string;
-  doctorCount: number;
-  description: string;
-}
-
-export interface DoctorProfile {
+export interface UserProfile {
   id: string;
-  userId: string;
-  username: string;
-  realName?: string;
-  showRealName: boolean;
-  specialty: string; // MANDATORY: prominently displayed
-  specializationId: SpecializationId;
-  verificationStatus: VerificationStatus;
-  medicalLicenseNumber: string;
-  hospitalOrClinic: string;
-  clinicCity?: string;
-  clinicAddress?: string;
-  clinicRegion?: string;
-  clinicWorkingHours?: string;
-  clinicPhone?: string;
-  experienceYears: number;
-  about: string;
-  education?: string;
-  rating: number; // Star rating (1 to 5)
-  reviewCount: number;
-  followersCount?: number;
-  verificationDocuments?: VerificationDocument[];
-  rejectionReason?: string;
-}
-
-export interface DoctorRating {
-  id: string;
-  doctorId: string;
-  patientId: string;
-  patientUsername: string;
-  stars: number; // 1 to 5
-  feedback?: string;
+  email?: string;
+  phone?: string;
+  phoneVerified: boolean;
+  displayName: string;
+  avatarUrl?: string;
+  role?: UserRole;
+  wilaya: string;
+  driverDetails?: DriverDetails;
+  cameraPermissionGranted?: boolean;
+  locationPermissionGranted?: boolean;
+  accountConfirmed?: boolean;
   createdAt: string;
 }
 
-export interface ConsultationComment {
+export interface DriverOffer {
   id: string;
-  postId: string;
-  authorId: string;
-  authorUsername: string;
-  authorRole: UserRole;
-  authorRealName?: string;
-  isVerifiedDoctor?: boolean;
-  authorSpecialty?: string; // MANDATORY: prominently displayed on every doctor reply
-  authorLicenseNumber?: string;
-  authorDoctorId?: string;
-  content: string;
-  timestamp: string;
-  isEdited?: boolean;
-  updatedAt?: string;
-  isDoctorRecommendation?: boolean;
-  likesCount?: number;
-  likedByUserIds?: string[];
-}
-
-export interface ConsultationPost {
-  id: string;
-  authorId: string;
-  authorUsername: string;
-  authorRole?: UserRole;
-  authorRealName?: string;
-  authorSpecialty?: string;
-  title: string;
-  specializationId: SpecializationId;
-  description: string;
-  urgency: 'low' | 'medium' | 'high';
+  orderId: string;
+  driverId: string;
+  driverName: string;
+  driverPhone: string;
+  driverRating: number;
+  driverAvatar?: string;
+  vehicleInfo: string;
+  vehiclePlate: string;
+  offeredPrice: number; // In DZD (Algerian Dinars)
+  etaMinutes: number;
+  status: 'pending' | 'accepted' | 'declined';
   createdAt: string;
-  isEdited?: boolean;
-  updatedAt?: string;
-  comments: ConsultationComment[];
-  isClosed?: boolean;
-  likesCount?: number;
-  likedByUserIds?: string[];
 }
 
-export interface ModerationResult {
-  allowed: boolean;
-  penaltyType: 'none' | 'restricted_48h' | 'banned';
-  reason: string;
-  matchedCategory?: 'abusive_language' | 'off_topic' | 'spam';
-}
+export type OrderStatus =
+  | 'searching'     // Waiting for offers
+  | 'negotiating'   // Has active bids
+  | 'accepted'      // Customer accepted a driver
+  | 'in_transit'    // Driver picked up package, heading to dropoff
+  | 'delivered'     // Successfully delivered
+  | 'cancelled';    // Cancelled by user or driver
 
-export type NotificationType = 'follow' | 'reply' | 'rating' | 'like' | 'moderation';
-
-export interface AppNotification {
+export interface DeliveryOrder {
   id: string;
-  recipientUserId?: string;
-  type: NotificationType;
-  actorUsername: string;
-  actorRealName?: string;
-  actorRole: UserRole;
-  actorSpecialty?: string;
-  title?: string;
-  message: string;
-  targetPostId?: string;
-  postId?: string;
-  targetDoctorId?: string;
-  stars?: number;
-  timestamp: string;
-  isRead: boolean;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  wilaya: string;
+  pickupAddress: string;
+  pickupCoords: { lat: number; lng: number };
+  dropoffAddress: string;
+  dropoffCoords: { lat: number; lng: number };
+  packagePhotoUrl: string; // Mandatory clear photo
+  packageDescription: string;
+  packageCategory?: 'documents' | 'food' | 'electronics' | 'clothes' | 'fragile' | 'other';
+  distanceKm: number;
+  suggestedBasePrice: number; // In DZD
+  customerOfferPrice: number; // In DZD
+  agreedPrice?: number; // In DZD
+  status: OrderStatus;
+  assignedDriver?: {
+    id: string;
+    name: string;
+    phone: string;
+    rating: number;
+    avatarUrl?: string;
+    vehicle: string;
+    plate: string;
+    currentCoords?: { lat: number; lng: number };
+  };
+  offers: DriverOffer[];
+  createdAt: string;
+  acceptedAt?: string;
+  completedAt?: string;
 }
-
-export type ReportReason =
-  | 'medical_misinformation'
-  | 'abusive_language'
-  | 'commercial_spam'
-  | 'impersonation_fake_license'
-  | 'patient_privacy_violation'
-  | 'other';
-
-export interface AnonymousReport {
-  id: string;
-  targetType: 'post' | 'comment';
-  targetId: string; // post ID or comment ID
-  postId: string;
-  commentId?: string;
-  reportedContentSnippet: string;
-  reportedUsername: string;
-  reportedRealName?: string;
-  reason: ReportReason | string;
-  reasonLabel?: string;
-  details?: string;
-  createdAt: string; // ISO string
-  status: 'pending' | 'reviewed' | 'action_taken' | 'dismissed';
-  isAnonymous: true;
-}
-
-export interface AccountAppeal {
-  id: string;
-  userId: string;
-  username: string;
-  userEmail: string;
-  userRole: UserRole;
-  originalPenalty: ModerationStatus;
-  penaltyReason?: string;
-  appealCategory: 'false_positive_ai' | 'medical_context_misunderstanding' | 'rehabilitation_request' | 'other';
-  appealReason: string;
-  appealDetails: string;
-  createdAt: string; // ISO string
-  status: 'pending' | 'approved' | 'rejected';
-  reviewedAt?: string;
-  reviewedBy?: string;
-  decisionNote?: string;
-}
-

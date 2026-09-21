@@ -1,1480 +1,472 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect } from 'react';
+import { translations } from './i18n/translations';
+import { DeliveryOrder, DriverDetails, DriverOffer, Language, ThemeMode, UserProfile, UserRole } from './types';
+import { ALGERIA_WILAYAS } from './data/wilayas';
 import {
-  CheckCircle2,
-  AlertTriangle,
-  Heart,
-  MessageSquare,
-  MapPin,
-  Star,
-} from 'lucide-react';
-import {
-  UserAccount,
-  Language,
-  ThemeMode,
-  DoctorProfile,
-  ConsultationPost,
-  ConsultationComment,
-  AppNotification,
-  AnonymousReport,
-  AccountAppeal,
-} from './types';
-import { supabase } from './supabaseClient';
-import { Header } from './components/Header';
-import { BottomNav, NavTab } from './components/BottomNav';
-import { PublicConsultationsView } from './components/PublicConsultationsView';
-import { FollowedView } from './components/FollowedView';
-import { ProfileView } from './components/ProfileView';
-import { NearbyDoctorsView } from './components/NearbyDoctorsView';
-import { AuthModal, AuthTab } from './components/AuthModal';
-import { NotificationsCenterModal } from './components/NotificationsCenterModal';
-import { RateDoctorModal } from './components/RateDoctorModal';
-import { HeartbeatPullToRefresh } from './components/HeartbeatPullToRefresh';
-import { AccountAppealModal } from './components/AccountAppealModal';
-import { AdminModeratorDashboard } from './components/AdminModeratorDashboard';
-import { translations, getTranslations } from './i18n/translations';
-import {
-  saveUserToSupabase,
-  saveConsultationToSupabase,
-  updateConsultationCommentsInSupabase,
-  updateConsultationInteractionsInSupabase,
-  deleteConsultationFromSupabase,
-  fetchConsultationsFromSupabase,
-  fetchUsersFromSupabase,
-  setupRealtimeSubscriptions,
-  saveReportToSupabase,
-  getReportsFromSupabase,
-  saveAppealToSupabase,
-  getAppealsFromSupabase,
-  purgeDummyMarcoAccountFromSupabase,
+  getOrdersFromSupabase,
+  saveNewOrderToSupabase,
+  submitDriverOffer,
+  acceptDriverOffer,
+  updateOrderStatus,
+  saveUserProfile,
+  loadCachedUserProfile,
+  INITIAL_DEMO_ORDERS,
 } from './utils/supabaseSync';
+import { Sari3Logo } from './components/Sari3Logo';
+import { AuthModal } from './components/AuthModal';
+import { RoleSelectionModal } from './components/RoleSelectionModal';
+import { PermissionsModal } from './components/PermissionsModal';
+import { DriverVerificationWizard } from './components/DriverVerificationWizard';
+import { CustomerHome } from './components/CustomerHome';
+import { DriverHome } from './components/DriverHome';
+import { ActiveDeliveryView } from './components/ActiveDeliveryView';
+import { PackageInspectionModal } from './components/PackageInspectionModal';
+import {
+  Sun,
+  Moon,
+  Globe,
+  User,
+  LogOut,
+  Package,
+  Bike,
+  ShieldCheck,
+  MapPin,
+  RefreshCw,
+  Bell,
+  Sparkles,
+} from 'lucide-react';
 
-export default function App() {
-  // Multilingual & Theme with localStorage persistence to prevent falling back to English
-  const [lang, setLang] = useState<Language>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_lang');
-      if (saved === 'en' || saved === 'ar' || saved === 'fr') return saved;
-    } catch (e) {}
-    return 'en';
-  });
+export function App() {
+  // Localization & Theme
+  const [lang, setLang] = useState<Language>('ar');
+  const [theme, setTheme] = useState<ThemeMode>('dark');
+  const t = translations[lang];
 
-  const [theme, setTheme] = useState<ThemeMode>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_theme');
-      if (saved === 'light' || saved === 'dark') return saved;
-    } catch (e) {}
-    return 'light';
-  });
+  // Global Wilaya state (default Wilaya 16 - Algiers)
+  const [selectedWilaya, setSelectedWilaya] = useState<string>('16');
 
-  // Navigation State
-  const [activeTab, setActiveTab] = useState<NavTab>('consultations');
-
-  // Authentication State - Purged of hardcoded mock accounts (No fake "Sarah")
-  const [users, setUsers] = useState<UserAccount[]>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_users');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter(
-            (u: UserAccount) =>
-              u.id !== 'user-patient-1' &&
-              u.username !== '@sarah_k' &&
-              !u.id?.startsWith('user-doc-') &&
-              !u.id?.startsWith('user-mod-')
-          );
-        }
+  // User State
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    return (
+      loadCachedUserProfile() || {
+        id: 'usr-default-demo',
+        displayName: 'أمين بلحاج',
+        phone: '+213 555 12 34 56',
+        phoneVerified: true,
+        role: 'customer',
+        wilaya: '16',
+        cameraPermissionGranted: true,
+        locationPermissionGranted: true,
+        accountConfirmed: true,
+        createdAt: new Date().toISOString(),
       }
-    } catch (e) {}
-    return [];
+    );
   });
 
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_user');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (
-          parsed &&
-          parsed.id &&
-          parsed.id !== 'user-patient-1' &&
-          parsed.username !== '@sarah_k'
-        ) {
-          return parsed;
-        }
-      }
-    } catch (e) {}
-    return null;
-  });
+  // Modal States
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [showRoleModal, setShowRoleModal] = useState<boolean>(false);
+  const [showPermissionsModal, setShowPermissionsModal] = useState<boolean>(false);
+  const [showDriverWizard, setShowDriverWizard] = useState<boolean>(false);
 
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authInitialTab, setAuthInitialTab] = useState<AuthTab>('signin');
+  // Package Inspection Modal
+  const [inspectionPhoto, setInspectionPhoto] = useState<string | null>(null);
+  const [inspectionDesc, setInspectionDesc] = useState<string | null>(null);
 
-  // Doctors and Public Consultations - Clean database state
-  const [doctors, setDoctors] = useState<DoctorProfile[]>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_doctors');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((d: DoctorProfile) => !d.id?.startsWith('doc-1') && !d.id?.startsWith('doc-2') && !d.id?.startsWith('doc-3') && !d.id?.startsWith('doc-4') && !d.id?.startsWith('doc-5') && !d.id?.startsWith('doc-pending-'));
-        }
-      }
-    } catch (e) {}
-    return [];
-  });
+  // Orders State
+  const [orders, setOrders] = useState<DeliveryOrder[]>(INITIAL_DEMO_ORDERS);
+  const [activeTrackingOrderId, setActiveTrackingOrderId] = useState<string | null>(null);
 
-  const [posts, setPosts] = useState<ConsultationPost[]>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_posts');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter((p: ConsultationPost) => !p.id?.startsWith('post-10'));
-        }
-      }
-    } catch (e) {}
-    return [];
-  });
-
-  // Notifications State
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_notifications');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter(
-            (n: AppNotification) => !n.targetPostId?.startsWith('post-10') && !n.id?.startsWith('notif-')
-          );
-        }
-      }
-    } catch (e) {}
-    return [];
-  });
-  const [isNotificationsModalOpen, setIsNotificationsModalOpen] = useState(false);
-
-  // Doctor Star Rating Modal State
-  const [ratingModalDoctor, setRatingModalDoctor] = useState<DoctorProfile | null>(null);
-
-  // Anonymous Reports & Appeals State
-  const [reports, setReports] = useState<AnonymousReport[]>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_reports');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return [];
-  });
-  const [appeals, setAppeals] = useState<AccountAppeal[]>(() => {
-    try {
-      const saved = localStorage.getItem('istichary_appeals');
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return [];
-  });
-  const [isAppealModalOpen, setIsAppealModalOpen] = useState(false);
-  const [isAdminDashboardOpen, setIsAdminDashboardOpen] = useState(false);
-
-  // Load initial reports and appeals from Supabase on mount
-  useEffect(() => {
-    getReportsFromSupabase().then((data) => {
-      if (data && data.length > 0) setReports(data);
-    });
-    getAppealsFromSupabase().then((data) => {
-      if (data && data.length > 0) setAppeals(data);
-    });
-  }, []);
-
-  // Save reports and appeals to localStorage
-  useEffect(() => {
-    localStorage.setItem('istichary_reports', JSON.stringify(reports));
-  }, [reports]);
-
-  useEffect(() => {
-    localStorage.setItem('istichary_appeals', JSON.stringify(appeals));
-  }, [appeals]);
-
-  // Toast alert
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const t = getTranslations(lang);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+  // Load orders on startup and when Wilaya changes
+  const reloadOrders = async () => {
+    const list = await getOrdersFromSupabase();
+    setOrders(list);
   };
 
-  // Sync Supabase Auth Session strictly from server
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (session?.user && !error) {
-        const u = session.user;
-        const meta = u.user_metadata || {};
-        const account: UserAccount = {
-          id: u.id,
-          username: meta.username || (u.email ? `@${u.email.split('@')[0]}` : '@user'),
-          email: u.email || '',
-          role: meta.role || 'patient',
-          lastLoginDate: new Date().toISOString(),
-          isDeactivatedInactive: false,
-          moderationStatus: 'active',
-          followingDoctorIds: [],
-          realName: meta.realName,
-          showRealName: meta.showRealName,
-          specialty: meta.specialty,
-          specializationId: meta.specializationId,
-          medicalLicenseNumber: meta.medicalLicenseNumber,
-          hospitalOrClinic: meta.hospitalOrClinic,
-          verificationStatus: meta.verificationStatus || (meta.role === 'doctor' ? 'pending' : undefined),
-        };
-        setCurrentUser(account);
-        setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
-      } else {
-        // No valid server-side session: reset current user and purge any stale cached token
-        setCurrentUser(null);
-        localStorage.removeItem('istichary_user');
-      }
-    }).catch((err) => {
-      console.warn('[App] Supabase session retrieval notice:', err);
-      setCurrentUser(null);
-    });
+    reloadOrders();
+  }, [selectedWilaya]);
 
-    // Check URL parameters/hash for password recovery link
-    try {
-      if (typeof window !== 'undefined') {
-        const hash = window.location.hash || '';
-        const search = window.location.search || '';
-        if (hash.includes('type=recovery') || search.includes('type=recovery')) {
-          setAuthInitialTab('update_password');
-          setIsAuthModalOpen(true);
-        }
-      }
-    } catch (e) {}
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setAuthInitialTab('update_password');
-        setIsAuthModalOpen(true);
-        showToast('Password recovery verified. Please enter your new password.');
-        return;
-      }
-
-      if (session?.user) {
-        const u = session.user;
-        const meta = u.user_metadata || {};
-        const account: UserAccount = {
-          id: u.id,
-          username: meta.username || (u.email ? `@${u.email.split('@')[0]}` : '@user'),
-          email: u.email || '',
-          role: meta.role || 'patient',
-          lastLoginDate: new Date().toISOString(),
-          isDeactivatedInactive: false,
-          moderationStatus: 'active',
-          followingDoctorIds: [],
-          realName: meta.realName,
-          showRealName: meta.showRealName,
-          specialty: meta.specialty,
-          specializationId: meta.specializationId,
-          medicalLicenseNumber: meta.medicalLicenseNumber,
-          hospitalOrClinic: meta.hospitalOrClinic,
-          verificationStatus: meta.verificationStatus || (meta.role === 'doctor' ? 'pending' : undefined),
-        };
-        setCurrentUser(account);
-        setUsers((prev) => (prev.some((p) => p.id === account.id) ? prev : [...prev, account]));
-
-        // Refresh user posts and consultations from Supabase on sign-in
-        fetchConsultationsFromSupabase().then((remotePosts) => {
-          if (remotePosts && remotePosts.length > 0) {
-            setPosts((prev) => {
-              const remoteIds = new Set(remotePosts.map((p) => p.id));
-              const localOnly = prev.filter((p) => !remoteIds.has(p.id));
-              return [...remotePosts, ...localOnly];
-            });
-          }
-        });
-      } else if (event === 'SIGNED_OUT' || !session) {
-        setCurrentUser(null);
-        localStorage.removeItem('istichary_user');
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  // Synchronize Consultations, Users, and Realtime with Supabase Production
+  // Handle HTML document direction and theme class
   useEffect(() => {
-    let isMounted = true;
+    const dir = lang === 'ar' ? 'rtl' : 'ltr';
+    document.documentElement.dir = dir;
+    document.documentElement.lang = lang;
 
-    // 1. Initial Fetch of Consultations from Supabase
-    fetchConsultationsFromSupabase().then((remotePosts) => {
-      if (!isMounted) return;
-      if (remotePosts && remotePosts.length > 0) {
-        setPosts((prev) => {
-          const remoteIds = new Set(remotePosts.map((p) => p.id));
-          const localOnly = prev.filter((p) => !remoteIds.has(p.id));
-          return [...remotePosts, ...localOnly];
-        });
-      }
-    });
-
-    // 2. Initial Fetch of Users & Doctors from Supabase
-    fetchUsersFromSupabase().then(({ users: remoteUsers, doctors: remoteDoctors }) => {
-      if (!isMounted) return;
-      if (remoteUsers.length > 0) {
-        setUsers((prev) => {
-          const remoteIds = new Set(remoteUsers.map((u) => u.id));
-          const localOnly = prev.filter((u) => !remoteIds.has(u.id));
-          return [...remoteUsers, ...localOnly];
-        });
-      }
-      if (remoteDoctors.length > 0) {
-        setDoctors((prev) => {
-          const remoteIds = new Set(remoteDoctors.map((d) => d.userId || d.id));
-          const localOnly = prev.filter((d) => !remoteIds.has(d.userId || d.id));
-          return [...remoteDoctors, ...localOnly];
-        });
-      }
-    });
-
-    // 3. Setup Realtime Listener for live updates from Super-Admin dashboard and database
-    const unsubscribeRealtime = setupRealtimeSubscriptions({
-      onConsultationChange: (payload) => {
-        if (!isMounted) return;
-        if (payload.eventType === 'DELETE' && payload.old?.id) {
-          setPosts((prev) => prev.filter((p) => p.id !== payload.old.id));
-        } else {
-          // Re-fetch consultations to get cleanly parsed state
-          fetchConsultationsFromSupabase().then((refreshed) => {
-            if (!isMounted) return;
-            if (refreshed && refreshed.length > 0) {
-              setPosts((prev) => {
-                const refreshedIds = new Set(refreshed.map((r) => r.id));
-                const localOnly = prev.filter((p) => !refreshedIds.has(p.id));
-                return [...refreshed, ...localOnly];
-              });
-            }
-          });
-        }
-      },
-      onUserChange: (payload) => {
-        if (!isMounted) return;
-        fetchUsersFromSupabase().then(({ users: refreshedUsers, doctors: refreshedDocs }) => {
-          if (!isMounted) return;
-          if (refreshedUsers.length > 0) setUsers(refreshedUsers);
-          if (refreshedDocs.length > 0) setDoctors(refreshedDocs);
-          if (payload.new?.id && currentUser?.id === payload.new.id) {
-            const updated = refreshedUsers.find((u) => u.id === payload.new.id);
-            if (updated) setCurrentUser(updated);
-          }
-        });
-      },
-    });
-
-    return () => {
-      isMounted = false;
-      unsubscribeRealtime();
-    };
-  }, []);
-
-  // Persist Current User
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem('istichary_user', JSON.stringify(currentUser));
-    } else {
-      localStorage.removeItem('istichary_user');
-    }
-  }, [currentUser]);
-
-  // Persist Users
-  useEffect(() => {
-    localStorage.setItem('istichary_users', JSON.stringify(users));
-  }, [users]);
-
-  // Persist Doctors
-  useEffect(() => {
-    localStorage.setItem('istichary_doctors', JSON.stringify(doctors));
-  }, [doctors]);
-
-  // Sync HTML direction attribute for Arabic (RTL) and French/English (LTR)
-  useEffect(() => {
-    if (lang === 'ar') {
-      document.documentElement.dir = 'rtl';
-      document.documentElement.lang = 'ar';
-    } else if (lang === 'fr') {
-      document.documentElement.dir = 'ltr';
-      document.documentElement.lang = 'fr';
-    } else {
-      document.documentElement.dir = 'ltr';
-      document.documentElement.lang = 'en';
-    }
-  }, [lang]);
-
-  // Persist language
-  const handleLanguageChange = (newLang: Language) => {
-    setLang(newLang);
-    try {
-      localStorage.setItem('istichary_lang', newLang);
-    } catch (e) {}
-  };
-
-  // Sync Dark class to document element
-  useEffect(() => {
     if (theme === 'dark') {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
-    try {
-      localStorage.setItem('istichary_theme', theme);
-    } catch (e) {}
-  }, [theme]);
+  }, [lang, theme]);
 
-  // Sync notifications to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('istichary_notifications', JSON.stringify(notifications));
-    } catch (e) {}
-  }, [notifications]);
+  // Auth Success Handler
+  const handleAuthSuccess = (user: UserProfile) => {
+    setCurrentUser(user);
+    setShowAuthModal(false);
+    saveUserProfile(user);
 
-  // Sync posts to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('istichary_posts', JSON.stringify(posts));
-    } catch (e) {}
-  }, [posts]);
-
-  // Toggle Theme
-  const handleThemeToggle = () => {
-    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
-  };
-
-  // Unread Notifications Count
-  const unreadNotificationsCount = notifications.filter((n) => !n.isRead).length;
-
-  const handleMarkAllNotificationsAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-    showToast(t.markAllAsRead);
-  };
-
-  const handleClearAllNotifications = () => {
-    setNotifications([]);
-    showToast(t.clearAllNotifications);
-  };
-
-  const handleSelectNotification = (notif: AppNotification) => {
-    // Mark this specific notification as read
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
-    );
-    setIsNotificationsModalOpen(false);
-
-    if (notif.postId) {
-      setActiveTab('consultations');
-    } else if (notif.type === 'follow') {
-      setActiveTab('followed');
-    } else if (notif.targetDoctorId) {
-      setActiveTab('nearby');
+    // If role not yet chosen, show Role Selection Wizard
+    if (!user.role) {
+      setShowRoleModal(true);
+    } else if (!user.accountConfirmed) {
+      setShowPermissionsModal(true);
     }
   };
 
-  // Follow / Unfollow Doctor with Notification Creation
-  const handleToggleFollowDoctor = (doctorId: string) => {
-    if (!currentUser) {
-      setIsAuthModalOpen(true);
-      return;
-    }
+  // Role Selection Handler
+  const handleSelectRole = (role: UserRole, updatedData?: Partial<UserProfile>) => {
+    if (!currentUser) return;
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      ...updatedData,
+      role: role,
+    };
+    setCurrentUser(updatedUser);
+    saveUserProfile(updatedUser);
+    setShowRoleModal(false);
 
-    const currentFollowed = currentUser.followingDoctorIds || [];
-    const isAlreadyFollowing = currentFollowed.includes(doctorId);
-
-    let updatedFollowed: string[];
-    if (isAlreadyFollowing) {
-      updatedFollowed = currentFollowed.filter((id) => id !== doctorId);
-      showToast('Specialist unfollowed.');
+    // If driver, open Driver Verification Wizard
+    if (role === 'driver') {
+      setShowDriverWizard(true);
     } else {
-      updatedFollowed = [...currentFollowed, doctorId];
-      const doc = doctors.find((d) => d.id === doctorId);
-      showToast(`Now following Dr. ${doc?.realName || doc?.username} (${doc?.specialty})`);
-
-      // Alert in Notifications Center
-      const newNotif: AppNotification = {
-        id: `notif-follow-${Date.now()}`,
-        type: 'follow',
-        actorUsername: currentUser.username,
-        actorRole: currentUser.role,
-        targetDoctorId: doctorId,
-        message: `You started following Dr. ${doc?.realName || doc?.username} (${doc?.specialty}).`,
-        timestamp: new Date().toISOString(),
-        isRead: false,
-      };
-      setNotifications((prev) => [newNotif, ...prev]);
+      // Customer: proceed to Permissions check before final confirmation
+      setShowPermissionsModal(true);
     }
+  };
 
-    const updatedUser: UserAccount = {
+  // Permissions Completion Handler
+  const handlePermissionsCompleted = (cam: boolean, loc: boolean) => {
+    if (!currentUser) return;
+    const confirmedUser: UserProfile = {
       ...currentUser,
-      followingDoctorIds: updatedFollowed,
+      cameraPermissionGranted: cam,
+      locationPermissionGranted: loc,
+      accountConfirmed: true,
     };
+    setCurrentUser(confirmedUser);
+    saveUserProfile(confirmedUser);
+    setShowPermissionsModal(false);
+  };
 
+  // Driver Verification Completed
+  const handleDriverVerificationCompleted = (details: DriverDetails) => {
+    if (!currentUser) return;
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      role: 'driver',
+      driverDetails: details,
+      accountConfirmed: false, // Permissions still needed before final activation
+    };
     setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
+    saveUserProfile(updatedUser);
+    setShowDriverWizard(false);
+    // Request permissions strictly after role/driver data, before final confirmation
+    setShowPermissionsModal(true);
   };
 
-  // Doctor Star Rating Submission
-  const handleSubmitDoctorRating = (doctorId: string, stars: number, feedback?: string) => {
-    setDoctors((prev) =>
-      prev.map((doc) => {
-        if (doc.id === doctorId) {
-          const oldTotal = doc.rating * doc.reviewCount;
-          const newReviewCount = doc.reviewCount + 1;
-          const newRating = Number(((oldTotal + stars) / newReviewCount).toFixed(1));
-          return {
-            ...doc,
-            rating: newRating,
-            reviewCount: newReviewCount,
-          };
-        }
-        return doc;
-      })
-    );
-
-    const doc = doctors.find((d) => d.id === doctorId);
-    showToast(t.ratingSuccess);
-
-    // Track interaction notification in Notifications Center
-    const newNotif: AppNotification = {
-      id: `notif-rate-${Date.now()}`,
-      type: 'rating',
-      actorUsername: currentUser?.username || 'Patient',
-      actorRole: currentUser?.role || 'patient',
-      targetDoctorId: doctorId,
-      stars,
-      message: `Verified consultation rating: ${stars} Stars submitted for Dr. ${
-        doc?.realName || doc?.username
-      } (${doc?.specialty}). ${feedback ? `"${feedback}"` : ''}`,
-      timestamp: new Date().toISOString(),
-      isRead: false,
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
-  };
-
-  // Like / Heart Consultation Post with Interaction Notification & Supabase Sync
-  const handleLikePost = (postId: string) => {
-    let newLikesCount = 1;
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          newLikesCount = (p.likesCount || 0) + 1;
-          return {
-            ...p,
-            likesCount: newLikesCount,
-          };
-        }
-        return p;
-      })
-    );
-
-    const post = posts.find((p) => p.id === postId);
-    showToast('Consultation inquiry upvoted.');
-
-    // Save interaction directly to Supabase
-    updateConsultationInteractionsInSupabase(postId, { likesCount: newLikesCount }).catch((err) => {
-      console.warn('[SupabaseSync] handleLikePost interaction error:', err);
-    });
-
-    const newNotif: AppNotification = {
-      id: `notif-like-${Date.now()}`,
-      type: 'like',
-      actorUsername: currentUser?.username || 'Patient',
-      actorRole: currentUser?.role || 'patient',
-      postId,
-      message: `Someone appreciated clinical inquiry: "${post?.title ? post.title.slice(0, 35) + '...' : 'Medical Post'}"`,
-      timestamp: new Date().toISOString(),
-      isRead: false,
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
-  };
-
-  // Add Consultation Post
-  const handleAddPost = (newPost: ConsultationPost) => {
-    setPosts((prev) => [newPost, ...prev]);
-    showToast(t.inquiryPublishedSuccess);
-
-    // Save directly to Supabase public.consultations and public.posts
-    saveConsultationToSupabase(newPost, currentUser?.email).catch((err) => {
-      console.warn('[SupabaseSync] handleAddPost error:', err);
-    });
-  };
-
-  // Edit Consultation Post (Allowed for post author - doctor or patient)
-  const handleEditPost = (postId: string, updatedData: Partial<ConsultationPost>) => {
-    let savedPost: ConsultationPost | null = null;
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updated = {
-            ...p,
-            ...updatedData,
-            isEdited: true,
-            updatedAt: new Date().toISOString(),
-          };
-          savedPost = updated;
-          return updated;
-        }
-        return p;
-      })
-    );
-    showToast(t.postUpdatedSuccess);
-
-    if (savedPost) {
-      saveConsultationToSupabase(savedPost, currentUser?.email).catch((err) => {
-        console.warn('[SupabaseSync] handleEditPost error:', err);
-      });
-    }
-  };
-
-  // Delete Consultation Post (Allowed for post author)
-  const handleDeletePost = (postId: string) => {
-    setPosts((prev) => prev.filter((p) => p.id !== postId));
-    showToast(t.postDeletedSuccess);
-
-    // Delete from Supabase public.consultations
-    deleteConsultationFromSupabase(postId).catch((err) => {
-      console.warn('[SupabaseSync] handleDeletePost error:', err);
-    });
-  };
-
-  // Edit Comment / Reply (Allowed for comment author)
-  const handleEditComment = (postId: string, commentId: string, newContent: string) => {
-    let updatedCommentsList: ConsultationComment[] = [];
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updatedComments = p.comments.map((c) => {
-            if (c.id === commentId) {
-              return {
-                ...c,
-                content: newContent,
-                isEdited: true,
-                updatedAt: new Date().toISOString(),
-              };
+  // Role quick switch for demonstration & testing
+  const toggleRole = () => {
+    if (!currentUser) return;
+    const nextRole: UserRole = currentUser.role === 'customer' ? 'driver' : 'customer';
+    const updated: UserProfile = {
+      ...currentUser,
+      role: nextRole,
+      driverDetails:
+        nextRole === 'driver' && !currentUser.driverDetails
+          ? {
+              facePhotoUrl:
+                'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
+              firstName: 'كريم',
+              lastName: 'الدراجي',
+              birthDate: '2001-05-14',
+              age: 25,
+              phone: currentUser.phone || '+213 661 88 99 00',
+              phoneVerified: true,
+              licenseNumber: '16/2020/987654',
+              licenseExpirationDate: '2030-12-31',
+              licenseFrontUrl:
+                'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=500',
+              licenseBackUrl:
+                'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=500',
+              vehicleType: 'motorcycle',
+              vehicleRegType: 'permanent',
+              vehiclePlate: '01234-121-16',
+              vehicleBrand: 'Sym',
+              vehicleModel: 'Orbit II 150cc',
+              verificationStatus: 'verified',
+              isOnline: true,
+              rating: 4.95,
+              totalDeliveries: 42,
             }
-            return c;
-          });
-          updatedCommentsList = updatedComments;
-          return {
-            ...p,
-            comments: updatedComments,
-          };
-        }
-        return p;
-      })
-    );
-    showToast(t.commentUpdatedSuccess);
-
-    if (updatedCommentsList.length > 0) {
-      updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
-        console.warn('[SupabaseSync] handleEditComment error:', err);
-      });
-    }
+          : currentUser.driverDetails,
+    };
+    setCurrentUser(updated);
+    saveUserProfile(updated);
   };
 
-  // Delete Comment / Reply (Allowed for comment author)
-  const handleDeleteComment = (postId: string, commentId: string) => {
-    let updatedCommentsList: ConsultationComment[] = [];
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updatedComments = p.comments.filter((c) => c.id !== commentId);
-          updatedCommentsList = updatedComments;
-          return {
-            ...p,
-            comments: updatedComments,
-          };
-        }
-        return p;
-      })
-    );
-    showToast(t.commentDeletedSuccess);
-
-    updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
-      console.warn('[SupabaseSync] handleDeleteComment error:', err);
-    });
+  // Order Actions
+  const handlePublishOrder = async (newOrder: DeliveryOrder) => {
+    await saveNewOrderToSupabase(newOrder);
+    setOrders((prev) => [newOrder, ...prev]);
   };
 
-  // Add Comment / Doctor Response to a Post with Notification Alert
-  const handleAddComment = (postId: string, newComment: ConsultationComment) => {
-    let updatedCommentsList: ConsultationComment[] = [];
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updatedComments = [...p.comments, newComment];
-          updatedCommentsList = updatedComments;
-          return {
-            ...p,
-            comments: updatedComments,
-          };
-        }
-        return p;
-      })
-    );
-
-    // Save comments/responses directly into Supabase
-    updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
-      console.warn('[SupabaseSync] handleAddComment error:', err);
-    });
-
-    showToast(newComment.authorRole === 'doctor' ? t.doctorReplySentSuccess : 'Reply submitted.');
-
-    // Alert in Notifications Center for doctor replies
-    if (newComment.authorRole === 'doctor') {
-      const newNotif: AppNotification = {
-        id: `notif-reply-${Date.now()}`,
-        type: 'reply',
-        actorUsername: newComment.authorUsername,
-        actorRealName: newComment.authorRealName,
-        actorRole: newComment.authorRole,
-        actorSpecialty: newComment.authorSpecialty,
-        postId,
-        message: `Certified specialist Dr. ${
-          newComment.authorRealName || newComment.authorUsername
-        } (${newComment.authorSpecialty || 'Specialist'}) published medical guidance.`,
-        timestamp: new Date().toISOString(),
-        isRead: false,
-      };
-      setNotifications((prev) => [newNotif, ...prev]);
-    }
+  const handleSendDriverOffer = async (offer: DriverOffer) => {
+    await submitDriverOffer(offer);
+    await reloadOrders();
   };
 
-  // Like / Upvote a Specific Comment or Reply with Supabase Persistence
-  const handleLikeComment = (postId: string, commentId: string) => {
-    let updatedCommentsList: ConsultationComment[] = [];
-    setPosts((prev) =>
-      prev.map((p) => {
-        if (p.id === postId) {
-          const updatedComments = p.comments.map((c) => {
-            if (c.id === commentId) {
-              const currentLikedBy = c.likedByUserIds || [];
-              const userId = currentUser?.id || 'guest';
-              const isAlreadyLiked = currentLikedBy.includes(userId);
-              const newLikedBy = isAlreadyLiked
-                ? currentLikedBy.filter((id) => id !== userId)
-                : [...currentLikedBy, userId];
-              const newLikesCount = isAlreadyLiked
-                ? Math.max(0, (c.likesCount || 1) - 1)
-                : (c.likesCount || 0) + 1;
-              return {
-                ...c,
-                likesCount: newLikesCount,
-                likedByUserIds: newLikedBy,
-              };
-            }
-            return c;
-          });
-          updatedCommentsList = updatedComments;
-          return { ...p, comments: updatedComments };
-        }
-        return p;
-      })
-    );
-
-    if (updatedCommentsList.length > 0) {
-      updateConsultationCommentsInSupabase(postId, updatedCommentsList).catch((err) => {
-        console.warn('[SupabaseSync] handleLikeComment error:', err);
-      });
-    }
+  const handleAcceptOffer = async (orderId: string, offer: DriverOffer) => {
+    await acceptDriverOffer(orderId, offer);
+    await reloadOrders();
+    setActiveTrackingOrderId(orderId);
   };
 
-  // Anonymous Reporting System (100% confidential submission)
-  const handleReportContent = (newReport: AnonymousReport) => {
-    setReports((prev) => [newReport, ...prev]);
-    saveReportToSupabase(newReport).catch((err) => {
-      console.warn('[SupabaseSync] saveReport error:', err);
-    });
-    showToast(t.reportSuccessNotice || 'Report submitted anonymously.');
-  };
-
-  const handleDismissReport = (reportId: string) => {
-    setReports((prev) =>
-      prev.map((r) => (r.id === reportId ? { ...r, status: 'dismissed' as const } : r))
-    );
-    showToast('Report dismissed.');
-  };
-
-  const handleTakeActionOnReport = (
-    reportId: string,
-    action: 'ban_user' | 'restrict_48h' | 'delete_content',
-    targetUserId?: string,
-    targetPostId?: string
+  const handleCounterOffer = async (
+    orderId: string,
+    driverOffer: DriverOffer,
+    counterPrice: number
   ) => {
-    setReports((prev) =>
-      prev.map((r) => (r.id === reportId ? { ...r, status: 'resolved' as const } : r))
-    );
-
-    if (targetUserId) {
-      setUsers((prev) =>
-        prev.map((u) => {
-          if (u.id === targetUserId || u.username === targetUserId) {
-            const updated: UserAccount = {
-              ...u,
-              moderationStatus: action === 'ban_user' ? 'banned' : 'restricted_48h',
-              penaltyReason: 'Violation reported anonymously by community member',
-              restrictedUntil:
-                action === 'restrict_48h'
-                  ? new Date(Date.now() + 48 * 3600 * 1000).toISOString()
-                  : undefined,
-            };
-            saveUserToSupabase(updated).catch(console.warn);
-            if (currentUser?.id === updated.id) {
-              setCurrentUser(updated);
-            }
-            return updated;
-          }
-          return u;
-        })
-      );
-    }
-
-    if (action === 'delete_content' && targetPostId) {
-      handleDeletePost(targetPostId);
-    }
-
-    showToast(action === 'ban_user' ? 'User permanently banned.' : 'Account restricted for 48 hours.');
-  };
-
-  // Account Restriction Appeals System
-  const handleSubmitAppeal = (newAppeal: AccountAppeal) => {
-    setAppeals((prev) => [newAppeal, ...prev]);
-    saveAppealToSupabase(newAppeal).catch((err) => {
-      console.warn('[SupabaseSync] saveAppeal error:', err);
-    });
-    showToast(t.appealSubmittedSuccess || 'Appeal submitted for review.');
-  };
-
-  const handleApproveAppeal = (appealId: string, decisionNote?: string) => {
-    const appeal = appeals.find((a) => a.id === appealId);
-    setAppeals((prev) =>
-      prev.map((a) =>
-        a.id === appealId
-          ? {
-              ...a,
-              status: 'approved' as const,
-              reviewedAt: new Date().toISOString(),
-              reviewedBy: currentUser?.username || 'Super Admin',
-              decisionNote,
-            }
-          : a
-      )
-    );
-
-    if (appeal) {
-      setUsers((prev) =>
-        prev.map((u) => {
-          if (u.id === appeal.userId || u.username === appeal.username) {
-            const restored: UserAccount = {
-              ...u,
-              moderationStatus: 'active',
-              penaltyReason: undefined,
-              restrictedUntil: undefined,
-              penaltyExpiresAt: undefined,
-            };
-            saveUserToSupabase(restored).catch(console.warn);
-            if (currentUser?.id === restored.id) {
-              setCurrentUser(restored);
-            }
-            return restored;
-          }
-          return u;
-        })
-      );
-      showToast('Appeal approved and moderation penalty lifted.');
-    }
-  };
-
-  const handleRejectAppeal = (appealId: string, decisionNote?: string) => {
-    setAppeals((prev) =>
-      prev.map((a) =>
-        a.id === appealId
-          ? {
-              ...a,
-              status: 'rejected' as const,
-              reviewedAt: new Date().toISOString(),
-              reviewedBy: currentUser?.username || 'Super Admin',
-              decisionNote,
-            }
-          : a
-      )
-    );
-    showToast('Appeal rejected.');
-  };
-
-  // Purge Fake Account "marco" permanently from database and lists
-  const handlePurgeMarco = () => {
-    purgeDummyMarcoAccountFromSupabase();
-    setUsers((prev) =>
-      prev.filter(
-        (u) =>
-          !u.username?.toLowerCase().includes('marco') &&
-          !u.email?.toLowerCase().includes('marco')
-      )
-    );
-    setDoctors((prev) =>
-      prev.filter(
-        (d) =>
-          !d.username?.toLowerCase().includes('marco') &&
-          !d.email?.toLowerCase().includes('marco') &&
-          !d.realName?.toLowerCase().includes('marco')
-      )
-    );
-    setPosts((prev) =>
-      prev.filter(
-        (p) =>
-          !p.authorUsername?.toLowerCase().includes('marco') &&
-          !p.authorRealName?.toLowerCase().includes('marco')
-      )
-    );
-    showToast('تم حذف حساب marco الوهمي نهائياً من قاعدة البيانات وقوائم المستخدمين.');
-  };
-
-  // Permanent deletion of a specific user account by Administrator
-  const handleDeleteUser = (userId: string, emailOrUsername?: string) => {
-    setUsers((prev) => prev.filter((u) => u.id !== userId));
-    setDoctors((prev) => prev.filter((d) => d.id !== userId && d.userId !== userId));
-    if (emailOrUsername) {
-      setPosts((prev) =>
-        prev.filter(
-          (p) =>
-            p.authorUsername !== emailOrUsername &&
-            p.authorRealName !== emailOrUsername
-        )
-      );
-    }
-    showToast('User account permanently deleted.');
-  };
-
-  // STRICT RULE: ONLY VERIFIED DOCTORS CAN SET CLINIC LOCATION
-  const handleUpdateClinicLocation = (clinicData: {
-    hospitalOrClinic: string;
-    clinicCity: string;
-    clinicAddress: string;
-    clinicWorkingHours: string;
-    clinicPhone: string;
-  }) => {
-    if (!currentUser || currentUser.role !== 'doctor' || currentUser.verificationStatus !== 'verified') {
-      showToast(t.onlyVerifiedDoctorsCanSetLocation);
-      return;
-    }
-
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      hospitalOrClinic: clinicData.hospitalOrClinic,
-      clinicCity: clinicData.clinicCity,
-      clinicAddress: clinicData.clinicAddress,
-      clinicWorkingHours: clinicData.clinicWorkingHours,
-      clinicPhone: clinicData.clinicPhone,
+    // Customer sends counter offer back
+    const updatedOffer: DriverOffer = {
+      ...driverOffer,
+      offeredPrice: counterPrice,
+      status: 'pending',
     };
-
-    setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-
-    // Sync into doctors catalog so nearby filter immediately reflects it
-    setDoctors((prev) =>
-      prev.map((d) => {
-        if (d.userId === currentUser.id || d.username === currentUser.username) {
-          return {
-            ...d,
-            hospitalOrClinic: clinicData.hospitalOrClinic,
-            clinicCity: clinicData.clinicCity,
-            clinicAddress: clinicData.clinicAddress,
-            clinicWorkingHours: clinicData.clinicWorkingHours,
-            clinicPhone: clinicData.clinicPhone,
-          };
-        }
-        return d;
-      })
-    );
-
-    showToast(t.clinicUpdatedSuccess);
+    await submitDriverOffer(updatedOffer);
+    await reloadOrders();
   };
 
-  // Update Email with strict privacy
-  const handleUpdateEmail = (newEmail: string, passwordConfirm: string) => {
-    if (!currentUser) return { success: false, error: 'User not signed in.' };
-
-    if (currentUser.password && currentUser.password !== passwordConfirm) {
-      return { success: false, error: 'Incorrect password confirmation.' };
-    }
-
-    const exists = users.some(
-      (u) => u.id !== currentUser.id && u.email.toLowerCase() === newEmail.toLowerCase()
-    );
-    if (exists) {
-      return { success: false, error: 'Email address is already linked to another account.' };
-    }
-
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      email: newEmail,
-    };
-
-    setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-    showToast(t.emailUpdatedSuccess);
-    return { success: true };
+  const handleFinishDelivery = async (orderId: string) => {
+    await updateOrderStatus(orderId, 'delivered');
+    await reloadOrders();
+    setActiveTrackingOrderId(null);
   };
 
-  // Change Password
-  const handleChangePassword = (oldPass: string, newPass: string) => {
-    if (!currentUser) return { success: false, error: 'User not signed in.' };
-
-    if (currentUser.password && currentUser.password !== oldPass) {
-      return { success: false, error: 'Current password does not match.' };
-    }
-
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      password: newPass,
-    };
-
-    setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-    showToast(t.passwordChangedSuccess);
-    return { success: true };
-  };
-
-  // Delete Account
-  const handleDeleteAccount = (password: string): boolean => {
-    if (!currentUser) return false;
-
-    if (currentUser.password && currentUser.password !== password) {
-      return false;
-    }
-
-    const userId = currentUser.id;
-    setUsers((prev) => prev.filter((u) => u.id !== userId));
-    setDoctors((prev) => prev.filter((d) => d.userId !== userId && d.id !== userId));
-
-    setPosts((prev) =>
-      prev.map((p) => ({
-        ...p,
-        authorUsername: p.authorId === userId ? '[Deleted Account]' : p.authorUsername,
-        comments: p.comments.map((c) => ({
-          ...c,
-          authorUsername: c.authorId === userId ? '[Deleted Account]' : c.authorUsername,
-          authorRealName: c.authorId === userId ? undefined : c.authorRealName,
-        })),
-      }))
-    );
-
-    setCurrentUser(null);
-    showToast(t.accountDeletedSuccess);
-    return true;
-  };
-
-  // Doctor Toggle Public Real Name
-  const handleToggleDoctorRealName = (show: boolean) => {
-    if (!currentUser || currentUser.role !== 'doctor') return;
-
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      showRealName: show,
-    };
-
-    setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-
-    setDoctors((prev) =>
-      prev.map((d) => (d.userId === currentUser.id ? { ...d, showRealName: show } : d))
-    );
-
-    showToast(show ? 'Real name will appear on posts.' : 'Only username will appear.');
-  };
-
-  // Simulate 12-Month Inactivity
-  const handleSimulateInactivity = () => {
-    if (!currentUser) return;
-    const deactivatedUser: UserAccount = {
-      ...currentUser,
-      isDeactivatedInactive: true,
-      lastLoginDate: '2023-01-01T00:00:00Z',
-    };
-    setCurrentUser(deactivatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === deactivatedUser.id ? deactivatedUser : u)));
-    showToast('Simulated 12-month inactivity policy. Account deactivated.');
-  };
-
-  // Apply moderation penalties
-  const handleApplyPenalty = (penaltyType: 'banned' | 'restricted_48h', reason: string) => {
-    if (!currentUser) return;
-
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      moderationStatus: penaltyType,
-      penaltyReason: reason,
-      penaltyExpiresAt:
-        penaltyType === 'restricted_48h'
-          ? new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
-          : undefined,
-    };
-
-    setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-    showToast(penaltyType === 'banned' ? t.bannedAlertTitle : t.restrictedAlertTitle);
-  };
-
-  const handleClearModerationPenalty = () => {
-    if (!currentUser) return;
-
-    const updatedUser: UserAccount = {
-      ...currentUser,
-      moderationStatus: 'active',
-      penaltyReason: undefined,
-      penaltyExpiresAt: undefined,
-    };
-
-    setCurrentUser(updatedUser);
-    setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
-    showToast('Moderation penalty cleared.');
-  };
-
-  // Doctor Verification status change by Admin/Moderator
-  const handleVerifyDoctor = (userId: string, newStatus: 'verified' | 'rejected') => {
-    let updatedUserObj: UserAccount | null = null;
-    setUsers((prev) =>
-      prev.map((u) => {
-        if (u.id === userId) {
-          const updated = { ...u, verificationStatus: newStatus };
-          updatedUserObj = updated;
-          return updated;
-        }
-        return u;
-      })
-    );
-
-    setDoctors((prev) =>
-      prev.map((d) => (d.userId === userId ? { ...d, verificationStatus: newStatus } : d))
-    );
-
-    if (currentUser?.id === userId) {
-      setCurrentUser((prev) => (prev ? { ...prev, verificationStatus: newStatus } : null));
-    }
-
-    if (updatedUserObj) {
-      saveUserToSupabase(updatedUserObj).catch(() => {});
-    }
-
-    showToast(
-      newStatus === 'verified' ? 'Doctor credentials approved.' : 'Doctor verification rejected.'
-    );
-  };
-
-  // Pending doctors count for badge
-  const pendingDocsCount = users.filter(
-    (u) => u.role === 'doctor' && u.verificationStatus === 'pending'
-  ).length;
-
-  const handleRefreshData = async () => {
-    try {
-      const remotePosts = await fetchConsultationsFromSupabase();
-      if (remotePosts && remotePosts.length > 0) {
-        setPosts((prev) => {
-          const remoteIds = new Set(remotePosts.map((p) => p.id));
-          const localOnly = prev.filter((p) => !remoteIds.has(p.id));
-          return [...remotePosts, ...localOnly];
-        });
-      }
-      showToast(lang === 'ar' ? 'تم تحديث البيانات الطبية بنجاح' : 'Clinical data refreshed');
-    } catch (err) {
-      console.warn('Pull-to-refresh error:', err);
+  const handleCancelOrder = async (orderId: string) => {
+    await updateOrderStatus(orderId, 'cancelled');
+    await reloadOrders();
+    if (activeTrackingOrderId === orderId) {
+      setActiveTrackingOrderId(null);
     }
   };
+
+  // Active tracking order item
+  const activeTrackingOrder = orders.find(
+    (o) =>
+      o.id === activeTrackingOrderId ||
+      ((o.status === 'accepted' || o.status === 'in_transit') &&
+        (o.customerId === currentUser?.id || o.assignedDriver?.id === currentUser?.id))
+  );
 
   return (
     <div
-      id="app-root"
-      className="min-h-screen bg-slate-100 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 flex flex-col items-center justify-start p-2 sm:p-4 transition-colors duration-200"
+      className={`min-h-screen ${
+        theme === 'dark'
+          ? 'bg-[#0B0F17] text-slate-100'
+          : 'bg-slate-50 text-slate-900'
+      } transition-colors duration-200`}
     >
-      {/* Top Brand Bar */}
-      <div className="w-full max-w-3xl flex items-center justify-between pb-3 pt-1 text-xs text-slate-500 dark:text-slate-400">
-        <div className="flex items-center gap-2">
-          <span className="font-extrabold text-sm text-sky-700 dark:text-sky-400 tracking-tight">
-            Istichary
-          </span>
-          <span>• Minimalist Telehealth & Consultations</span>
-        </div>
-      </div>
+      {/* App Header (Clean, sleek, no fake phone bezel) */}
+      <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#0B0F17]/95 backdrop-blur-md px-4 py-3">
+        <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
+          {/* Brand Logo & Stretched Font */}
+          <Sari3Logo size="md" showTagline taglineText={t.tagline} />
 
-      {/* Main Responsive Application Container */}
-      <div
-        id="app-viewport-container"
-        className="w-full max-w-3xl bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-200 dark:border-slate-800 flex flex-col min-h-[85vh] overflow-hidden transition-all duration-300 relative"
-      >
-        {/* Global Toast Notification */}
-        {toastMessage && (
-          <div
-            id="global-toast-notification"
-            className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl bg-slate-900/90 dark:bg-slate-100/90 text-white dark:text-slate-900 text-xs font-semibold shadow-xl flex items-center gap-2 backdrop-blur-md animate-in fade-in slide-in-from-top-2"
-          >
-            <CheckCircle2 size={14} className="text-emerald-400 dark:text-emerald-600" />
-            <span>{toastMessage}</span>
-          </div>
-        )}
+          {/* Controls: Role Switcher, Language, Theme, Profile */}
+          <div className="flex items-center gap-2">
+            {/* Quick Role Switcher (Customer vs Driver) */}
+            <button
+              id="btn-role-switcher"
+              type="button"
+              onClick={toggleRole}
+              className="px-2.5 py-1.5 rounded-xl border border-slate-700/80 bg-slate-900 hover:border-emerald-500 text-xs font-bold text-slate-200 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+              title="التبديل بين وضع الزبون ووضع السائق"
+            >
+              {currentUser?.role === 'driver' ? (
+                <>
+                  <Bike size={14} className="text-purple-400" />
+                  <span className="hidden sm:inline text-purple-400">كابتن سريع</span>
+                </>
+              ) : (
+                <>
+                  <Package size={14} className="text-emerald-400" />
+                  <span className="hidden sm:inline text-emerald-400">زبون</span>
+                </>
+              )}
+            </button>
 
-        {/* Clean Header with Language Switcher and Notifications Bell */}
-        <Header
-          currentUser={currentUser}
-          lang={lang}
-          theme={theme}
-          onLanguageChange={handleLanguageChange}
-          onThemeToggle={handleThemeToggle}
-          onRequestAuth={() => setIsAuthModalOpen(true)}
-          unreadNotificationsCount={unreadNotificationsCount}
-          onOpenNotifications={() => setIsNotificationsModalOpen(true)}
-          onOpenAppealModal={() => setIsAppealModalOpen(true)}
-          onOpenAdminDashboard={() => setIsAdminDashboardOpen(true)}
-        />
-
-        {/* Dynamic Body Content by Active Tab */}
-        <main id="main-content-scroll" className="flex-1 overflow-y-auto p-4 scroll-smooth">
-          <HeartbeatPullToRefresh onRefresh={handleRefreshData} lang={lang}>
-            {/* TAB 1: Streamlined Homepage with Prominent Post Input & Consultations */}
-            {activeTab === 'consultations' && (
-              <PublicConsultationsView
-                posts={posts}
-                currentUser={currentUser}
-                lang={lang}
-                followedDoctorIds={currentUser?.followingDoctorIds || []}
-                onToggleFollowDoctor={handleToggleFollowDoctor}
-                onAddPost={handleAddPost}
-                onEditPost={handleEditPost}
-                onDeletePost={handleDeletePost}
-                onAddComment={handleAddComment}
-                onEditComment={handleEditComment}
-                onDeleteComment={handleDeleteComment}
-                onApplyPenalty={handleApplyPenalty}
-                onRequestAuth={() => setIsAuthModalOpen(true)}
-                doctors={doctors}
-                onOpenRatingModal={setRatingModalDoctor}
-                onLikePost={handleLikePost}
-                onLikeComment={handleLikeComment}
-                onReportContent={handleReportContent}
-                onOpenAppealModal={() => setIsAppealModalOpen(true)}
-              />
-            )}
-
-            {/* TAB 2: Strictly Restricted Nearby Doctors (Verified clinic locations only) */}
-            {activeTab === 'nearby' && (
-              <NearbyDoctorsView
-                doctors={doctors}
-                currentUser={currentUser}
-                lang={lang}
-                followedDoctorIds={currentUser?.followingDoctorIds || []}
-                onToggleFollow={handleToggleFollowDoctor}
-                onOpenRatingModal={setRatingModalDoctor}
-                onNavigateToProfileClinic={() => setActiveTab('profile')}
-                onRequestAuth={() => setIsAuthModalOpen(true)}
-              />
-            )}
-
-            {/* TAB 3: Followed Doctors & Specialists */}
-            {activeTab === 'followed' && (
-              <FollowedView
-                followedDoctorIds={currentUser?.followingDoctorIds || []}
-                doctors={doctors}
-                posts={posts}
-                lang={lang}
-                currentUser={currentUser}
-                onToggleFollow={handleToggleFollowDoctor}
-                onSelectConsultationTab={() => setActiveTab('consultations')}
-                onRequestAuth={() => setIsAuthModalOpen(true)}
-              />
-            )}
-
-            {/* TAB 4: Profile & Account Management */}
-            {activeTab === 'profile' && (
-              <ProfileView
-                currentUser={currentUser}
-                doctors={doctors}
-                lang={lang}
-                theme={theme}
-                posts={posts}
-                onSelectConsultationTab={() => setActiveTab('consultations')}
-                onDeletePost={handleDeletePost}
-                onLanguageChange={handleLanguageChange}
-                onThemeToggle={handleThemeToggle}
-                onSignOut={async () => {
-                  try {
-                    await supabase.auth.signOut();
-                  } catch (e) {}
-                  localStorage.removeItem('istichary_user');
-                  setCurrentUser(null);
-                  setIsAuthModalOpen(true);
-                  showToast('Signed out successfully.');
-                }}
-                onRequestAuth={() => setIsAuthModalOpen(true)}
-                onUpdateEmail={handleUpdateEmail}
-                onChangePassword={handleChangePassword}
-                onDeleteAccount={handleDeleteAccount}
-                onToggleRealName={handleToggleDoctorRealName}
-                onUnfollowDoctor={handleToggleFollowDoctor}
-                onSimulateInactivity={handleSimulateInactivity}
-                onClearModerationPenalty={handleClearModerationPenalty}
-                onUpdateClinicLocation={handleUpdateClinicLocation}
-              />
-            )}
-          </HeartbeatPullToRefresh>
-        </main>
-
-        {/* Minimalist Bottom Navigation */}
-        <BottomNav
-          activeTab={activeTab}
-          onSelectTab={setActiveTab}
-          lang={lang}
-          currentUser={currentUser}
-          consultationsBadge={posts.length}
-          pendingVerifBadge={pendingDocsCount}
-        />
-
-        {/* Notifications & Interactions Center Modal */}
-        <NotificationsCenterModal
-          isOpen={isNotificationsModalOpen}
-          onClose={() => setIsNotificationsModalOpen(false)}
-          notifications={notifications}
-          lang={lang}
-          onMarkAllAsRead={handleMarkAllNotificationsAsRead}
-          onClearAll={handleClearAllNotifications}
-          onNotificationClick={handleSelectNotification}
-        />
-
-        {/* Doctor Star Rating Modal */}
-        <RateDoctorModal
-          isOpen={ratingModalDoctor !== null}
-          doctor={ratingModalDoctor}
-          lang={lang}
-          onClose={() => setRatingModalDoctor(null)}
-          onSubmitRating={handleSubmitDoctorRating}
-        />
-
-        {/* Strict Authentication Guard Modal */}
-        <AuthModal
-          isOpen={isAuthModalOpen || !currentUser}
-          isMandatory={!currentUser}
-          initialTab={authInitialTab}
-          onClose={() => {
-            if (currentUser) {
-              setIsAuthModalOpen(false);
-            }
-          }}
-          lang={lang}
-          existingUsers={users}
-          onAuthSuccess={(user) => {
-            if (!user.email || !user.email.includes('@')) {
-              return;
-            }
-            setUsers((prev) => (prev.some((u) => u.id === user.id) ? prev : [...prev, user]));
-            setCurrentUser(user);
-            setIsAuthModalOpen(false);
-            showToast(`Signed in as ${user.username}`);
-          }}
-          onRegisterDoctor={(newDocUser, docDetails) => {
-            const newDocProfile: DoctorProfile = {
-              id: `doc-${Date.now()}`,
-              userId: newDocUser.id,
-              username: newDocUser.username,
-              realName: newDocUser.realName,
-              showRealName: newDocUser.showRealName,
-              specializationId: newDocUser.specializationId || 'general',
-              specialty: newDocUser.specialty || 'General Medicine',
-              rating: 5.0,
-              reviewCount: 0,
-              experienceYears: docDetails.experienceYears || 5,
-              hospitalOrClinic: newDocUser.hospitalOrClinic || 'Health Center',
-              clinicCity: newDocUser.clinicCity || 'Paris',
-              clinicAddress: newDocUser.clinicAddress || '',
-              medicalLicenseNumber: newDocUser.medicalLicenseNumber || 'PENDING',
-              verificationStatus: 'pending',
-              about: docDetails.about || 'Specialist physician.',
-            };
-            setDoctors((prev) => [...prev, newDocProfile]);
-            saveUserToSupabase(newDocUser).catch(() => {});
-          }}
-        />
-
-        {/* Account Restriction Appeals Modal */}
-        <AccountAppealModal
-          isOpen={isAppealModalOpen}
-          onClose={() => setIsAppealModalOpen(false)}
-          currentUser={currentUser}
-          currentLang={lang}
-          onSubmitAppeal={handleSubmitAppeal}
-        />
-
-        {/* Admin & Moderator Dashboard Modal */}
-        {isAdminDashboardOpen && (
-          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 backdrop-blur-sm p-4 flex items-center justify-center animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto p-4 sm:p-6 shadow-2xl space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse" />
-                  <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                    {lang === 'ar' ? 'لوحة الإشراف والإدارة والرقابة' : 'Moderation & Administration Portal'}
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setIsAdminDashboardOpen(false)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold transition cursor-pointer"
-                >
-                  {lang === 'ar' ? 'إغلاق' : 'Close'}
-                </button>
-              </div>
-              <AdminModeratorDashboard
-                currentUser={currentUser}
-                doctors={doctors}
-                users={users}
-                lang={lang}
-                onApproveDoctor={(docId) => handleVerifyDoctor(docId, 'verified')}
-                onRejectDoctor={(docId) => handleVerifyDoctor(docId, 'rejected')}
-                onToggleModeratorRole={(userId) => {
-                  setUsers((prev) =>
-                    prev.map((u) =>
-                      u.id === userId ? { ...u, role: u.role === 'moderator' ? 'patient' : 'moderator' } : u
-                    )
-                  );
-                }}
-                onLiftModerationPenalty={(userId) => {
-                  setUsers((prev) =>
-                    prev.map((u) =>
-                      u.id === userId
-                        ? { ...u, moderationStatus: 'active', penaltyReason: undefined, restrictedUntil: undefined, penaltyExpiresAt: undefined }
-                        : u
-                    )
-                  );
-                }}
-                onRequestAuth={() => setIsAuthModalOpen(true)}
-                reports={reports}
-                onDismissReport={handleDismissReport}
-                onTakeActionOnReport={handleTakeActionOnReport}
-                appeals={appeals}
-                onApproveAppeal={handleApproveAppeal}
-                onRejectAppeal={handleRejectAppeal}
-                onDeleteUser={handleDeleteUser}
-                onPurgeDummyMarcoAccount={handlePurgeMarco}
-              />
+            {/* Language Selector (4 Languages: AR, FR, EN, RU) */}
+            <div className="relative flex items-center">
+              <select
+                id="select-app-language"
+                value={lang}
+                onChange={(e) => setLang(e.target.value as Language)}
+                className="bg-slate-900 border border-slate-700/80 text-slate-200 text-xs font-bold rounded-xl px-2 py-1.5 focus:outline-none focus:border-emerald-500 cursor-pointer appearance-none pr-6 pl-2"
+              >
+                <option value="ar">العربية</option>
+                <option value="fr">Français</option>
+                <option value="en">English</option>
+                <option value="ru">Русский</option>
+              </select>
+              <Globe size={12} className="absolute right-2 text-slate-400 pointer-events-none" />
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Subtle & Discreet Layout Footer */}
-      <footer className="w-full max-w-3xl py-3 text-center text-[11px] text-slate-400/80 dark:text-slate-500/80 flex items-center justify-center gap-2 select-none">
-        <span>Istichary Telehealth Portal</span>
-        <span className="opacity-40">•</span>
-        <span>Verified Medical Care</span>
-      </footer>
+            {/* Theme Toggle (Light / Dark Soft Matte Black) */}
+            <button
+              id="btn-theme-toggle"
+              type="button"
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-700/80 text-slate-300 hover:text-emerald-400 transition cursor-pointer"
+              title="تبديل المظهر"
+            >
+              {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            </button>
+
+            {/* User Profile / Auth trigger */}
+            <button
+              id="btn-user-auth-trigger"
+              type="button"
+              onClick={() => setShowAuthModal(true)}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-700/80 text-emerald-400 hover:bg-slate-800 transition cursor-pointer"
+              title={currentUser ? currentUser.displayName : t.welcome}
+            >
+              <User size={15} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* Main App Container */}
+      <main className="max-w-2xl mx-auto px-4 py-5 pb-16">
+        {/* Active Live Tracking Screen Takeover (if there is an ongoing in-transit delivery) */}
+        {activeTrackingOrder && activeTrackingOrder.status !== 'delivered' && activeTrackingOrder.status !== 'cancelled' ? (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between p-2">
+              <h2 className="text-lg font-black text-white font-['Cairo'] flex items-center gap-2">
+                <Bike className="text-emerald-400 animate-pulse" size={20} />
+                <span>متابعة الشحنة الحية</span>
+              </h2>
+              <button
+                onClick={() => setActiveTrackingOrderId(null)}
+                className="text-xs text-slate-400 hover:text-white"
+              >
+                العودة للرئيسية
+              </button>
+            </div>
+
+            <ActiveDeliveryView
+              order={activeTrackingOrder}
+              currentRole={currentUser?.role || 'customer'}
+              t={t}
+              lang={lang}
+              theme={theme}
+              onFinishDelivery={handleFinishDelivery}
+              onCancelDelivery={handleCancelOrder}
+              onOpenPackageInspection={(photo, desc) => {
+                setInspectionPhoto(photo);
+                setInspectionDesc(desc);
+              }}
+            />
+          </div>
+        ) : currentUser?.role === 'driver' ? (
+          /* DRIVER VIEW */
+          <DriverHome
+            currentUser={currentUser}
+            orders={orders}
+            t={t}
+            lang={lang}
+            theme={theme}
+            onSendOffer={handleSendDriverOffer}
+            onFinishDelivery={handleFinishDelivery}
+            onOpenPackageInspection={(photo, desc) => {
+              setInspectionPhoto(photo);
+              setInspectionDesc(desc);
+            }}
+            selectedWilaya={selectedWilaya}
+            onWilayaChange={setSelectedWilaya}
+          />
+        ) : (
+          /* CUSTOMER VIEW */
+          <CustomerHome
+            currentUser={
+              currentUser || {
+                id: 'demo-user',
+                displayName: 'زبون سريع',
+                wilaya: '16',
+                phone: '+213 555 12 34 56',
+                phoneVerified: true,
+                createdAt: new Date().toISOString(),
+              }
+            }
+            orders={orders}
+            t={t}
+            lang={lang}
+            theme={theme}
+            onPublishOrder={handlePublishOrder}
+            onAcceptOffer={handleAcceptOffer}
+            onCounterOffer={handleCounterOffer}
+            onCancelOrder={handleCancelOrder}
+            onOpenPackageInspection={(photo, desc) => {
+              setInspectionPhoto(photo);
+              setInspectionDesc(desc);
+            }}
+            selectedWilaya={selectedWilaya}
+            onWilayaChange={setSelectedWilaya}
+          />
+        )}
+      </main>
+
+      {/* MODALS */}
+      {/* 1. Supabase Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+        onAuthSuccess={handleAuthSuccess}
+        t={t}
+        lang={lang}
+      />
+
+      {/* 2. Role Selection Wizard */}
+      {currentUser && (
+        <RoleSelectionModal
+          isOpen={showRoleModal}
+          currentUser={currentUser}
+          t={t}
+          onSelectRole={handleSelectRole}
+        />
+      )}
+
+      {/* 3. Driver Multi-step Verification Wizard */}
+      {currentUser && (
+        <DriverVerificationWizard
+          currentUser={currentUser}
+          t={t}
+          lang={lang}
+          onComplete={handleDriverVerificationCompleted}
+          onCancel={() => setShowDriverWizard(false)}
+        />
+      )}
+
+      {/* 4. Permissions Overlay (Camera & GPS) */}
+      <PermissionsModal
+        isOpen={showPermissionsModal}
+        t={t}
+        onPermissionsCompleted={handlePermissionsCompleted}
+      />
+
+      {/* 5. Package Photo Inspection Modal */}
+      <PackageInspectionModal
+        isOpen={!!inspectionPhoto}
+        photoUrl={inspectionPhoto}
+        description={inspectionDesc}
+        onClose={() => {
+          setInspectionPhoto(null);
+          setInspectionDesc(null);
+        }}
+      />
     </div>
   );
 }
+
+export default App;

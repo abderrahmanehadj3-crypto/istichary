@@ -1,6 +1,6 @@
 {
-  "name": "Istichary",
-  "description": "A streamlined, minimalist medical consultation platform focused exclusively on public patient posts, prominent doctor specialty responses, physician following, and admin/moderator verification.",
-  "requestFramePermissions": [],
+  "name": "Sari3",
+  "description": "Sari3 - High-speed on-demand delivery platform with fair fare negotiation, real-time map tracking, package photo inspection, and verified customer and courier accounts across Algeria.",
+  "requestFramePermissions": ["camera", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
