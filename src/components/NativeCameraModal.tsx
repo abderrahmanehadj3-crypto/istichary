@@ -53,22 +53,22 @@ export const NativeCameraModal: React.FC<NativeCameraModalProps> = ({
     setStreamActive(false);
   };
 
-  // Launch WebRTC stream
+  // Launch Camera (WebRTC if allowed, otherwise native OS Camera immediately)
   const initCamera = async () => {
     setErrorMessage(null);
     setIsLoading(true);
     try {
-      if (videoRef.current) {
+      if (videoRef.current && navigator.mediaDevices?.getUserMedia) {
         const stream = await startNativeCameraStream(videoRef.current, effectiveFacingMode);
         streamRef.current = stream;
         setStreamActive(true);
+      } else {
+        // Direct Native OS Camera
+        handleTriggerNativeIntent();
       }
     } catch (err: any) {
-      console.warn('[NativeCameraModal] WebRTC error, falling back to Native Intent:', err);
-      setErrorMessage(
-        'تعذر تشغيل كاميرا الويب المباشرة داخل التطبيق. يمكنك استخدام كاميرا الهاتف الأصلية بنقرة واحدة أدناه.'
-      );
-      setStreamActive(false);
+      console.warn('[NativeCameraModal] WebView stream unavailable, triggering Native OS Camera immediately');
+      handleTriggerNativeIntent();
     } finally {
       setIsLoading(false);
     }

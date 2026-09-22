@@ -16,7 +16,38 @@ export interface UseNativeGpsReturn {
   requestGps: () => Promise<GpsCoordinates | null>;
   startLiveTracking: () => void;
   stopLiveTracking: () => void;
-  setManualFallbackCoords: (coords: GpsCoordinates) => void;
+  openLocationSettings: () => void;
+}
+
+/**
+ * Directly prompt native Android location settings screen
+ * via native wrapper bridge or Android Intent URI.
+ */
+export function openNativeLocationSettings(): void {
+  if (typeof window === 'undefined') return;
+
+  // 1. Median / GoNative bridge
+  const median = (window as any).median || (window as any).gonative;
+  if (median?.location?.openSettings) {
+    try {
+      median.location.openSettings();
+      return;
+    } catch (e) {
+      console.warn('Median openSettings failed:', e);
+    }
+  }
+
+  // 2. Android Intent to open system Location Provider Settings
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes('android')) {
+    try {
+      window.location.href =
+        'intent:#Intent;action=android.settings.LOCATION_SOURCE_SETTINGS;end';
+      return;
+    } catch (e) {
+      console.warn('Android location intent invocation error:', e);
+    }
+  }
 }
 
 // Default center coordinates for Algiers (Alger Centre) if GPS is uncalibrated
@@ -222,14 +253,6 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     setIsTracking(false);
   }, []);
 
-  // Set manual fallback coordinates
-  const setManualFallbackCoords = useCallback((fallbackCoords: GpsCoordinates) => {
-    setCoords(fallbackCoords);
-    setAccuracy(15);
-    setStatus('granted');
-    setErrorMessage(null);
-  }, []);
-
   // Cleanup on unmount
   useEffect(() => {
     if (autoStart) {
@@ -253,6 +276,6 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     requestGps,
     startLiveTracking,
     stopLiveTracking,
-    setManualFallbackCoords,
+    openLocationSettings: openNativeLocationSettings,
   };
 }

@@ -27,20 +27,22 @@
 
 /* Leaflet map styles */
 .leaflet-container {
-  width: 100%;
-  height: 100%;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 220px;
   border-radius: 1rem;
-  z-index: 10;
+  position: relative;
+  background-color: #0f172a !important;
+  z-index: 1;
 }
 
 .dark .leaflet-container {
-  background-color: #121214 !important;
+  background-color: #090d16 !important;
 }
 
-/* 100% Free OpenStreetMap dark mode styling without external API keys */
-.dark .leaflet-tile,
-.leaflet-tile-dark {
-  filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.25) brightness(0.7) !important;
+/* Crisp styling for OSM tiles in dark mode (without contrast-crushing filters) */
+.dark .leaflet-tile-osm-dark {
+  filter: brightness(0.85) invert(1) contrast(1.05) hue-rotate(185deg) saturate(0.35) !important;
 }
 
 /* Hide scrollbar */

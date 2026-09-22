@@ -58,7 +58,6 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
     requestGps,
     startLiveTracking,
     stopLiveTracking,
-    setManualFallbackCoords,
   } = useNativeGps(isOnline);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
 
@@ -435,12 +434,6 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             setIsOnline(true);
             startLiveTracking();
           }
-        }}
-        onEnableTestLocation={() => {
-          const fallback = { lat: currentWilayaObj.lat + 0.005, lng: currentWilayaObj.lng + 0.005 };
-          setManualFallbackCoords(fallback);
-          setIsOnline(true);
-          setShowGpsModal(false);
         }}
       />
     </div>

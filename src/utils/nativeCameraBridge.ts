@@ -105,33 +105,93 @@ export function captureFrameFromVideo(
 }
 
 /**
- * Triggers the native OS Camera Intent via hidden file input with capture attribute.
- * This is 100% supported by Android WebView & iOS WKWebView without needing WebRTC permissions!
+ * Triggers the native OS Camera Intent directly.
+ * 100% supported by Android WebViews (Median / Cordova / Capacitor / InAppBrowser)
+ * directly invoking the device's native camera application.
  */
 export function launchNativeDeviceCamera(
   facingMode: 'user' | 'environment' = 'user',
   onPhotoCaptured: (dataUrl: string) => void,
   onError?: (err: string) => void
 ): void {
-  // Create or reuse hidden file input
-  const inputId = `native-camera-intent-${facingMode}`;
-  let input = document.getElementById(inputId) as HTMLInputElement | null;
-  if (!input) {
-    input = document.createElement('input');
-    input.id = inputId;
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.style.display = 'none';
-    document.body.appendChild(input);
+  // 1. Median wrapper native bridge check
+  if (typeof window !== 'undefined') {
+    const median = (window as any).median || (window as any).gonative;
+    if (median?.camera?.takePicture) {
+      try {
+        median.camera.takePicture({
+          source: 'camera',
+          facing: facingMode === 'user' ? 'front' : 'back',
+          callback: (res: any) => {
+            if (res && res.image) {
+              const dataUrl = res.image.startsWith('data:')
+                ? res.image
+                : `data:image/jpeg;base64,${res.image}`;
+              onPhotoCaptured(dataUrl);
+            } else if (res && res.url) {
+              onPhotoCaptured(res.url);
+            }
+          },
+        });
+        return;
+      } catch (medianErr) {
+        console.warn('[CameraBridge] Median camera bridge failed, using native input:', medianErr);
+      }
+    }
+
+    // 2. Capacitor Camera plugin check
+    const capacitorCamera = (window as any).Capacitor?.Plugins?.Camera;
+    if (capacitorCamera?.getPhoto) {
+      capacitorCamera
+        .getPhoto({
+          quality: 90,
+          allowEditing: false,
+          resultType: 'dataUrl',
+          source: 'CAMERA',
+          direction: facingMode === 'user' ? 'FRONT' : 'REAR',
+        })
+        .then((photo: any) => {
+          if (photo && photo.dataUrl) {
+            onPhotoCaptured(photo.dataUrl);
+          }
+        })
+        .catch((err: any) => {
+          console.warn('[CameraBridge] Capacitor camera failed, using native input:', err);
+          triggerNativeFileInput(facingMode, onPhotoCaptured, onError);
+        });
+      return;
+    }
   }
 
-  // 'user' for front selfie camera, 'environment' for rear camera
+  // 3. Android WebView native intent via invisible capture input
+  triggerNativeFileInput(facingMode, onPhotoCaptured, onError);
+}
+
+function triggerNativeFileInput(
+  facingMode: 'user' | 'environment',
+  onPhotoCaptured: (dataUrl: string) => void,
+  onError?: (err: string) => void
+): void {
+  const inputId = `sari3-native-camera-${facingMode}-${Date.now()}`;
+  const input = document.createElement('input');
+  input.id = inputId;
+  input.type = 'file';
+  input.accept = 'image/*';
+  // HTML Media Capture specification: 'user' = selfie/front, 'environment' = rear camera
   input.setAttribute('capture', facingMode);
+  input.style.position = 'fixed';
+  input.style.top = '-9999px';
+  input.style.left = '-9999px';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
 
   input.onchange = (e: Event) => {
     const target = e.target as HTMLInputElement;
     const file = target.files?.[0];
-    if (!file) return;
+    if (!file) {
+      if (input.parentNode) document.body.removeChild(input);
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -139,15 +199,15 @@ export function launchNativeDeviceCamera(
       if (dataUrl) {
         onPhotoCaptured(dataUrl);
       }
+      if (input.parentNode) document.body.removeChild(input);
     };
     reader.onerror = () => {
-      onError?.('فشل في قراءة الصورة الملتقطة من كاميرا الهاتف');
+      onError?.('تعذر قراءة الصورة من كاميرا الهاتف');
+      if (input.parentNode) document.body.removeChild(input);
     };
     reader.readAsDataURL(file);
-
-    // Reset input so subsequent captures re-trigger onchange
-    input.value = '';
   };
 
+  // Immediate native intent invocation
   input.click();
 }

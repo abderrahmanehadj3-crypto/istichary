@@ -91,7 +91,6 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     status: gpsStatus,
     errorMessage: gpsErrorMessage,
     requestGps,
-    setManualFallbackCoords,
   } = useNativeGps(true);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
 
@@ -155,16 +154,19 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 
   // Handle Map Click for manual pin dropping
   const handleMapClick = async (coords: { lat: number; lng: number }) => {
-    if (interactiveMode === 'pickup') {
-      setPickupCoords(coords);
-      const addr = await reverseGeocode(coords.lat, coords.lng, lang);
-      setPickupAddress(addr);
-      setInteractiveMode(null);
-    } else if (interactiveMode === 'dropoff') {
+    if (interactiveMode === 'dropoff') {
       setDropoffCoords(coords);
       const addr = await reverseGeocode(coords.lat, coords.lng, lang);
       setDropoffAddress(addr);
       setInteractiveMode(null);
+    } else {
+      // Default to pickup when clicked
+      setPickupCoords(coords);
+      const addr = await reverseGeocode(coords.lat, coords.lng, lang);
+      setPickupAddress(addr);
+      if (interactiveMode === 'pickup') {
+        setInteractiveMode(null);
+      }
     }
   };
 
@@ -542,11 +544,13 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsPackageCameraOpen(true)}
+                  onClick={() =>
+                    launchNativeDeviceCamera('environment', (dataUrl) => setPackagePhoto(dataUrl))
+                  }
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition cursor-pointer"
                 >
                   <Camera size={14} />
-                  <span>{packagePhoto ? 'إعادة التقاط الطرد' : 'التقاط صورة الطرد'}</span>
+                  <span>{packagePhoto ? 'إعادة التقاط الطرد' : 'التقاط صورة الطرد (الكاميرا)'}</span>
                 </button>
 
                 <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer border border-slate-700">
@@ -657,12 +661,6 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             const addr = await reverseGeocode(res.lat, res.lng, lang);
             setPickupAddress(addr);
           }
-        }}
-        onEnableTestLocation={() => {
-          const fallback = { lat: currentWilayaObj.lat, lng: currentWilayaObj.lng };
-          setManualFallbackCoords(fallback);
-          setPickupCoords(fallback);
-          setShowGpsModal(false);
         }}
       />
 

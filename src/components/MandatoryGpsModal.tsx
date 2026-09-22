@@ -6,17 +6,15 @@ import {
   RefreshCw,
   Smartphone,
   ShieldAlert,
-  CheckCircle2,
-  Radio,
+  Settings,
 } from 'lucide-react';
-import { GpsStatus } from '../hooks/useNativeGps';
+import { GpsStatus, openNativeLocationSettings } from '../hooks/useNativeGps';
 
 interface MandatoryGpsModalProps {
   isOpen: boolean;
   status: GpsStatus;
   errorMessage: string | null;
   onRetryGps: () => Promise<any>;
-  onEnableTestLocation: () => void;
   role?: 'customer' | 'driver';
 }
 
@@ -25,7 +23,6 @@ export const MandatoryGpsModal: React.FC<MandatoryGpsModalProps> = ({
   status,
   errorMessage,
   onRetryGps,
-  onEnableTestLocation,
   role = 'customer',
 }) => {
   const [isChecking, setIsChecking] = useState<boolean>(false);
@@ -39,6 +36,10 @@ export const MandatoryGpsModal: React.FC<MandatoryGpsModalProps> = ({
     } finally {
       setIsChecking(false);
     }
+  };
+
+  const handleOpenSettings = () => {
+    openNativeLocationSettings();
   };
 
   return (
@@ -58,7 +59,7 @@ export const MandatoryGpsModal: React.FC<MandatoryGpsModalProps> = ({
 
           <span className="px-3 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-[11px] font-bold inline-flex items-center gap-1.5 mb-2">
             <ShieldAlert size={13} />
-            <span>تحديد موقع GPS إلزامي</span>
+            <span>تحديد موقع GPS الحقيقي إلزامي</span>
           </span>
 
           <h3 className="text-lg font-black text-white font-['Cairo']">
@@ -66,7 +67,7 @@ export const MandatoryGpsModal: React.FC<MandatoryGpsModalProps> = ({
           </h3>
 
           <p className="text-xs text-slate-300 mt-1 leading-relaxed">
-            تطبيق <span className="text-emerald-400 font-bold">سريع (Sari3)</span> يعتمد على الحساب اللحظي الدقيق للمسافات وتتبع حركة الكباتن والطرود بالوقت الحقيقي.
+            تطبيق <span className="text-emerald-400 font-bold">سريع (Sari3)</span> يعتمد حصراً على إحداثيات GPS الحية الدقيقة لضمان سلامة الطرود ودقة حساب مسافات التوصيل.
           </p>
         </div>
 
@@ -86,7 +87,7 @@ export const MandatoryGpsModal: React.FC<MandatoryGpsModalProps> = ({
               2
             </div>
             <p className="text-slate-300">
-              عند ظهور نافذة المتصفح، اختر <strong className="text-emerald-400">السماح (Allow)</strong> لتطبيق سريع بالوصول إلى موقعك.
+              عند ظهور نافذة الهاتف، اضغط <strong className="text-emerald-400">السماح (Allow)</strong> لتطبيق Sari3 بالوصول لموقع الجهاز الدقيق.
             </p>
           </div>
 
@@ -107,17 +108,17 @@ export const MandatoryGpsModal: React.FC<MandatoryGpsModalProps> = ({
             className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
           >
             <RefreshCw size={17} className={isChecking ? 'animate-spin' : ''} />
-            <span>{isChecking ? 'جارٍ فحص استجابة GPS...' : 'إعادة فحص وتفعيل GPS الآن'}</span>
+            <span>{isChecking ? 'جارٍ قراءة قمر GPS الصناعي...' : 'إعادة فحص وتفعيل GPS الآن'}</span>
           </button>
 
-          {/* Fallback for Desktop Browsers / Sandbox Emulators */}
+          {/* Android Native Settings Intent Button */}
           <button
             type="button"
-            onClick={onEnableTestLocation}
-            className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition border border-slate-700/60"
+            onClick={handleOpenSettings}
+            className="w-full py-2.5 px-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition border border-slate-700/60"
           >
-            <Radio size={14} className="text-emerald-400" />
-            <span>متابعة بإحداثيات تجريبية للجزائر (للمحاكاة)</span>
+            <Settings size={14} className="text-emerald-400" />
+            <span>فتح إعدادات الموقع بالهاتف (Android Settings)</span>
           </button>
         </div>
       </div>

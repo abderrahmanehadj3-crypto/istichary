@@ -117,7 +117,7 @@ export const ProfilePhotoUploader: React.FC<ProfilePhotoUploaderProps> = ({
           {/* Live Camera Button */}
           <button
             type="button"
-            onClick={handleOpenCamera}
+            onClick={handleDirectNativeCamera}
             className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
           >
             <Camera size={14} />

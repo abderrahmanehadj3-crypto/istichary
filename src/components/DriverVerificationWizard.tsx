@@ -148,30 +148,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsLicenseScannerOpen(false);
   };
 
-  // Face Camera Live Stream (WebRTC with Native OS fallback)
-  const startFaceCamera = async () => {
-    setIsFaceCameraActive(true);
-    setErrorMsg(null);
-    try {
-      if (faceVideoRef.current) {
-        const stream = await startNativeCameraStream(faceVideoRef.current, 'user');
-        faceStreamRef.current = stream;
-      }
-    } catch (err: any) {
-      console.warn('Face camera access error in WebView, falling back to Native Intent:', err);
-      setIsFaceCameraActive(false);
-      launchNativeDeviceCamera(
-        'user',
-        (dataUrl) => {
-          setFacePhoto(dataUrl);
-          setPublicAvatar(dataUrl);
-          setErrorMsg(null);
-        },
-        (errMsg) => {
-          setErrorMsg(errMsg);
-        }
-      );
-    }
+  // Face Camera (Direct Native OS Camera Trigger)
+  const startFaceCamera = () => {
+    handleLaunchNativeFaceCamera();
   };
 
   const captureFaceFromVideo = () => {
@@ -229,34 +208,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     reader.readAsDataURL(file);
   };
 
-  // License Camera Live Stream (Anti-fraud live capture with Native OS fallback)
-  const openLicenseLiveScanner = async (side: 'front' | 'back') => {
+  // License Camera (Direct Native OS Camera Trigger - Rear Camera)
+  const openLicenseLiveScanner = (side: 'front' | 'back') => {
     setLicenseScanSide(side);
-    setIsLicenseScannerOpen(true);
     setErrorMsg(null);
-    try {
-      if (licenseVideoRef.current) {
-        const stream = await startNativeCameraStream(licenseVideoRef.current, 'environment');
-        licenseStreamRef.current = stream;
-      }
-    } catch (err) {
-      console.warn('License camera access in WebView, falling back to Native Intent:', err);
-      setIsLicenseScannerOpen(false);
-      launchNativeDeviceCamera(
-        'environment',
-        (dataUrl) => {
-          if (side === 'front') {
-            setLicenseFront(dataUrl);
-          } else {
-            setLicenseBack(dataUrl);
-          }
-          setErrorMsg(null);
-        },
-        (errMsg) => {
-          setErrorMsg(errMsg);
+    launchNativeDeviceCamera(
+      'environment',
+      (dataUrl) => {
+        if (side === 'front') {
+          setLicenseFront(dataUrl);
+        } else {
+          setLicenseBack(dataUrl);
         }
-      );
-    }
+        setErrorMsg(null);
+      },
+      (errMsg) => {
+        setErrorMsg(errMsg);
+      }
+    );
   };
 
   const captureLicenseFromVideo = () => {
@@ -272,12 +241,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         console.error('Capture license error:', e);
       }
     } else {
-      // High-quality fallback for environments without physical camera
-      if (licenseScanSide === 'front') {
-        setLicenseFront('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80');
-      } else {
-        setLicenseBack('https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop&q=80');
-      }
+      launchNativeDeviceCamera('environment', (dataUrl) => {
+        if (licenseScanSide === 'front') {
+          setLicenseFront(dataUrl);
+        } else {
+          setLicenseBack(dataUrl);
+        }
+      });
     }
 
     if (licenseStreamRef.current) {
