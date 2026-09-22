@@ -3,6 +3,9 @@ import { AppTranslations } from '../i18n/translations';
 import { DeliveryOrder, DriverOffer, Language, ThemeMode, UserProfile, Wilaya } from '../types';
 import { ALGERIA_WILAYAS, calculateDistanceKm, calculateSuggestedFare, getWilayaByCode } from '../data/wilayas';
 import { Sari3Map } from './Sari3Map';
+import { useNativeGps } from '../hooks/useNativeGps';
+import { MandatoryGpsModal } from './MandatoryGpsModal';
+import { reverseGeocode } from '../utils/reverseGeocoding';
 import {
   MapPin,
   Camera,
@@ -79,6 +82,16 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   // Interactive Pin Drop mode
   const [interactiveMode, setInteractiveMode] = useState<'pickup' | 'dropoff' | null>(null);
 
+  // Real Native GPS Hook & Mandatory GPS Modal state
+  const {
+    coords: liveGpsCoords,
+    status: gpsStatus,
+    errorMessage: gpsErrorMessage,
+    requestGps,
+    setManualFallbackCoords,
+  } = useNativeGps(true);
+  const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
+
   // Fare calculations
   const [distanceKm, setDistanceKm] = useState<number>(6.5);
   const [suggestedFare, setSuggestedFare] = useState<number>(550);
@@ -104,51 +117,65 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   }, [pickupCoords, dropoffCoords]);
 
-  // Handle GPS location click
-  const handleUseCurrentGps = () => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setPickupCoords({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          });
-          setPickupAddress(lang === 'ar' ? 'موقعي الحالي المحدد عبر GPS' : 'Current GPS location');
-        },
-        () => {
-          // Default to wilaya center
-          setPickupCoords({ lat: currentWilayaObj.lat, lng: currentWilayaObj.lng });
-        }
-      );
+  // Handle GPS location click (Real Native GPS)
+  const handleUseCurrentGps = async () => {
+    let target = liveGpsCoords;
+    if (!target) {
+      target = await requestGps();
+    }
+
+    if (target) {
+      setPickupCoords(target);
+      const addr = await reverseGeocode(target.lat, target.lng, lang);
+      setPickupAddress(addr);
+    } else {
+      setShowGpsModal(true);
     }
   };
 
-  // Handle Map Click for pin dropping
-  const handleMapClick = (coords: { lat: number; lng: number }) => {
+  // Handle Direct Map-Tap Pinning with automated reverse geocoding
+  const handlePinDropped = (
+    coords: { lat: number; lng: number },
+    address: string,
+    mode: 'pickup' | 'dropoff'
+  ) => {
+    if (mode === 'pickup') {
+      setPickupCoords(coords);
+      setPickupAddress(address);
+      setInteractiveMode(null);
+    } else if (mode === 'dropoff') {
+      setDropoffCoords(coords);
+      setDropoffAddress(address);
+      setInteractiveMode(null);
+    }
+  };
+
+  // Handle Map Click for manual pin dropping
+  const handleMapClick = async (coords: { lat: number; lng: number }) => {
     if (interactiveMode === 'pickup') {
       setPickupCoords(coords);
-      setPickupAddress(
-        lang === 'ar'
-          ? `نقطة استلام محددة على الخريطة (${coords.lat.toFixed(3)}, ${coords.lng.toFixed(3)})`
-          : `Selected pickup point (${coords.lat.toFixed(3)}, ${coords.lng.toFixed(3)})`
-      );
+      const addr = await reverseGeocode(coords.lat, coords.lng, lang);
+      setPickupAddress(addr);
       setInteractiveMode(null);
     } else if (interactiveMode === 'dropoff') {
       setDropoffCoords(coords);
-      setDropoffAddress(
-        lang === 'ar'
-          ? `نقطة تسليم محددة على الخريطة (${coords.lat.toFixed(3)}, ${coords.lng.toFixed(3)})`
-          : `Selected drop-off point (${coords.lat.toFixed(3)}, ${coords.lng.toFixed(3)})`
-      );
+      const addr = await reverseGeocode(coords.lat, coords.lng, lang);
+      setDropoffAddress(addr);
       setInteractiveMode(null);
     }
   };
 
-  // Publish New Order
+  // Publish New Order with GPS Verification
   const handleCreateOrder = (e: React.FormEvent) => {
     e.preventDefault();
     if (!packagePhoto) {
       alert(t.packagePhotoMandatory);
+      return;
+    }
+
+    // Ensure GPS coordinates are valid
+    if (gpsStatus === 'denied' || gpsStatus === 'disabled') {
+      setShowGpsModal(true);
       return;
     }
 
@@ -393,8 +420,11 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             dropoffCoords={dropoffCoords}
             interactivePinDropMode={interactiveMode}
             onMapClick={handleMapClick}
+            onPinDropped={handlePinDropped}
+            userLiveGps={liveGpsCoords}
+            onCenterOnGps={handleUseCurrentGps}
             theme={theme}
-            className="h-56 w-full"
+            className="h-60 w-full"
           />
 
           {/* Quick pin drop controls */}
@@ -598,6 +628,29 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           <span>{t.publishOrder}</span>
         </button>
       </form>
+
+      {/* Mandatory Device GPS Modal */}
+      <MandatoryGpsModal
+        isOpen={showGpsModal}
+        status={gpsStatus}
+        errorMessage={gpsErrorMessage}
+        role="customer"
+        onRetryGps={async () => {
+          const res = await requestGps();
+          if (res) {
+            setShowGpsModal(false);
+            setPickupCoords(res);
+            const addr = await reverseGeocode(res.lat, res.lng, lang);
+            setPickupAddress(addr);
+          }
+        }}
+        onEnableTestLocation={() => {
+          const fallback = { lat: currentWilayaObj.lat, lng: currentWilayaObj.lng };
+          setManualFallbackCoords(fallback);
+          setPickupCoords(fallback);
+          setShowGpsModal(false);
+        }}
+      />
     </div>
   );
 };

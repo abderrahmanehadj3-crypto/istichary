@@ -3,6 +3,8 @@ import { AppTranslations } from '../i18n/translations';
 import { DeliveryOrder, DriverOffer, Language, ThemeMode, UserProfile } from '../types';
 import { ALGERIA_WILAYAS, getWilayaByCode } from '../data/wilayas';
 import { Sari3Map } from './Sari3Map';
+import { useNativeGps } from '../hooks/useNativeGps';
+import { MandatoryGpsModal } from './MandatoryGpsModal';
 import {
   Bike,
   Package,
@@ -48,12 +50,40 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
   const [customBids, setCustomBids] = useState<Record<string, number>>({});
   const currentWilayaObj = getWilayaByCode(selectedWilaya);
 
+  // Native GPS Hook for Driver
+  const {
+    coords: driverGpsCoords,
+    status: gpsStatus,
+    errorMessage: gpsErrorMessage,
+    requestGps,
+    startLiveTracking,
+    stopLiveTracking,
+    setManualFallbackCoords,
+  } = useNativeGps(isOnline);
+  const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
+
   // Check if driver has an active assigned mission
   const activeMission = orders.find(
     (o) =>
       o.assignedDriver?.id === currentUser.id &&
       (o.status === 'accepted' || o.status === 'in_transit')
   );
+
+  // Toggle online with real GPS validation
+  const handleToggleOnline = async () => {
+    if (!isOnline) {
+      const coords = await requestGps();
+      if (!coords && (gpsStatus === 'denied' || gpsStatus === 'disabled')) {
+        setShowGpsModal(true);
+        return;
+      }
+      setIsOnline(true);
+      startLiveTracking();
+    } else {
+      setIsOnline(false);
+      stopLiveTracking();
+    }
+  };
 
   // Filter available broadcast orders in this Wilaya
   const availableOrders = orders.filter(
@@ -63,8 +93,13 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
       (!activeMission || o.id === activeMission.id)
   );
 
-  // Submit Counter Offer
+  // Submit Counter Offer with GPS coordinates
   const handleMakeBid = (order: DeliveryOrder, extraAmount: number = 0) => {
+    if (gpsStatus === 'denied' || gpsStatus === 'disabled') {
+      setShowGpsModal(true);
+      return;
+    }
+
     const baseAmount = customBids[order.id] || order.customerOfferPrice;
     const finalBid = baseAmount + extraAmount;
 
@@ -128,7 +163,7 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
         {/* Online / Offline switch */}
         <button
           type="button"
-          onClick={() => setIsOnline(!isOnline)}
+          onClick={handleToggleOnline}
           className={`px-3.5 py-2 rounded-2xl font-bold text-xs flex items-center gap-2 transition cursor-pointer ${
             isOnline
               ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/25'
@@ -158,10 +193,13 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             center={activeMission.pickupCoords}
             pickupCoords={activeMission.pickupCoords}
             dropoffCoords={activeMission.dropoffCoords}
-            driverCoords={{
-              lat: activeMission.pickupCoords.lat + 0.003,
-              lng: activeMission.pickupCoords.lng + 0.003,
-            }}
+            driverCoords={
+              driverGpsCoords || {
+                lat: activeMission.pickupCoords.lat + 0.003,
+                lng: activeMission.pickupCoords.lng + 0.003,
+              }
+            }
+            userLiveGps={driverGpsCoords}
             theme={theme}
             className="h-48 w-full"
           />
@@ -383,6 +421,28 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
           })
         )}
       </div>
+
+      {/* Mandatory Device GPS Modal for Driver */}
+      <MandatoryGpsModal
+        isOpen={showGpsModal}
+        status={gpsStatus}
+        errorMessage={gpsErrorMessage}
+        role="driver"
+        onRetryGps={async () => {
+          const res = await requestGps();
+          if (res) {
+            setShowGpsModal(false);
+            setIsOnline(true);
+            startLiveTracking();
+          }
+        }}
+        onEnableTestLocation={() => {
+          const fallback = { lat: currentWilayaObj.lat + 0.005, lng: currentWilayaObj.lng + 0.005 };
+          setManualFallbackCoords(fallback);
+          setIsOnline(true);
+          setShowGpsModal(false);
+        }}
+      />
     </div>
   );
 };

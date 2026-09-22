@@ -1,6 +1,8 @@
 import React from 'react';
 import { AppTranslations } from '../i18n/translations';
 import { DeliveryOrder, Language, ThemeMode, UserRole } from '../types';
+import { calculateDistanceKm } from '../data/wilayas';
+import { useNativeGps } from '../hooks/useNativeGps';
 import { Sari3Map } from './Sari3Map';
 import {
   Phone,
@@ -38,6 +40,24 @@ export const ActiveDeliveryView: React.FC<ActiveDeliveryViewProps> = ({
   onOpenPackageInspection,
 }) => {
   const driver = order.assignedDriver;
+  const { coords: liveGpsCoords } = useNativeGps(true);
+
+  // Determine effective coordinates: if driver is viewing, use their real-time device GPS!
+  const effectiveDriverCoords =
+    currentRole === 'driver' && liveGpsCoords
+      ? liveGpsCoords
+      : driver?.currentCoords || {
+          lat: order.pickupCoords.lat + 0.002,
+          lng: order.pickupCoords.lng + 0.002,
+        };
+
+  // Live proximity calculation (Driver to Pickup)
+  const distanceToPickup = calculateDistanceKm(
+    effectiveDriverCoords.lat,
+    effectiveDriverCoords.lng,
+    order.pickupCoords.lat,
+    order.pickupCoords.lng
+  );
 
   return (
     <div className="space-y-4 select-none">
@@ -57,23 +77,29 @@ export const ActiveDeliveryView: React.FC<ActiveDeliveryViewProps> = ({
           center={order.pickupCoords}
           pickupCoords={order.pickupCoords}
           dropoffCoords={order.dropoffCoords}
-          driverCoords={
-            driver?.currentCoords || {
-              lat: order.pickupCoords.lat + 0.002,
-              lng: order.pickupCoords.lng + 0.002,
-            }
-          }
+          driverCoords={effectiveDriverCoords}
+          userLiveGps={liveGpsCoords}
           theme={theme}
           className="h-64 sm:h-72 w-full"
         />
 
-        {/* Live ETA Banner */}
+        {/* Live ETA & Proximity Banner */}
         <div className="p-3 bg-slate-950/90 border-t border-slate-800 flex items-center justify-between text-xs">
           <div className="flex items-center gap-1.5 text-slate-300">
             <Clock size={15} className="text-emerald-400" />
-            <span>وقت الوصول التقديري:</span>
+            <span>المسافة الحالية للكابتن:</span>
           </div>
-          <span className="font-black text-white font-mono text-sm">~ 10-15 دقيقة</span>
+          <div className="flex items-center gap-2">
+            {distanceToPickup < 0.15 ? (
+              <span className="px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 font-black text-xs animate-pulse">
+                وصل الكابتن الآن!
+              </span>
+            ) : (
+              <span className="font-black text-white font-mono text-sm">
+                {distanceToPickup} كم (~ {Math.max(2, Math.round(distanceToPickup * 2.5))} دقيقة)
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
