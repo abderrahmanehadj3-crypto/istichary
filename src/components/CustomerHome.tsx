@@ -6,6 +6,8 @@ import { Sari3Map } from './Sari3Map';
 import { useNativeGps } from '../hooks/useNativeGps';
 import { MandatoryGpsModal } from './MandatoryGpsModal';
 import { reverseGeocode } from '../utils/reverseGeocoding';
+import { NativeCameraModal } from './NativeCameraModal';
+import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
 import {
   MapPin,
   Camera,
@@ -72,6 +74,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   const [packagePhoto, setPackagePhoto] = useState<string>(
     'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=800&auto=format&fit=crop&q=80'
   );
+  const [isPackageCameraOpen, setIsPackageCameraOpen] = useState<boolean>(false);
   const [packageDescription, setPackageDescription] = useState(
     'طرد متوسط الحجم، أوراق ومستندات رسمية هامة مغلفة بإحكام'
   );
@@ -526,7 +529,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               <img
                 src={packagePhoto}
                 alt="Package inspection"
-                className="w-20 h-20 rounded-xl object-cover border border-emerald-500 shadow-md flex-shrink-0 cursor-pointer"
+                className="w-20 h-20 rounded-xl object-cover border-2 border-emerald-500 shadow-md flex-shrink-0 cursor-pointer"
                 onClick={() => onOpenPackageInspection(packagePhoto, packageDescription)}
               />
             ) : (
@@ -536,26 +539,37 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             )}
 
             <div className="flex-1 space-y-2">
-              <label className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold transition cursor-pointer">
-                <Camera size={15} />
-                <span>{packagePhoto ? t.retakePackagePhoto : t.uploadPackagePhoto}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = () => setPackagePhoto(reader.result as string);
-                      reader.readAsDataURL(file);
-                    }
-                  }}
-                />
-              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsPackageCameraOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition cursor-pointer"
+                >
+                  <Camera size={14} />
+                  <span>{packagePhoto ? 'إعادة التقاط الطرد' : 'التقاط صورة الطرد'}</span>
+                </button>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold transition cursor-pointer border border-slate-700">
+                  <Upload size={13} />
+                  <span>من المعرض</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = () => setPackagePhoto(reader.result as string);
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
 
               <p className="text-[10px] text-slate-500">
-                يدعم التقاط الكاميرا الفوري أو رفع الصورة من المعرض
+                يدعم كاميرا الهاتف الأصلية (WebView/Native) ومعرض الصور
               </p>
             </div>
           </div>
@@ -650,6 +664,19 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           setPickupCoords(fallback);
           setShowGpsModal(false);
         }}
+      />
+
+      {/* Package Native Camera Capture Modal */}
+      <NativeCameraModal
+        isOpen={isPackageCameraOpen}
+        title="التقاط صورة الطرد"
+        subtitle="صوّر الطرد بشكل واضح لتمكين الكابتن من معاينته بدقة"
+        facingMode="environment"
+        onCapture={(dataUrl) => {
+          setPackagePhoto(dataUrl);
+          setIsPackageCameraOpen(false);
+        }}
+        onClose={() => setIsPackageCameraOpen(false)}
       />
     </div>
   );
