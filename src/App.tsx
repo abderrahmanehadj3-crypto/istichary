@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { translations } from './i18n/translations';
 import {
   DeliveryOrder,
-  DriverDetails,
   DriverOffer,
   Language,
   ThemeMode,
@@ -22,10 +21,10 @@ import {
 } from './utils/supabaseSync';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
-import { AuthModal } from './components/AuthModal';
-import { RoleSelectionModal } from './components/RoleSelectionModal';
+import { RoleGateway } from './components/RoleGateway';
+import { CustomerAuthFlow } from './components/CustomerAuthFlow';
+import { DriverAuthFlow } from './components/DriverAuthFlow';
 import { PermissionsModal } from './components/PermissionsModal';
-import { DriverVerificationWizard } from './components/DriverVerificationWizard';
 import { CustomerHome } from './components/CustomerHome';
 import { DriverHome } from './components/DriverHome';
 import { ActiveDeliveryView } from './components/ActiveDeliveryView';
@@ -40,11 +39,9 @@ import {
   Bike,
   ShieldCheck,
   MapPin,
-  RefreshCw,
   Bell,
-  Sparkles,
-  CheckCircle2,
   X,
+  Sparkles,
 } from 'lucide-react';
 
 export function App() {
@@ -56,24 +53,23 @@ export function App() {
   // Global Wilaya state (default Wilaya 16 - Algiers)
   const [selectedWilaya, setSelectedWilaya] = useState<string>('16');
 
-  // User State - Startup Requirement: If no cached user, defaults to null and triggers AuthModal directly
+  // Authenticated User State
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     return loadCachedUserProfile();
   });
 
-  // Modal States - If user is not authenticated on startup, showAuthModal is TRUE immediately!
-  const [showAuthModal, setShowAuthModal] = useState<boolean>(() => {
-    return !loadCachedUserProfile();
-  });
-  const [showRoleModal, setShowRoleModal] = useState<boolean>(false);
+  // Selected Auth Gateway Portal ('customer' | 'driver' | null)
+  const [selectedPortal, setSelectedPortal] = useState<UserRole | null>(null);
+
+  // Pending user awaiting permissions confirmation (Crucial Permissions Timing)
+  const [pendingUser, setPendingUser] = useState<UserProfile | null>(null);
   const [showPermissionsModal, setShowPermissionsModal] = useState<boolean>(false);
-  const [showDriverWizard, setShowDriverWizard] = useState<boolean>(false);
 
   // Package Inspection Modal
   const [inspectionPhoto, setInspectionPhoto] = useState<string | null>(null);
   const [inspectionDesc, setInspectionDesc] = useState<string | null>(null);
 
-  // Real-time floating Push Notification banner
+  // Real-time floating Notification Toast
   const [activeNotification, setActiveNotification] = useState<{
     id: string;
     title: string;
@@ -108,147 +104,66 @@ export function App() {
     }
   }, [lang, theme]);
 
-  // Auth Success Handler
-  const handleAuthSuccess = (user: UserProfile) => {
-    setCurrentUser(user);
-    setShowAuthModal(false);
-    saveUserProfile(user);
-
-    // If role not yet chosen or account not finalized, guide through onboarding steps
-    if (!user.role) {
-      setShowRoleModal(true);
-    } else if (user.role === 'driver' && !user.driverDetails) {
-      setShowDriverWizard(true);
-    } else if (!user.accountConfirmed) {
-      setShowPermissionsModal(true);
-    }
+  // 1. Role-specific Auth Completion Handler (Timing: Login completed -> Request Permissions)
+  const handleAuthComplete = (user: UserProfile) => {
+    setPendingUser(user);
+    // Request Camera and Location Services strictly AFTER login/role selection, BEFORE final account confirmation
+    setShowPermissionsModal(true);
   };
 
-  // Role Selection Handler
-  const handleSelectRole = (role: UserRole, updatedData?: Partial<UserProfile>) => {
-    if (!currentUser) return;
-    const updatedUser: UserProfile = {
-      ...currentUser,
-      ...updatedData,
-      role: role,
-    };
-    setCurrentUser(updatedUser);
-    saveUserProfile(updatedUser);
-    setShowRoleModal(false);
-
-    // If driver, open Driver Verification Wizard
-    if (role === 'driver') {
-      setShowDriverWizard(true);
-    } else {
-      // Customer: proceed to Permissions check before final confirmation
-      setShowPermissionsModal(true);
-    }
-  };
-
-  // Permissions Completion Handler
+  // 2. Hardware Permissions Granted -> Final Account Confirmation
   const handlePermissionsCompleted = (cam: boolean, loc: boolean) => {
-    if (!currentUser) return;
+    if (!pendingUser) return;
     const confirmedUser: UserProfile = {
-      ...currentUser,
+      ...pendingUser,
       cameraPermissionGranted: cam,
       locationPermissionGranted: loc,
       accountConfirmed: true,
     };
+
     setCurrentUser(confirmedUser);
     saveUserProfile(confirmedUser);
+    setPendingUser(null);
     setShowPermissionsModal(false);
+    setSelectedPortal(null);
 
-    // Notification
+    // Notification toast
     setActiveNotification({
       id: `notif-${Date.now()}`,
       title: 'تم تفعيل الحساب والصلاحيات بنجاح!',
-      desc: confirmedUser.role === 'driver' ? 'أنت الآن كابتن معتمد جاهز لاستقبال الطلبات' : 'يمكنك الآن إرسال طرودك واستقبال العروض',
+      desc:
+        confirmedUser.role === 'driver'
+          ? 'مرحباً بك يا كابتن! أنت الآن جاهز لاستقبال طلبات التوصيل'
+          : 'مرحباً بك! يمكنك الآن نشر طرودك واستقبال عروض الكباتن',
       type: 'accepted',
     });
   };
 
-  // Driver Verification Completed
-  const handleDriverVerificationCompleted = (details: DriverDetails) => {
-    if (!currentUser) return;
-    const updatedUser: UserProfile = {
-      ...currentUser,
-      role: 'driver',
-      driverDetails: details,
-      accountConfirmed: false, // Permissions still needed before final activation
-    };
-    setCurrentUser(updatedUser);
-    saveUserProfile(updatedUser);
-    setShowDriverWizard(false);
-    // Request permissions strictly after role/driver data, before final confirmation
-    setShowPermissionsModal(true);
-  };
-
-  // Logout / Reset to Startup Screen
+  // Logout / Switch Role Gateway
   const handleLogout = () => {
     setCurrentUser(null);
+    setPendingUser(null);
+    setSelectedPortal(null);
     localStorage.removeItem('sari3_user_profile');
-    setShowAuthModal(true);
   };
 
-  // Role quick switch for demonstration & testing
-  const toggleRole = () => {
-    if (!currentUser) return;
-    const nextRole: UserRole = currentUser.role === 'customer' ? 'driver' : 'customer';
-    const updated: UserProfile = {
-      ...currentUser,
-      role: nextRole,
-      driverDetails:
-        nextRole === 'driver' && !currentUser.driverDetails
-          ? {
-              facePhotoUrl:
-                'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80',
-              publicAvatarUrl:
-                'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-              firstName: 'كريم',
-              lastName: 'الدراجي',
-              birthDate: '2001-05-14',
-              age: 25,
-              phone: currentUser.phone || '+213 661 88 99 00',
-              phoneVerified: true,
-              licenseNumber: '16/2021/987654',
-              licenseExpirationDate: '2030-12-31',
-              licenseFrontUrl:
-                'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80',
-              licenseBackUrl:
-                'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop&q=80',
-              vehicleType: 'motorcycle',
-              vehicleRegType: 'permanent',
-              vehiclePlate: '01234-121-16',
-              vehicleBrand: 'Sym',
-              vehicleModel: 'Orbit II 150cc',
-              verificationStatus: 'verified',
-              isOnline: true,
-              rating: 4.95,
-              totalDeliveries: 42,
-            }
-          : currentUser.driverDetails,
-    };
-    setCurrentUser(updated);
-    saveUserProfile(updated);
-  };
-
-  // Order Actions
+  // Order Actions: Customer publishes new order
   const handlePublishOrder = async (newOrder: DeliveryOrder) => {
     await saveNewOrderToSupabase(newOrder);
     setOrders((prev) => [newOrder, ...prev]);
 
-    // Play Dispatch notification sound
+    // Play Dispatch alert sound
     soundNotifier.playNewOrderSound();
 
-    // Trigger floating notification
     setActiveNotification({
       id: `notif-${Date.now()}`,
-      title: '📦 تم نشر طلب التوصيل بنجاح!',
+      title: '📦 تم بث طلب التوصيل بنجاح!',
       desc: `تم إشعار الكباتن في ${newOrder.pickupAddress} بسعر مقترح ${newOrder.customerOfferPrice} دج`,
       type: 'order',
     });
   };
 
+  // Driver submits price offer / counter-offer
   const handleSendDriverOffer = async (offer: DriverOffer) => {
     await submitDriverOffer(offer);
     await reloadOrders();
@@ -262,6 +177,7 @@ export function App() {
     });
   };
 
+  // Customer accepts driver offer -> Starts Live Delivery Tracking
   const handleAcceptOffer = async (orderId: string, offer: DriverOffer) => {
     await acceptDriverOffer(orderId, offer);
     await reloadOrders();
@@ -276,6 +192,7 @@ export function App() {
     });
   };
 
+  // Customer counter-offers
   const handleCounterOffer = async (
     orderId: string,
     driverOffer: DriverOffer,
@@ -291,6 +208,7 @@ export function App() {
     soundNotifier.playBidSound();
   };
 
+  // Driver finishes delivery -> Permanently terminates live tracking
   const handleFinishDelivery = async (orderId: string) => {
     await updateOrderStatus(orderId, 'delivered');
     await reloadOrders();
@@ -300,11 +218,12 @@ export function App() {
     setActiveNotification({
       id: `notif-${Date.now()}`,
       title: '🎉 اكتملت عملية التوصيل بنجاح!',
-      desc: 'شكراً لاستخدامك تطبيق سريع Sari3',
+      desc: 'تم إنهاء الجلسة وإغلاق التتبع الحي بنجاح',
       type: 'accepted',
     });
   };
 
+  // Cancel delivery
   const handleCancelOrder = async (orderId: string) => {
     await updateOrderStatus(orderId, 'cancelled');
     await reloadOrders();
@@ -313,7 +232,7 @@ export function App() {
     }
   };
 
-  // Active tracking order item
+  // Active in-transit or accepted delivery order
   const activeTrackingOrder = orders.find(
     (o) =>
       o.id === activeTrackingOrderId ||
@@ -321,6 +240,72 @@ export function App() {
         (o.customerId === currentUser?.id || o.assignedDriver?.id === currentUser?.id))
   );
 
+  // =========================================================================
+  // VIEW ROUTING & STRICT ROLE SEPARATION
+  // =========================================================================
+
+  // 1. UNCOMMITTED / NOT LOGGED IN FLOW
+  if (!currentUser) {
+    // Stage A: Welcome Screen / Role Gateway
+    if (!selectedPortal) {
+      return (
+        <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
+          <RoleGateway
+            t={t}
+            lang={lang}
+            theme={theme}
+            onSelectRole={(role) => setSelectedPortal(role)}
+            onLanguageChange={setLang}
+            onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          />
+        </div>
+      );
+    }
+
+    // Stage B: Isolated Customer Authentication Flow
+    if (selectedPortal === 'customer') {
+      return (
+        <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
+          <CustomerAuthFlow
+            t={t}
+            lang={lang}
+            onAuthComplete={handleAuthComplete}
+            onBackToGateway={() => setSelectedPortal(null)}
+          />
+
+          {/* Permissions Modal strictly AFTER role-specific login, BEFORE final confirmation */}
+          <PermissionsModal
+            isOpen={showPermissionsModal}
+            t={t}
+            onPermissionsCompleted={handlePermissionsCompleted}
+          />
+        </div>
+      );
+    }
+
+    // Stage C: Isolated Driver Authentication Flow
+    if (selectedPortal === 'driver') {
+      return (
+        <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
+          <DriverAuthFlow
+            t={t}
+            lang={lang}
+            onAuthComplete={handleAuthComplete}
+            onBackToGateway={() => setSelectedPortal(null)}
+          />
+
+          {/* Permissions Modal strictly AFTER role-specific login, BEFORE final confirmation */}
+          <PermissionsModal
+            isOpen={showPermissionsModal}
+            t={t}
+            onPermissionsCompleted={handlePermissionsCompleted}
+          />
+        </div>
+      );
+    }
+  }
+
+  // 2. AUTHENTICATED USER FLOW (DEDICATED DASHBOARDS)
   return (
     <div
       className={`min-h-screen ${
@@ -329,7 +314,7 @@ export function App() {
           : 'bg-slate-50 text-slate-900'
       } transition-colors duration-200 relative`}
     >
-      {/* Floating Push Notification Toast */}
+      {/* Real-time floating Notification Toast */}
       {activeNotification && (
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-md p-3.5 rounded-2xl bg-slate-900/95 border border-emerald-500/50 shadow-2xl backdrop-blur-md flex items-center justify-between gap-3 text-xs animate-in slide-in-from-top duration-300">
           <div className="flex items-center gap-2.5">
@@ -350,36 +335,34 @@ export function App() {
         </div>
       )}
 
-      {/* App Header (Clean, sleek, no fake phone bezel) */}
+      {/* App Header (Clean native container, no fake phone bezels) */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#0B0F17]/95 backdrop-blur-md px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
           {/* Brand Logo & Stretched Font */}
           <Sari3Logo size="md" showTagline taglineText={t.tagline} />
 
-          {/* Controls: Role Switcher, Language, Theme, Profile */}
+          {/* Controls: Role Badge, Language, Theme, Logout */}
           <div className="flex items-center gap-2">
-            {/* Quick Role Switcher (Customer vs Driver) */}
-            {currentUser && (
-              <button
-                id="btn-role-switcher"
-                type="button"
-                onClick={toggleRole}
-                className="px-2.5 py-1.5 rounded-xl border border-slate-700/80 bg-slate-900 hover:border-emerald-500 text-xs font-bold text-slate-200 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-                title="التبديل بين وضع الزبون ووضع السائق"
-              >
-                {currentUser?.role === 'driver' ? (
-                  <>
-                    <Bike size={14} className="text-purple-400" />
-                    <span className="hidden sm:inline text-purple-400">كابتن سريع</span>
-                  </>
-                ) : (
-                  <>
-                    <Package size={14} className="text-emerald-400" />
-                    <span className="hidden sm:inline text-emerald-400">زبون</span>
-                  </>
-                )}
-              </button>
-            )}
+            {/* Active Role Indicator Badge */}
+            <div
+              className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 border ${
+                currentUser.role === 'driver'
+                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+              }`}
+            >
+              {currentUser.role === 'driver' ? (
+                <>
+                  <Bike size={14} />
+                  <span className="hidden sm:inline">كابتن سريع</span>
+                </>
+              ) : (
+                <>
+                  <Package size={14} />
+                  <span className="hidden sm:inline">زبون</span>
+                </>
+              )}
+            </div>
 
             {/* Language Selector (4 Languages: AR, FR, EN, RU) */}
             <div className="relative flex items-center">
@@ -397,7 +380,7 @@ export function App() {
               <Globe size={12} className="absolute right-2 text-slate-400 pointer-events-none" />
             </div>
 
-            {/* Theme Toggle (Light / Dark Soft Matte Black) */}
+            {/* Theme Toggle (Light / Soft Matte Black) */}
             <button
               id="btn-theme-toggle"
               type="button"
@@ -408,28 +391,16 @@ export function App() {
               {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
             </button>
 
-            {/* Logout / Switch User */}
-            {currentUser ? (
-              <button
-                id="btn-user-logout"
-                type="button"
-                onClick={handleLogout}
-                className="p-2 rounded-xl bg-slate-900 border border-slate-700/80 text-slate-400 hover:text-red-400 transition cursor-pointer"
-                title="تسجيل الخروج والعودة لشاشة الدخول"
-              >
-                <LogOut size={15} />
-              </button>
-            ) : (
-              <button
-                id="btn-user-auth-trigger"
-                type="button"
-                onClick={() => setShowAuthModal(true)}
-                className="p-2 rounded-xl bg-emerald-500 text-slate-950 font-bold transition cursor-pointer"
-                title={t.welcome}
-              >
-                <User size={15} />
-              </button>
-            )}
+            {/* Logout / Switch Role Gateway */}
+            <button
+              id="btn-user-logout"
+              type="button"
+              onClick={handleLogout}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-700/80 text-slate-400 hover:text-red-400 transition cursor-pointer"
+              title="تسجيل الخروج والعودة للبوابة الرئيسية"
+            >
+              <LogOut size={15} />
+            </button>
           </div>
         </div>
       </header>
@@ -456,7 +427,7 @@ export function App() {
 
             <ActiveDeliveryView
               order={activeTrackingOrder}
-              currentRole={currentUser?.role || 'customer'}
+              currentRole={currentUser.role || 'customer'}
               t={t}
               lang={lang}
               theme={theme}
@@ -468,8 +439,8 @@ export function App() {
               }}
             />
           </div>
-        ) : currentUser?.role === 'driver' ? (
-          /* DRIVER VIEW */
+        ) : currentUser.role === 'driver' ? (
+          /* ISOLATED DRIVER DASHBOARD */
           <DriverHome
             currentUser={currentUser}
             orders={orders}
@@ -486,18 +457,9 @@ export function App() {
             onWilayaChange={setSelectedWilaya}
           />
         ) : (
-          /* CUSTOMER VIEW */
+          /* ISOLATED CUSTOMER DASHBOARD */
           <CustomerHome
-            currentUser={
-              currentUser || {
-                id: 'demo-user',
-                displayName: 'زبون سريع',
-                wilaya: '16',
-                phone: '+213 555 12 34 56',
-                phoneVerified: true,
-                createdAt: new Date().toISOString(),
-              }
-            }
+            currentUser={currentUser}
             orders={orders}
             t={t}
             lang={lang}
@@ -516,49 +478,7 @@ export function App() {
         )}
       </main>
 
-      {/* MODALS */}
-      {/* 1. Supabase Auth Modal (Directly active on startup if unauthenticated) */}
-      <AuthModal
-        isOpen={showAuthModal}
-        onClose={() => {
-          if (currentUser) {
-            setShowAuthModal(false);
-          }
-        }}
-        onAuthSuccess={handleAuthSuccess}
-        t={t}
-        lang={lang}
-      />
-
-      {/* 2. Role Selection Wizard */}
-      {currentUser && (
-        <RoleSelectionModal
-          isOpen={showRoleModal}
-          currentUser={currentUser}
-          t={t}
-          onSelectRole={handleSelectRole}
-        />
-      )}
-
-      {/* 3. Driver Multi-step Verification Wizard */}
-      {currentUser && (
-        <DriverVerificationWizard
-          currentUser={currentUser}
-          t={t}
-          lang={lang}
-          onComplete={handleDriverVerificationCompleted}
-          onCancel={() => setShowDriverWizard(false)}
-        />
-      )}
-
-      {/* 4. Permissions Overlay (Camera & GPS) */}
-      <PermissionsModal
-        isOpen={showPermissionsModal}
-        t={t}
-        onPermissionsCompleted={handlePermissionsCompleted}
-      />
-
-      {/* 5. Package Photo Inspection Modal */}
+      {/* Package Photo Inspection Modal */}
       <PackageInspectionModal
         isOpen={!!inspectionPhoto}
         photoUrl={inspectionPhoto}

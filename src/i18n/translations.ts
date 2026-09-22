@@ -30,6 +30,21 @@ export interface AppTranslations {
   confirmRole: string;
   logout: string;
 
+  // Dedicated Gateways & Portals
+  roleGatewayTitle: string;
+  roleGatewaySubtitle: string;
+  enterAsCustomer: string;
+  enterAsDriver: string;
+  customerLoginTitle: string;
+  customerLoginSubtitle: string;
+  driverLoginTitle: string;
+  driverLoginSubtitle: string;
+  returningDriverLogin: string;
+  newDriverRegister: string;
+  quickDemoCustomer: string;
+  quickDemoDriver: string;
+  backToGateway: string;
+
   // Permissions (Mandatory timing: after role selection, before final account activation)
   permissionsTitle: string;
   permissionsSubtitle: string;
@@ -197,6 +212,20 @@ export const translations: Record<Language, AppTranslations> = {
     confirmRole: 'تأكيد الحساب ومتابعة الإعداد',
     logout: 'تسجيل الخروج',
 
+    roleGatewayTitle: 'اختر بوابتك للمتابعة',
+    roleGatewaySubtitle: 'حدد ما إذا كنت ترغب في إرسال طرد كزبون أو تقديم خدمات التوصيل كسائق كابتن',
+    enterAsCustomer: 'الدخول كزبون (إرسال طرد)',
+    enterAsDriver: 'الدخول كسائق كابتن (توصيل)',
+    customerLoginTitle: 'بوابة تسجيل دخول الزبائن',
+    customerLoginSubtitle: 'سجل دخولك برقم هاتفك الجزائري أو حساب Google للبدء في إرسال الطرود',
+    driverLoginTitle: 'بوابة كباتن سريع (السائقين)',
+    driverLoginSubtitle: 'سجل دخولك كسائق معتمد أو قدم طلب انضمام جديد للعمل فوراً',
+    returningDriverLogin: 'تسجيل دخول كابتن مسجل',
+    newDriverRegister: 'طلب انضمام جديد (توثيق 5 خطوات)',
+    quickDemoCustomer: 'تجربة سريعة كزبون',
+    quickDemoDriver: 'تجربة سريعة ككابتن',
+    backToGateway: 'العودة لاختيار البوابة',
+
     permissionsTitle: 'أذونات الوصول الضرورية',
     permissionsSubtitle: 'لضمان دقة التتبع وسرعة الاستلام، يحتاج تطبيق سريع إلى الصلاحيات التالية:',
     cameraPermissionTitle: 'كاميرا الهاتف',
@@ -354,6 +383,20 @@ export const translations: Record<Language, AppTranslations> = {
     roleDriverDesc: 'Consultez les colis, négociez vos tarifs et générez des revenus réguliers.',
     confirmRole: 'Confirmer et configurer le profil',
     logout: 'Se déconnecter',
+
+    roleGatewayTitle: 'Choisissez votre portail',
+    roleGatewaySubtitle: 'Sélectionnez si vous souhaitez envoyer un colis ou livrer en tant que capitaine',
+    enterAsCustomer: 'Portail Client (Envoyer un colis)',
+    enterAsDriver: 'Portail Capitaine (Chauffeur-Livreur)',
+    customerLoginTitle: 'Connexion Espace Client',
+    customerLoginSubtitle: 'Connectez-vous avec votre numéro algérien ou votre compte Google pour expédier',
+    driverLoginTitle: 'Espace Capitaines Sari3',
+    driverLoginSubtitle: 'Connectez-vous ou effectuez votre vérification en 5 étapes pour livrer',
+    returningDriverLogin: 'Connexion Capitaine Existant',
+    newDriverRegister: 'Nouvelle Inscription (Vérification 5 Étapes)',
+    quickDemoCustomer: 'Démo Rapide Client',
+    quickDemoDriver: 'Démo Rapide Capitaine',
+    backToGateway: 'Retour au choix du portail',
 
     permissionsTitle: 'Autorisations Requises',
     permissionsSubtitle: 'Pour assurer un suivi précis et rapide, Sari3 a besoin des accès suivants :',
@@ -513,6 +556,20 @@ export const translations: Record<Language, AppTranslations> = {
     confirmRole: 'Confirm Role & Set Up',
     logout: 'Log Out',
 
+    roleGatewayTitle: 'Select Your Gateway',
+    roleGatewaySubtitle: 'Choose whether you want to send a package as a Customer or deliver as a Captain',
+    enterAsCustomer: 'Customer Portal (Send Packages)',
+    enterAsDriver: 'Captain Portal (Delivery Driver)',
+    customerLoginTitle: 'Customer Sign In',
+    customerLoginSubtitle: 'Sign in with your Algerian phone or Google account to start sending packages',
+    driverLoginTitle: 'Sari3 Captains Portal',
+    driverLoginSubtitle: 'Sign in as a registered driver or complete the 5-step verification to start earning',
+    returningDriverLogin: 'Registered Driver Sign In',
+    newDriverRegister: 'New Driver Registration (5-Step Wizard)',
+    quickDemoCustomer: 'Quick Demo Customer',
+    quickDemoDriver: 'Quick Demo Driver',
+    backToGateway: 'Back to Gateway',
+
     permissionsTitle: 'Required App Permissions',
     permissionsSubtitle: 'To ensure pinpoint accuracy and rapid courier dispatch, Sari3 requires:',
     cameraPermissionTitle: 'Device Camera',
@@ -670,6 +727,20 @@ export const translations: Record<Language, AppTranslations> = {
     roleDriverDesc: 'Просматривайте заказы рядом, торгуйтесь за цену и зарабатывайте каждый день.',
     confirmRole: 'Подтвердить выбор роли',
     logout: 'Выйти из аккаунта',
+
+    roleGatewayTitle: 'Выберите ваш портал',
+    roleGatewaySubtitle: 'Выберите, хотите ли вы отправить посылку как клиент или доставлять как курьер',
+    enterAsCustomer: 'Портал Клиента (Отправить посылку)',
+    enterAsDriver: 'Портал Курьера (Капитан Sari3)',
+    customerLoginTitle: 'Вход для Клиентов',
+    customerLoginSubtitle: 'Войдите по алжирскому номеру или Google-аккаунту для отправки посылок',
+    driverLoginTitle: 'Портал Капитанов Sari3',
+    driverLoginSubtitle: 'Войдите как зарегистрированный водитель или пройдите 5 шагов верификации',
+    returningDriverLogin: 'Вход для зарегистрированных курьеров',
+    newDriverRegister: 'Регистрация нового курьера (5 шагов)',
+    quickDemoCustomer: 'Быстрый тест (Клиент)',
+    quickDemoDriver: 'Быстрый тест (Курьер)',
+    backToGateway: 'Вернуться к выбору портала',
 
     permissionsTitle: 'Необходимые разрешения',
     permissionsSubtitle: 'Для точного отслеживания и быстрой подачи курьера Sari3 нужны доступы:',
