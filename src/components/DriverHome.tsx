@@ -58,6 +58,7 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
     requestGps,
     startLiveTracking,
     stopLiveTracking,
+    bypassGps,
   } = useNativeGps(isOnline);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
 
@@ -200,7 +201,7 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             }
             userLiveGps={driverGpsCoords}
             theme={theme}
-            className="h-48 w-full"
+            className="min-h-[350px] h-[350px] w-full"
           />
 
           {/* Customer info & Call */}
@@ -434,6 +435,12 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             setIsOnline(true);
             startLiveTracking();
           }
+        }}
+        onClose={() => setShowGpsModal(false)}
+        onBypass={() => {
+          bypassGps({ lat: currentWilayaObj.lat, lng: currentWilayaObj.lng });
+          setIsOnline(true);
+          setShowGpsModal(false);
         }}
       />
     </div>

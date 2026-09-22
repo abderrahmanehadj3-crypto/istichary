@@ -91,6 +91,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     status: gpsStatus,
     errorMessage: gpsErrorMessage,
     requestGps,
+    bypassGps,
   } = useNativeGps(true);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
 
@@ -429,7 +430,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             userLiveGps={liveGpsCoords}
             onCenterOnGps={handleUseCurrentGps}
             theme={theme}
-            className="h-60 w-full"
+            className="min-h-[350px] h-[350px] w-full"
           />
 
           {/* Quick pin drop controls */}
@@ -661,6 +662,11 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             const addr = await reverseGeocode(res.lat, res.lng, lang);
             setPickupAddress(addr);
           }
+        }}
+        onClose={() => setShowGpsModal(false)}
+        onBypass={() => {
+          bypassGps(pickupCoords || { lat: currentWilayaObj.lat, lng: currentWilayaObj.lng });
+          setShowGpsModal(false);
         }}
       />
 

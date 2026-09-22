@@ -3,7 +3,7 @@ import L from 'leaflet';
 import { ThemeMode } from '../types';
 import { reverseGeocode } from '../utils/reverseGeocoding';
 import { calculateDistanceKm, calculateSuggestedFare } from '../data/wilayas';
-import { Navigation, Crosshair, Loader2, MapPin } from 'lucide-react';
+import { Navigation, Crosshair, Loader2 } from 'lucide-react';
 
 // Fix Leaflet default icon paths
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -43,7 +43,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   onMapClick,
   onPinDropped,
   theme = 'dark',
-  className = 'h-64 w-full rounded-2xl',
+  className = 'min-h-[350px] h-[350px] w-full rounded-2xl',
   showRoutePolyline = true,
   userLiveGps = null,
   onCenterOnGps,
@@ -67,14 +67,8 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   const onPinDroppedRef = useRef(onPinDropped);
   onPinDroppedRef.current = onPinDropped;
 
-  const pickupCoordsRef = useRef(pickupCoords);
-  pickupCoordsRef.current = pickupCoords;
-
-  const dropoffCoordsRef = useRef(dropoffCoords);
-  dropoffCoordsRef.current = dropoffCoords;
-
   const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
-  const [lastReverseAddress, setLastReverseAddress] = useState<string | null>(null);
+  const [, setLastReverseAddress] = useState<string | null>(null);
 
   // Calculate live route distance
   const currentDistanceKm =
@@ -126,7 +120,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         center: [center.lat, center.lng],
         zoom: zoom,
         zoomControl: false,
-        attributionControl: false,
+        attributionControl: true,
         fadeAnimation: true,
         markerZoomAnimation: true,
       });
@@ -189,7 +183,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
     };
   }, []);
 
-  // 2. High-Visibility Clear Tile Layer (100% Free, Zero API Keys, No Blurring)
+  // 2. 100% Free Public OpenStreetMap Tile Layer (Zero API Keys, Zero External Auth)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -198,18 +192,14 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       map.removeLayer(tileLayerRef.current);
     }
 
-    // CartoDB tiles provide clear contrast for mobile navigation
-    const isDark = theme === 'dark';
-    const tileUrl = isDark
-      ? 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png'
-      : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+    // Official public OpenStreetMap tiles - 100% free, no API key required
+    const tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 
     const tiles = L.tileLayer(tileUrl, {
       maxZoom: 19,
-      subdomains: ['a', 'b', 'c', 'd'],
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      subdomains: ['a', 'b', 'c'],
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       crossOrigin: true,
-      errorTileUrl: 'https://tile.openstreetmap.org/13/4198/3074.png',
     }).addTo(map);
 
     tileLayerRef.current = tiles;
@@ -424,7 +414,11 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   return (
     <div
       className={`relative overflow-hidden bg-slate-900 ${className}`}
-      style={{ minHeight: '220px' }}
+      style={{
+        width: '100%',
+        height: '100%',
+        minHeight: '350px',
+      }}
     >
       {/* Map Canvas */}
       <div
@@ -433,7 +427,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         style={{
           width: '100%',
           height: '100%',
-          minHeight: '220px',
+          minHeight: '350px',
           position: 'relative',
         }}
       />

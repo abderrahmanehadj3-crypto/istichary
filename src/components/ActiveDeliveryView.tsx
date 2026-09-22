@@ -80,7 +80,7 @@ export const ActiveDeliveryView: React.FC<ActiveDeliveryViewProps> = ({
           driverCoords={effectiveDriverCoords}
           userLiveGps={liveGpsCoords}
           theme={theme}
-          className="h-64 sm:h-72 w-full"
+          className="min-h-[350px] h-[350px] w-full"
         />
 
         {/* Live ETA & Proximity Banner */}

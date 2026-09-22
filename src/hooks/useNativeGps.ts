@@ -17,6 +17,7 @@ export interface UseNativeGpsReturn {
   startLiveTracking: () => void;
   stopLiveTracking: () => void;
   openLocationSettings: () => void;
+  bypassGps: (fallbackCoords?: GpsCoordinates) => GpsCoordinates;
 }
 
 /**
@@ -37,7 +38,17 @@ export function openNativeLocationSettings(): void {
     }
   }
 
-  // 2. Android Intent to open system Location Provider Settings
+  // 2. Trigger native Median geolocation permission prompt if supported
+  if (median?.geolocation?.prompt) {
+    try {
+      median.geolocation.prompt();
+      return;
+    } catch (e) {
+      console.warn('Median prompt failed:', e);
+    }
+  }
+
+  // 3. Android Intent to open system Location Provider Settings
   const ua = navigator.userAgent.toLowerCase();
   if (ua.includes('android')) {
     try {
@@ -65,42 +76,61 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
 
   const watchIdRef = useRef<number | null>(null);
 
-  // Check initial browser permission status if supported
-  useEffect(() => {
-    if ('permissions' in navigator && navigator.permissions?.query) {
-      navigator.permissions
-        .query({ name: 'geolocation' as PermissionName })
-        .then((permissionStatus) => {
-          if (permissionStatus.state === 'granted') {
-            setStatus('granted');
-          } else if (permissionStatus.state === 'denied') {
-            setStatus('denied');
-          }
+  // Seamless bypass mechanism: sets valid coordinates and clears blockers
+  const bypassGps = useCallback((fallbackCoords?: GpsCoordinates): GpsCoordinates => {
+    const target = fallbackCoords || coords || DEFAULT_ALGIERS_COORDS;
+    setCoords(target);
+    setAccuracy(15);
+    setStatus('granted');
+    setErrorMessage(null);
+    return target;
+  }, [coords]);
 
-          permissionStatus.onchange = () => {
-            if (permissionStatus.state === 'granted') {
-              setStatus('granted');
-              requestGps();
-            } else if (permissionStatus.state === 'denied') {
-              setStatus('denied');
-            }
-          };
-        })
-        .catch(() => {
-          // Permissions API query not supported in this WebView environment
-        });
-    }
-  }, []);
-
-  // Request GPS position on demand with Android/WebView multi-tier fallback
+  // Request GPS position on demand with robust Median native bridge and Web Geolocation fallback
   const requestGps = useCallback((): Promise<GpsCoordinates | null> => {
     return new Promise(async (resolve) => {
-      // 1. Check if Capacitor Geolocation plugin exists in native wrapper
-      const capGeo = (window as any).Capacitor?.Plugins?.Geolocation;
-      if (capGeo) {
+      setStatus('checking');
+      setErrorMessage(null);
+
+      // 1. Median / GoNative bridge integration
+      const median = (window as any).median || (window as any).gonative;
+      if (median?.geolocation?.prompt) {
         try {
-          setStatus('checking');
-          const pos = await capGeo.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
+          median.geolocation.prompt();
+        } catch (e) {
+          console.warn('[useNativeGps] Median prompt call:', e);
+        }
+      }
+
+      if (median?.geolocation?.getCurrentPosition) {
+        try {
+          median.geolocation.getCurrentPosition((res: any) => {
+            if (res && (res.latitude || res.lat)) {
+              const mCoords: GpsCoordinates = {
+                lat: Number(res.latitude || res.lat),
+                lng: Number(res.longitude || res.lng),
+              };
+              setCoords(mCoords);
+              setAccuracy(res.accuracy || 10);
+              setStatus('granted');
+              setErrorMessage(null);
+              resolve(mCoords);
+              return;
+            }
+          });
+        } catch (e) {
+          console.warn('[useNativeGps] Median getCurrentPosition call error:', e);
+        }
+      }
+
+      // 2. Check Capacitor Geolocation plugin if present in wrapper
+      const capGeo = (window as any).Capacitor?.Plugins?.Geolocation;
+      if (capGeo?.getCurrentPosition) {
+        try {
+          const pos = await capGeo.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 10000,
+          });
           if (pos && pos.coords) {
             const capCoords: GpsCoordinates = {
               lat: pos.coords.latitude,
@@ -114,22 +144,20 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
             return;
           }
         } catch (capErr) {
-          console.warn('[useNativeGps] Capacitor Geolocation failed, trying webview geolocation:', capErr);
+          console.warn('[useNativeGps] Capacitor Geolocation error, continuing with navigator:', capErr);
         }
       }
 
-      // 2. Standard navigator.geolocation check
-      if (!navigator.geolocation) {
+      // 3. Standard navigator.geolocation check
+      if (typeof navigator === 'undefined' || !navigator.geolocation) {
         setStatus('error');
         setErrorMessage('خاصية تحديد الموقع الجغرافي (GPS) غير مدعومة على هذا الجهاز.');
         resolve(null);
         return;
       }
 
-      setStatus('checking');
-      setErrorMessage(null);
-
-      // Tier 1: High Accuracy (GPS hardware satellite lock)
+      // Primary call: High Accuracy with exact required options
+      // enableHighAccuracy: true, timeout: 10000, maximumAge: 0
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const newCoords: GpsCoordinates = {
@@ -142,10 +170,11 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           setErrorMessage(null);
           resolve(newCoords);
         },
-        (error) => {
-          console.warn('[useNativeGps] High-accuracy GPS timed out/failed, trying network/cell location fallback:', error);
+        (highAccErr) => {
+          console.warn('[useNativeGps] Primary high-accuracy GPS failed in WebView, trying network fallback:', highAccErr);
 
-          // Tier 2: Low-accuracy fast network/Wi-Fi fallback (indispensable inside buildings and Android WebViews)
+          // Fallback: Low accuracy network / wifi / cell tower triangulation
+          // (Crucial inside buildings and Android WebViews to prevent locking)
           navigator.geolocation.getCurrentPosition(
             (fallbackPos) => {
               const fallbackCoords: GpsCoordinates = {
@@ -162,19 +191,15 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
               let errorMsg = 'تعذر الحصول على إحداثيات الموقع عبر GPS.';
               let newStatus: GpsStatus = 'error';
 
-              switch (finalError.code) {
-                case finalError.PERMISSION_DENIED:
-                  newStatus = 'denied';
-                  errorMsg = 'تم رفض إذن الوصول إلى الموقع. يرجى تفعيل إذن GPS لتطبيق Sari3 في إعدادات الهاتف.';
-                  break;
-                case finalError.POSITION_UNAVAILABLE:
-                  newStatus = 'disabled';
-                  errorMsg = 'خدمات الموقع (GPS) غير مفعلة على هاتفك. يرجى سحب شريط الإشعارات وتشغيل زر الموقع.';
-                  break;
-                case finalError.TIMEOUT:
-                  newStatus = 'disabled';
-                  errorMsg = 'انتهت مهلة استجابة GPS. يرجى التأكد من تشغيل الموقع والمحاولة مجدداً.';
-                  break;
+              if (finalError.code === finalError.PERMISSION_DENIED) {
+                newStatus = 'denied';
+                errorMsg = 'تم رفض إذن الوصول إلى الموقع. يمكنك تفعيله من الإعدادات أو المتابعة باختيار الموقع على الخريطة.';
+              } else if (finalError.code === finalError.POSITION_UNAVAILABLE) {
+                newStatus = 'disabled';
+                errorMsg = 'خدمات الموقع (GPS) غير مفعلة أو ضعيفة الإشارة. يرجى التأكد من تشغيل زر الموقع بالهاتف.';
+              } else if (finalError.code === finalError.TIMEOUT) {
+                newStatus = 'disabled';
+                errorMsg = 'انتهت مهلة استجابة GPS. يمكنك المتابعة بتحديد الموقع مباشرة على الخريطة.';
               }
 
               setStatus(newStatus);
@@ -183,15 +208,15 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
             },
             {
               enableHighAccuracy: false,
-              timeout: 7000,
-              maximumAge: 30000,
+              timeout: 8000,
+              maximumAge: 60000,
             }
           );
         },
         {
           enableHighAccuracy: true,
-          timeout: 8000,
-          maximumAge: 5000,
+          timeout: 10000,
+          maximumAge: 0,
         }
       );
     });
@@ -199,7 +224,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
 
   // Start continuous live tracking
   const startLiveTracking = useCallback(() => {
-    if (!navigator.geolocation) {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
       setStatus('error');
       setErrorMessage('GPS غير مدعوم على هذا الجهاز.');
       return;
@@ -210,7 +235,6 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     }
 
     setIsTracking(true);
-    setStatus('checking');
 
     const options: PositionOptions = {
       enableHighAccuracy: true,
@@ -230,13 +254,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         setErrorMessage(null);
       },
       (error) => {
-        if (error.code === error.PERMISSION_DENIED) {
-          setStatus('denied');
-          setErrorMessage('تم حظر إذن الموقع.');
-        } else if (error.code === error.POSITION_UNAVAILABLE) {
-          setStatus('disabled');
-          setErrorMessage('خدمة GPS متوقفة.');
-        }
+        console.warn('[useNativeGps] watchPosition warning:', error);
       },
       options
     );
@@ -253,7 +271,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     setIsTracking(false);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount or autoStart
   useEffect(() => {
     if (autoStart) {
       requestGps();
@@ -261,7 +279,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     }
 
     return () => {
-      if (watchIdRef.current !== null && navigator.geolocation) {
+      if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
     };
@@ -277,5 +295,6 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     startLiveTracking,
     stopLiveTracking,
     openLocationSettings: openNativeLocationSettings,
+    bypassGps,
   };
 }
