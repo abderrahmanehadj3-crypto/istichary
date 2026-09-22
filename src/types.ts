@@ -111,3 +111,42 @@ export interface DeliveryOrder {
   acceptedAt?: string;
   completedAt?: string;
 }
+
+export interface WalletTransaction {
+  id: string;
+  type: 'topup_edahabia' | 'topup_baridimob' | 'delivery_earning' | 'commission_fee';
+  amount: number;
+  date: string;
+  status: 'completed' | 'pending' | 'rejected';
+  receiptUrl?: string;
+  description: string;
+  txRef?: string;
+}
+
+export interface DeliveryEarningRecord {
+  id: string;
+  orderId: string;
+  date: string;
+  amount: number;
+  netEarning: number;
+  commission: number;
+  pickup: string;
+  dropoff: string;
+  distanceKm: number;
+  status: 'completed' | 'cancelled';
+}
+
+export interface CustomerContactCall {
+  id: string;
+  driverId: string;
+  driverName: string;
+  driverPhone: string;
+  driverAvatar?: string;
+  driverRating: number;
+  vehicle: string;
+  plate: string;
+  orderTitle: string;
+  date: string;
+  status: 'completed' | 'in_transit' | 'cancelled';
+}
+

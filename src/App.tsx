@@ -29,7 +29,10 @@ import { CustomerHome } from './components/CustomerHome';
 import { DriverHome } from './components/DriverHome';
 import { ActiveDeliveryView } from './components/ActiveDeliveryView';
 import { PackageInspectionModal } from './components/PackageInspectionModal';
+import { DriverDrawerMenu } from './components/DriverDrawerMenu';
+import { CustomerDrawerMenu } from './components/CustomerDrawerMenu';
 import {
+  Menu,
   Sun,
   Moon,
   Globe,
@@ -80,6 +83,9 @@ export function App() {
   // Orders State
   const [orders, setOrders] = useState<DeliveryOrder[]>(INITIAL_DEMO_ORDERS);
   const [activeTrackingOrderId, setActiveTrackingOrderId] = useState<string | null>(null);
+
+  // Side Navigation Drawer State
+  const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
   // Load orders on startup and when Wilaya changes
   const reloadOrders = async () => {
@@ -144,7 +150,25 @@ export function App() {
     setCurrentUser(null);
     setPendingUser(null);
     setSelectedPortal(null);
+    setIsSidebarOpen(false);
     localStorage.removeItem('sari3_user_profile');
+  };
+
+  // Update Profile (Name, Phone, Avatar)
+  const handleUpdateProfile = (updated: Partial<UserProfile>) => {
+    if (!currentUser) return;
+    const updatedUser: UserProfile = {
+      ...currentUser,
+      ...updated,
+    };
+    setCurrentUser(updatedUser);
+    saveUserProfile(updatedUser);
+    setActiveNotification({
+      id: `notif-${Date.now()}`,
+      title: 'تم حفظ التعديلات بنجاح!',
+      desc: 'تم تحديث بيانات ملفك الشخصي في Sari3',
+      type: 'accepted',
+    });
   };
 
   // Order Actions: Customer publishes new order
@@ -338,8 +362,20 @@ export function App() {
       {/* App Header (Clean native container, no fake phone bezels) */}
       <header className="sticky top-0 z-30 border-b border-slate-800/80 bg-[#0B0F17]/95 backdrop-blur-md px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
-          {/* Brand Logo & Stretched Font */}
-          <Sari3Logo size="md" showTagline taglineText={t.tagline} />
+          {/* Hamburger Menu & Brand Logo */}
+          <div className="flex items-center gap-2.5">
+            <button
+              id="btn-open-sidebar-menu"
+              type="button"
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-700/80 text-slate-200 hover:text-emerald-400 hover:border-emerald-500/50 transition cursor-pointer flex items-center justify-center shadow-sm"
+              aria-label="القائمة الجانبية"
+              title="فتح القائمة الجانبية"
+            >
+              <Menu size={20} />
+            </button>
+            <Sari3Logo size="md" showTagline taglineText={t.tagline} />
+          </div>
 
           {/* Controls: Role Badge, Language, Theme, Logout */}
           <div className="flex items-center gap-2">
@@ -404,6 +440,41 @@ export function App() {
           </div>
         </div>
       </header>
+
+      {/* Role-Segregated Side Navigation Drawers */}
+      {currentUser.role === 'driver' ? (
+        <DriverDrawerMenu
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          currentUser={currentUser}
+          t={t}
+          lang={lang}
+          theme={theme}
+          onLanguageChange={setLang}
+          onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onLogout={() => {
+            setIsSidebarOpen(false);
+            handleLogout();
+          }}
+          onUpdateProfile={handleUpdateProfile}
+        />
+      ) : (
+        <CustomerDrawerMenu
+          isOpen={isSidebarOpen}
+          onClose={() => setIsSidebarOpen(false)}
+          currentUser={currentUser}
+          t={t}
+          lang={lang}
+          theme={theme}
+          onLanguageChange={setLang}
+          onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onLogout={() => {
+            setIsSidebarOpen(false);
+            handleLogout();
+          }}
+          onUpdateProfile={handleUpdateProfile}
+        />
+      )}
 
       {/* Main App Container */}
       <main className="max-w-2xl mx-auto px-4 py-5 pb-16">
