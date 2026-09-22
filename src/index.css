@@ -37,6 +37,12 @@
   background-color: #121214 !important;
 }
 
+/* 100% Free OpenStreetMap dark mode styling without external API keys */
+.dark .leaflet-tile,
+.leaflet-tile-dark {
+  filter: brightness(0.6) invert(1) contrast(3) hue-rotate(200deg) saturate(0.25) brightness(0.7) !important;
+}
+
 /* Hide scrollbar */
 .no-scrollbar::-webkit-scrollbar {
   display: none;

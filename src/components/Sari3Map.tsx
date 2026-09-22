@@ -133,7 +133,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
     };
   }, []);
 
-  // 2. Tile layer selection (Dark Matter for deep matte black, Voyager for light mode)
+  // 2. Pure OpenStreetMap Free Tile Layer (100% Free, Zero API Keys Required)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -142,17 +142,18 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       map.removeLayer(tileLayerRef.current);
     }
 
-    const tileUrl =
-      theme === 'dark'
-        ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
-        : 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+    // Standard OpenStreetMap public tiles - requires zero tokens or API keys
+    const osmLayer = L.tileLayer(
+      'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        maxZoom: 19,
+        subdomains: ['a', 'b', 'c'],
+        attribution: '&copy; OpenStreetMap contributors',
+        className: theme === 'dark' ? 'leaflet-tile-dark' : '',
+      }
+    ).addTo(map);
 
-    const newLayer = L.tileLayer(tileUrl, {
-      maxZoom: 19,
-      subdomains: 'abcd',
-    }).addTo(map);
-
-    tileLayerRef.current = newLayer;
+    tileLayerRef.current = osmLayer;
   }, [theme]);
 
   // 3. Center map when center prop updates

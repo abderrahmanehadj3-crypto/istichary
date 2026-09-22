@@ -18,7 +18,13 @@ import {
   ScanLine,
   RefreshCw,
   Image as ImageIcon,
+  Smartphone,
 } from 'lucide-react';
+import {
+  startNativeCameraStream,
+  captureFrameFromVideo,
+  launchNativeDeviceCamera,
+} from '../utils/nativeCameraBridge';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -142,37 +148,40 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsLicenseScannerOpen(false);
   };
 
-  // Face Camera Live Stream
+  // Face Camera Live Stream (WebRTC with Native OS fallback)
   const startFaceCamera = async () => {
     setIsFaceCameraActive(true);
     setErrorMsg(null);
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 480 } },
-        });
+      if (faceVideoRef.current) {
+        const stream = await startNativeCameraStream(faceVideoRef.current, 'user');
         faceStreamRef.current = stream;
-        if (faceVideoRef.current) {
-          faceVideoRef.current.srcObject = stream;
-          faceVideoRef.current.play();
-        }
       }
-    } catch (err) {
-      console.warn('Face camera access:', err);
+    } catch (err: any) {
+      console.warn('Face camera access error in WebView, falling back to Native Intent:', err);
+      setIsFaceCameraActive(false);
+      launchNativeDeviceCamera(
+        'user',
+        (dataUrl) => {
+          setFacePhoto(dataUrl);
+          setPublicAvatar(dataUrl);
+          setErrorMsg(null);
+        },
+        (errMsg) => {
+          setErrorMsg(errMsg);
+        }
+      );
     }
   };
 
   const captureFaceFromVideo = () => {
     if (faceVideoRef.current) {
-      const canvas = document.createElement('canvas');
-      canvas.width = faceVideoRef.current.videoWidth || 480;
-      canvas.height = faceVideoRef.current.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(faceVideoRef.current, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+      try {
+        const dataUrl = captureFrameFromVideo(faceVideoRef.current, 0.9, 'user');
         setFacePhoto(dataUrl);
         setPublicAvatar(dataUrl);
+      } catch (e) {
+        console.error('Capture face error:', e);
       }
     }
     if (faceStreamRef.current) {
@@ -180,6 +189,26 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       faceStreamRef.current = null;
     }
     setIsFaceCameraActive(false);
+  };
+
+  // Launch Native Device Camera directly (Android OS Camera Intent)
+  const handleLaunchNativeFaceCamera = () => {
+    if (faceStreamRef.current) {
+      faceStreamRef.current.getTracks().forEach((t) => t.stop());
+      faceStreamRef.current = null;
+    }
+    setIsFaceCameraActive(false);
+    launchNativeDeviceCamera(
+      'user',
+      (dataUrl) => {
+        setFacePhoto(dataUrl);
+        setPublicAvatar(dataUrl);
+        setErrorMsg(null);
+      },
+      (errMsg) => {
+        setErrorMsg(errMsg);
+      }
+    );
   };
 
   // Handle License File Upload from Device
@@ -200,41 +229,47 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     reader.readAsDataURL(file);
   };
 
-  // License Camera Live Stream (Anti-fraud live capture only)
+  // License Camera Live Stream (Anti-fraud live capture with Native OS fallback)
   const openLicenseLiveScanner = async (side: 'front' | 'back') => {
     setLicenseScanSide(side);
     setIsLicenseScannerOpen(true);
     setErrorMsg(null);
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        });
+      if (licenseVideoRef.current) {
+        const stream = await startNativeCameraStream(licenseVideoRef.current, 'environment');
         licenseStreamRef.current = stream;
-        if (licenseVideoRef.current) {
-          licenseVideoRef.current.srcObject = stream;
-          licenseVideoRef.current.play();
-        }
       }
     } catch (err) {
-      console.warn('License camera access:', err);
+      console.warn('License camera access in WebView, falling back to Native Intent:', err);
+      setIsLicenseScannerOpen(false);
+      launchNativeDeviceCamera(
+        'environment',
+        (dataUrl) => {
+          if (side === 'front') {
+            setLicenseFront(dataUrl);
+          } else {
+            setLicenseBack(dataUrl);
+          }
+          setErrorMsg(null);
+        },
+        (errMsg) => {
+          setErrorMsg(errMsg);
+        }
+      );
     }
   };
 
   const captureLicenseFromVideo = () => {
     if (licenseVideoRef.current) {
-      const canvas = document.createElement('canvas');
-      canvas.width = licenseVideoRef.current.videoWidth || 800;
-      canvas.height = licenseVideoRef.current.videoHeight || 500;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(licenseVideoRef.current, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      try {
+        const dataUrl = captureFrameFromVideo(licenseVideoRef.current, 0.92, 'environment');
         if (licenseScanSide === 'front') {
           setLicenseFront(dataUrl);
         } else {
           setLicenseBack(dataUrl);
         }
+      } catch (e) {
+        console.error('Capture license error:', e);
       }
     } else {
       // High-quality fallback for environments without physical camera
@@ -405,23 +440,43 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               )}
 
               {isFaceCameraActive ? (
-                <button
-                  type="button"
-                  onClick={captureFaceFromVideo}
-                  className="px-5 py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center gap-2 cursor-pointer"
-                >
-                  <Camera size={16} />
-                  <span>{t.captureNow}</span>
-                </button>
+                <div className="flex flex-col gap-2 w-full max-w-xs items-center">
+                  <button
+                    type="button"
+                    onClick={captureFaceFromVideo}
+                    className="w-full py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Camera size={16} />
+                    <span>{t.captureNow}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLaunchNativeFaceCamera}
+                    className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer hover:bg-slate-700"
+                  >
+                    <Smartphone size={14} className="text-emerald-400" />
+                    <span>فتح كاميرا الهاتف الأصلية (Native)</span>
+                  </button>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={startFaceCamera}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold transition flex items-center gap-2 cursor-pointer border border-emerald-500/20"
-                >
-                  <Camera size={14} />
-                  <span>{facePhoto ? t.retakeFacePhoto : t.takeFacePhoto}</span>
-                </button>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={startFaceCamera}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold transition flex items-center gap-2 cursor-pointer border border-emerald-500/20"
+                  >
+                    <Camera size={14} />
+                    <span>{facePhoto ? t.retakeFacePhoto : t.takeFacePhoto}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLaunchNativeFaceCamera}
+                    className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-emerald-500/30"
+                  >
+                    <Smartphone size={14} />
+                    <span>كاميرا الهاتف (Native)</span>
+                  </button>
+                </div>
               )}
             </div>
 

@@ -20,7 +20,7 @@ export interface UseNativeGpsReturn {
 }
 
 // Default center coordinates for Algiers (Alger Centre) if GPS is uncalibrated
-const DEFAULT_ALGIERS_COORDS: GpsCoordinates = {
+export const DEFAULT_ALGIERS_COORDS: GpsCoordinates = {
   lat: 36.7538,
   lng: 3.0588,
 };
@@ -36,7 +36,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
 
   // Check initial browser permission status if supported
   useEffect(() => {
-    if ('permissions' in navigator && navigator.permissions.query) {
+    if ('permissions' in navigator && navigator.permissions?.query) {
       navigator.permissions
         .query({ name: 'geolocation' as PermissionName })
         .then((permissionStatus) => {
@@ -44,8 +44,6 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
             setStatus('granted');
           } else if (permissionStatus.state === 'denied') {
             setStatus('denied');
-          } else {
-            setStatus('idle');
           }
 
           permissionStatus.onchange = () => {
@@ -58,14 +56,38 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           };
         })
         .catch(() => {
-          // Permissions API query not supported in this browser environment
+          // Permissions API query not supported in this WebView environment
         });
     }
   }, []);
 
-  // Request GPS position on demand
+  // Request GPS position on demand with Android/WebView multi-tier fallback
   const requestGps = useCallback((): Promise<GpsCoordinates | null> => {
-    return new Promise((resolve) => {
+    return new Promise(async (resolve) => {
+      // 1. Check if Capacitor Geolocation plugin exists in native wrapper
+      const capGeo = (window as any).Capacitor?.Plugins?.Geolocation;
+      if (capGeo) {
+        try {
+          setStatus('checking');
+          const pos = await capGeo.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
+          if (pos && pos.coords) {
+            const capCoords: GpsCoordinates = {
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+            };
+            setCoords(capCoords);
+            setAccuracy(pos.coords.accuracy || 10);
+            setStatus('granted');
+            setErrorMessage(null);
+            resolve(capCoords);
+            return;
+          }
+        } catch (capErr) {
+          console.warn('[useNativeGps] Capacitor Geolocation failed, trying webview geolocation:', capErr);
+        }
+      }
+
+      // 2. Standard navigator.geolocation check
       if (!navigator.geolocation) {
         setStatus('error');
         setErrorMessage('خاصية تحديد الموقع الجغرافي (GPS) غير مدعومة على هذا الجهاز.');
@@ -76,12 +98,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
       setStatus('checking');
       setErrorMessage(null);
 
-      const options: PositionOptions = {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 5000,
-      };
-
+      // Tier 1: High Accuracy (GPS hardware satellite lock)
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const newCoords: GpsCoordinates = {
@@ -95,29 +112,56 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           resolve(newCoords);
         },
         (error) => {
-          let errorMsg = 'تعذر الحصول على إحداثيات الموقع عبر GPS.';
-          let newStatus: GpsStatus = 'error';
+          console.warn('[useNativeGps] High-accuracy GPS timed out/failed, trying network/cell location fallback:', error);
 
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              newStatus = 'denied';
-              errorMsg = 'تم رفض إذن الوصول إلى الموقع. يرجى تفعيل إذن GPS في إعدادات المتصفح/الهاتف.';
-              break;
-            case error.POSITION_UNAVAILABLE:
-              newStatus = 'disabled';
-              errorMsg = 'خدمات الموقع (GPS) غير مفعلة على هاتفك. يرجى تشغيل زر الموقع في شريط الإشعارات.';
-              break;
-            case error.TIMEOUT:
-              newStatus = 'disabled';
-              errorMsg = 'انتهت مهلة استجابة GPS. يرجى التأكد من تشغيل الموقع والمحاولة مجدداً.';
-              break;
-          }
+          // Tier 2: Low-accuracy fast network/Wi-Fi fallback (indispensable inside buildings and Android WebViews)
+          navigator.geolocation.getCurrentPosition(
+            (fallbackPos) => {
+              const fallbackCoords: GpsCoordinates = {
+                lat: fallbackPos.coords.latitude,
+                lng: fallbackPos.coords.longitude,
+              };
+              setCoords(fallbackCoords);
+              setAccuracy(fallbackPos.coords.accuracy);
+              setStatus('granted');
+              setErrorMessage(null);
+              resolve(fallbackCoords);
+            },
+            (finalError) => {
+              let errorMsg = 'تعذر الحصول على إحداثيات الموقع عبر GPS.';
+              let newStatus: GpsStatus = 'error';
 
-          setStatus(newStatus);
-          setErrorMessage(errorMsg);
-          resolve(null);
+              switch (finalError.code) {
+                case finalError.PERMISSION_DENIED:
+                  newStatus = 'denied';
+                  errorMsg = 'تم رفض إذن الوصول إلى الموقع. يرجى تفعيل إذن GPS لتطبيق Sari3 في إعدادات الهاتف.';
+                  break;
+                case finalError.POSITION_UNAVAILABLE:
+                  newStatus = 'disabled';
+                  errorMsg = 'خدمات الموقع (GPS) غير مفعلة على هاتفك. يرجى سحب شريط الإشعارات وتشغيل زر الموقع.';
+                  break;
+                case finalError.TIMEOUT:
+                  newStatus = 'disabled';
+                  errorMsg = 'انتهت مهلة استجابة GPS. يرجى التأكد من تشغيل الموقع والمحاولة مجدداً.';
+                  break;
+              }
+
+              setStatus(newStatus);
+              setErrorMessage(errorMsg);
+              resolve(null);
+            },
+            {
+              enableHighAccuracy: false,
+              timeout: 7000,
+              maximumAge: 30000,
+            }
+          );
         },
-        options
+        {
+          enableHighAccuracy: true,
+          timeout: 8000,
+          maximumAge: 5000,
+        }
       );
     });
   }, []);
@@ -139,7 +183,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
 
     const options: PositionOptions = {
       enableHighAccuracy: true,
-      timeout: 12000,
+      timeout: 10000,
       maximumAge: 3000,
     };
 
@@ -178,7 +222,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     setIsTracking(false);
   }, []);
 
-  // Set manual fallback coordinates (useful for emulator testing or wilaya center)
+  // Set manual fallback coordinates
   const setManualFallbackCoords = useCallback((fallbackCoords: GpsCoordinates) => {
     setCoords(fallbackCoords);
     setAccuracy(15);
