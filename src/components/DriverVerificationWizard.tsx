@@ -17,6 +17,7 @@ import {
   Eye,
   ScanLine,
   RefreshCw,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface DriverVerificationWizardProps {
@@ -37,19 +38,22 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // STEP 1: Live Face Photo (strictly camera only, admin confidential) + Public Profile Avatar
+  // STEP 1: Mandatory Live Face Photo via Device Camera (strictly real capture only, no random or stock avatars)
   const [facePhoto, setFacePhoto] = useState<string | null>(
-    currentUser.driverDetails?.facePhotoUrl ||
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80'
+    currentUser.driverDetails?.facePhotoUrl || null
   );
   const [publicAvatar, setPublicAvatar] = useState<string>(
     currentUser.driverDetails?.publicAvatarUrl ||
       currentUser.avatarUrl ||
-      'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80'
+      ''
   );
   const [isFaceCameraActive, setIsFaceCameraActive] = useState<boolean>(false);
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceStreamRef = useRef<MediaStream | null>(null);
+
+  // Hidden file inputs for license upload
+  const licenseFrontInputRef = useRef<HTMLInputElement | null>(null);
+  const licenseBackInputRef = useRef<HTMLInputElement | null>(null);
 
   // STEP 2: Personal Info & Strict Age Check (>= 20)
   const [firstName, setFirstName] = useState(currentUser.driverDetails?.firstName || 'كريم');
@@ -166,18 +170,34 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(faceVideoRef.current, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
         setFacePhoto(dataUrl);
+        setPublicAvatar(dataUrl);
       }
-    } else {
-      // Fallback demo capture
-      setFacePhoto('https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&auto=format&fit=crop&q=80');
     }
     if (faceStreamRef.current) {
       faceStreamRef.current.getTracks().forEach((t) => t.stop());
       faceStreamRef.current = null;
     }
     setIsFaceCameraActive(false);
+  };
+
+  // Handle License File Upload from Device
+  const handleLicenseFileUpload = (side: 'front' | 'back', e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        if (side === 'front') {
+          setLicenseFront(dataUrl);
+        } else {
+          setLicenseBack(dataUrl);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   // License Camera Live Stream (Anti-fraud live capture only)
@@ -405,33 +425,50 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               )}
             </div>
 
-            {/* Public profile photo choice */}
-            <div className="pt-2 border-t border-slate-800/80">
-              <label className="block text-xs font-semibold text-slate-300 mb-2">
-                {t.publicAvatarChoice}
-              </label>
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {[
-                  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-                  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=200&auto=format&fit=crop&q=80',
-                  'https://images.unsplash.com/photo-1527980965255-d3b416303d12?w=200&auto=format&fit=crop&q=80',
-                  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-                ].map((avatar, idx) => (
+            {/* Captured Biometric Confirmation & Public Avatar Preview */}
+            {facePhoto && (
+              <div className="pt-2 border-t border-slate-800/80 p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/20 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-emerald-500 flex-shrink-0 shadow-md">
+                    <img src={publicAvatar || facePhoto} alt="Verified Avatar" className="w-full h-full object-cover" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-xs font-bold text-white">صورة الملف الشخصي الموثقة</span>
+                      <ShieldCheck size={14} className="text-emerald-400" />
+                    </div>
+                    <p className="text-[10px] text-emerald-400/90 mt-0.5">تم التحقق منها عبر كاميرا الجهاز الحية</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="file"
+                    id="driver-public-avatar-input"
+                    accept="image/jpeg,image/png,image/webp"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        if (ev.target?.result) {
+                          setPublicAvatar(ev.target.result as string);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
                   <button
-                    key={idx}
                     type="button"
-                    onClick={() => setPublicAvatar(avatar)}
-                    className={`w-11 h-11 rounded-full overflow-hidden border-2 transition flex-shrink-0 cursor-pointer ${
-                      publicAvatar === avatar
-                        ? 'border-emerald-500 scale-105 shadow-md shadow-emerald-500/30'
-                        : 'border-slate-700 opacity-60 hover:opacity-100'
-                    }`}
+                    onClick={() => document.getElementById('driver-public-avatar-input')?.click()}
+                    className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold border border-slate-700 transition"
                   >
-                    <img src={avatar} alt="Preset avatar" className="w-full h-full object-cover" />
+                    تغيير من المعرض
                   </button>
-                ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -630,7 +667,23 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             </div>
 
-            {/* Front & Back Live Camera Scanner Trigger Cards (Strictly No File Upload) */}
+            {/* Hidden file inputs for license upload */}
+            <input
+              type="file"
+              ref={licenseFrontInputRef}
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => handleLicenseFileUpload('front', e)}
+            />
+            <input
+              type="file"
+              ref={licenseBackInputRef}
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={(e) => handleLicenseFileUpload('back', e)}
+            />
+
+            {/* Front & Back Live Camera Scanner / Photo Upload Trigger Cards */}
             <div className="grid grid-cols-2 gap-3">
               {/* Front Side */}
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center flex flex-col justify-between">
@@ -649,14 +702,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     <span className="text-[10px] mt-1">الوجه الأمامي مطلوب</span>
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => openLicenseLiveScanner('front')}
-                  className="w-full py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Camera size={14} />
-                  <span>{licenseFront ? t.retakeLive : t.openLiveScanner}</span>
-                </button>
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => openLicenseLiveScanner('front')}
+                    className="w-full py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Camera size={14} />
+                    <span>{licenseFront ? t.retakeLive : t.openLiveScanner}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => licenseFrontInputRef.current?.click()}
+                    className="w-full py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <ImageIcon size={12} />
+                    <span>رفع من المعرض</span>
+                  </button>
+                </div>
               </div>
 
               {/* Back Side */}
@@ -676,14 +739,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     <span className="text-[10px] mt-1">الوجه الخلفي مطلوب</span>
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => openLicenseLiveScanner('back')}
-                  className="w-full py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Camera size={14} />
-                  <span>{licenseBack ? t.retakeLive : t.openLiveScanner}</span>
-                </button>
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => openLicenseLiveScanner('back')}
+                    className="w-full py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Camera size={14} />
+                    <span>{licenseBack ? t.retakeLive : t.openLiveScanner}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => licenseBackInputRef.current?.click()}
+                    className="w-full py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <ImageIcon size={12} />
+                    <span>رفع من المعرض</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>

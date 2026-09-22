@@ -8,6 +8,7 @@ import {
   UserProfile,
   WalletTransaction,
 } from '../types';
+import { ProfilePhotoUploader } from './ProfilePhotoUploader';
 import { Sari3Logo } from './Sari3Logo';
 import {
   X,
@@ -411,6 +412,31 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
           {/* VIEW 2: DRIVER PROFILE & VERIFICATION DETAILS */}
           {activeView === 'profile' && (
             <div className="space-y-4">
+              {/* Profile Photo Uploader (Gallery or Live Camera) */}
+              <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
+                <ProfilePhotoUploader
+                  currentPhotoUrl={
+                    currentUser.driverDetails?.publicAvatarUrl ||
+                    currentUser.avatarUrl ||
+                    currentUser.driverDetails?.facePhotoUrl ||
+                    null
+                  }
+                  onPhotoSelected={(url) => {
+                    if (onUpdateProfile) {
+                      onUpdateProfile({
+                        avatarUrl: url,
+                        driverDetails: {
+                          ...currentUser.driverDetails!,
+                          publicAvatarUrl: url,
+                        },
+                      });
+                    }
+                  }}
+                  title="صورة الكابتن الشخصية"
+                  subtitle="تحديث الصورة الشخصية عبر المعرض أو الكاميرا الحية"
+                />
+              </div>
+
               <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
                   <span className="text-xs text-slate-400">حالة توثيق الكابتن</span>

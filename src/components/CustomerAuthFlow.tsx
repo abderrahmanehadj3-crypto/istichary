@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import { Language, UserProfile } from '../types';
 import { Sari3Logo } from './Sari3Logo';
+import { ProfilePhotoUploader } from './ProfilePhotoUploader';
 import {
   Smartphone,
   Mail,
@@ -25,14 +26,6 @@ interface CustomerAuthFlowProps {
 
 type CustomerStep = 'method_select' | 'phone_otp' | 'google_phone_prompt' | 'google_otp_verify' | 'profile_setup';
 
-const PRESET_AVATARS = [
-  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80',
-];
-
 export const CustomerAuthFlow: React.FC<CustomerAuthFlowProps> = ({
   t,
   lang,
@@ -46,7 +39,7 @@ export const CustomerAuthFlow: React.FC<CustomerAuthFlowProps> = ({
   const [phoneNumber, setPhoneNumber] = useState('');
   const [otpCode, setOtpCode] = useState('');
   const [displayName, setDisplayName] = useState('أمين بلحاج');
-  const [selectedAvatar, setSelectedAvatar] = useState(PRESET_AVATARS[0]);
+  const [selectedAvatar, setSelectedAvatar] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [testOtpHint, setTestOtpHint] = useState<string | null>(null);
@@ -65,11 +58,11 @@ export const CustomerAuthFlow: React.FC<CustomerAuthFlowProps> = ({
       const googleData = {
         email: 'customer.sari3@gmail.com',
         displayName: 'أمين بلحاج',
-        avatarUrl: PRESET_AVATARS[0],
+        avatarUrl: '',
       };
       setPendingGoogleUser(googleData);
       setDisplayName(googleData.displayName);
-      setSelectedAvatar(googleData.avatarUrl);
+      setSelectedAvatar('');
       // Prompt user to verify Algerian phone number
       setStep('google_phone_prompt');
     } catch (err: any) {
@@ -176,7 +169,7 @@ export const CustomerAuthFlow: React.FC<CustomerAuthFlowProps> = ({
       phoneVerified: true,
       email: 'customer.demo@sari3.dz',
       displayName: 'أمين بلحاج (زبون)',
-      avatarUrl: PRESET_AVATARS[0],
+      avatarUrl: '',
       role: 'customer',
       wilaya: '16',
       cameraPermissionGranted: false,
@@ -456,26 +449,14 @@ export const CustomerAuthFlow: React.FC<CustomerAuthFlowProps> = ({
                 <p className="text-xs text-slate-400">حدد الاسم والصورة التي تظهر للكباتن عند طلب التوصيل</p>
               </div>
 
-              {/* Avatar Selector */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2 text-center">
-                  اختر الصورة الرمزية
-                </label>
-                <div className="flex items-center justify-center gap-2 mb-3">
-                  {PRESET_AVATARS.map((url, i) => (
-                    <img
-                      key={i}
-                      src={url}
-                      alt="Avatar"
-                      onClick={() => setSelectedAvatar(url)}
-                      className={`w-11 h-11 rounded-full object-cover cursor-pointer border-2 transition ${
-                        selectedAvatar === url
-                          ? 'border-emerald-500 scale-110 shadow-lg shadow-emerald-500/30'
-                          : 'border-slate-800 opacity-60 hover:opacity-100'
-                      }`}
-                    />
-                  ))}
-                </div>
+              {/* Profile Photo: Gallery or Live Camera */}
+              <div className="py-1">
+                <ProfilePhotoUploader
+                  currentPhotoUrl={selectedAvatar || null}
+                  onPhotoSelected={(url) => setSelectedAvatar(url)}
+                  title="صورة الملف الشخصي"
+                  subtitle="اختر صورة من المعرض أو التقط صورة حية بالكاميرا"
+                />
               </div>
 
               <div>

@@ -6,6 +6,7 @@ import {
   ThemeMode,
   UserProfile,
 } from '../types';
+import { ProfilePhotoUploader } from './ProfilePhotoUploader';
 import { Sari3Logo } from './Sari3Logo';
 import {
   X,
@@ -82,14 +83,6 @@ const INITIAL_CALL_HISTORY: CustomerContactCall[] = [
   },
 ];
 
-const PRESET_AVATARS = [
-  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80',
-];
-
 export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
   isOpen,
   onClose,
@@ -112,7 +105,7 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
   const [displayName, setDisplayName] = useState(currentUser.displayName);
   const [phone, setPhone] = useState(currentUser.phone || '+213 555 12 34 56');
   const [selectedAvatar, setSelectedAvatar] = useState(
-    currentUser.avatarUrl || PRESET_AVATARS[0]
+    currentUser.avatarUrl || ''
   );
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -291,26 +284,14 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
                 </div>
               )}
 
-              {/* Avatar Picker */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">
-                  الصورة الرمزية (Avatar)
-                </label>
-                <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                  {PRESET_AVATARS.map((url, i) => (
-                    <img
-                      key={i}
-                      src={url}
-                      alt="Preset"
-                      onClick={() => setSelectedAvatar(url)}
-                      className={`w-11 h-11 rounded-full object-cover cursor-pointer border-2 transition ${
-                        selectedAvatar === url
-                          ? 'border-emerald-500 scale-105 shadow-md shadow-emerald-500/30'
-                          : 'border-slate-800 opacity-60 hover:opacity-100'
-                      }`}
-                    />
-                  ))}
-                </div>
+              {/* Profile Photo Uploader (Gallery or Camera) */}
+              <div className="py-2">
+                <ProfilePhotoUploader
+                  currentPhotoUrl={selectedAvatar || null}
+                  onPhotoSelected={(url) => setSelectedAvatar(url)}
+                  title="صورة الملف الشخصي"
+                  subtitle="اختر صورة من المعرض أو التقط صورة حية بالكاميرا"
+                />
               </div>
 
               {/* Display Name */}
