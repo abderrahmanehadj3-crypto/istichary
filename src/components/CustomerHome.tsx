@@ -153,25 +153,16 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   };
 
-  // Handle Map Click for manual pin dropping
-  const handleMapClick = async (coords: { lat: number; lng: number }) => {
+  // Handle Map Click for instant coordinate update
+  const handleMapClick = (coords: { lat: number; lng: number }) => {
     if (interactiveMode === 'dropoff') {
       setDropoffCoords(coords);
-      const addr = await reverseGeocode(coords.lat, coords.lng, lang);
-      setDropoffAddress(addr);
-      setInteractiveMode(null);
     } else {
-      // Default to pickup when clicked
       setPickupCoords(coords);
-      const addr = await reverseGeocode(coords.lat, coords.lng, lang);
-      setPickupAddress(addr);
-      if (interactiveMode === 'pickup') {
-        setInteractiveMode(null);
-      }
     }
   };
 
-  // Publish New Order with GPS Verification
+  // Publish New Order with coordinates verification
   const handleCreateOrder = (e: React.FormEvent) => {
     e.preventDefault();
     if (!packagePhoto) {
@@ -179,9 +170,9 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       return;
     }
 
-    // Ensure GPS coordinates are valid
-    if (gpsStatus === 'denied' || gpsStatus === 'disabled') {
-      setShowGpsModal(true);
+    // Verify valid coordinates exist
+    if (!pickupCoords || !dropoffCoords) {
+      alert(lang === 'ar' ? 'يرجى تحديد موقع الاستلام والتسليم على الخريطة' : 'Please select pickup and dropoff locations on the map');
       return;
     }
 

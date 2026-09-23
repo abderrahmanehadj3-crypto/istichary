@@ -13,11 +13,9 @@ import {
   ArrowLeft,
   ShieldCheck,
   Lock,
-  Sun,
   Eye,
   ScanLine,
   RefreshCw,
-  Image as ImageIcon,
   Smartphone,
 } from 'lucide-react';
 import {
@@ -57,10 +55,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceStreamRef = useRef<MediaStream | null>(null);
 
-  // Hidden file inputs for license upload
-  const licenseFrontInputRef = useRef<HTMLInputElement | null>(null);
-  const licenseBackInputRef = useRef<HTMLInputElement | null>(null);
-
   // STEP 2: Personal Info & Strict Age Check (>= 20)
   const [firstName, setFirstName] = useState(currentUser.driverDetails?.firstName || 'كريم');
   const [lastName, setLastName] = useState(currentUser.driverDetails?.lastName || 'الدراجي');
@@ -76,20 +70,18 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [otpCode, setOtpCode] = useState('');
   const [otpTestCode, setOtpTestCode] = useState<string | null>(null);
 
-  // STEP 4: Anti-Fraud Live License Camera Scanner (Front & Back, NO file uploads)
+  // STEP 4: Live License Camera Scanner (100% Live Camera Only - No Stock Images, No Gallery)
   const [licenseNumber, setLicenseNumber] = useState(
-    currentUser.driverDetails?.licenseNumber || '16/2021/987654'
+    currentUser.driverDetails?.licenseNumber || ''
   );
   const [licenseExpiration, setLicenseExpiration] = useState(
-    currentUser.driverDetails?.licenseExpirationDate || '2030-12-31'
+    currentUser.driverDetails?.licenseExpirationDate || ''
   );
   const [licenseFront, setLicenseFront] = useState<string | null>(
-    currentUser.driverDetails?.licenseFrontUrl ||
-      'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80'
+    currentUser.driverDetails?.licenseFrontUrl || null
   );
   const [licenseBack, setLicenseBack] = useState<string | null>(
-    currentUser.driverDetails?.licenseBackUrl ||
-      'https://images.unsplash.com/photo-1589829545856-d10d557cf95f?w=600&auto=format&fit=crop&q=80'
+    currentUser.driverDetails?.licenseBackUrl || null
   );
 
   // Live scanner state for license
@@ -190,24 +182,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     );
   };
 
-  // Handle License File Upload from Device
-  const handleLicenseFileUpload = (side: 'front' | 'back', e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (dataUrl) {
-        if (side === 'front') {
-          setLicenseFront(dataUrl);
-        } else {
-          setLicenseBack(dataUrl);
-        }
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   // License Camera (Direct Native OS Camera Trigger - Rear Camera)
   const openLicenseLiveScanner = (side: 'front' | 'back') => {
     setLicenseScanSide(side);
@@ -289,10 +263,22 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
     }
 
-    // Step 4 Check: License
+    // Step 4 Check: License (Strict Live Camera Verification)
     if (currentStep === 4) {
-      if (!licenseNumber.trim() || !licenseExpiration || !licenseFront) {
-        setErrorMsg(lang === 'ar' ? 'يرجى تصوير وجه رخصة السياقة بالكامل' : 'License photo and details are required');
+      if (!licenseFront) {
+        setErrorMsg(
+          lang === 'ar'
+            ? 'تصوير رخصة السياقة بالكاميرا الحية إلزامي للمتابعة. يرجى الضغط على زر فتح كاميرا الهاتف.'
+            : 'Live camera capture of driving license is mandatory to proceed.'
+        );
+        return;
+      }
+      if (!licenseNumber.trim() || !licenseExpiration) {
+        setErrorMsg(
+          lang === 'ar'
+            ? 'يرجى إدخال رقم وتاريخ انتهاء رخصة السياقة'
+            : 'License number and expiration date are required'
+        );
         return;
       }
     }
@@ -610,7 +596,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           </div>
         )}
 
-        {/* STEP 4: Anti-Fraud Live Driver's License Scanner (NO FILE UPLOAD) */}
+        {/* STEP 4: Anti-Fraud Live Driver's License Scanner (100% Mandatory Camera, Zero Stock/Gallery) */}
         {currentStep === 4 && (
           <div className="space-y-4">
             <div className="text-center">
@@ -629,59 +615,23 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             </div>
 
-            {/* Visual Guide Card with Algerian License Placement Mockup */}
-            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800">
-              <div className="flex items-center justify-between text-[11px] text-slate-400 mb-2 font-semibold">
-                <div className="flex items-center gap-1.5">
-                  <Sun size={14} className="text-amber-400" />
-                  <span>مثال وضعيّة البطاقة للإرشاد:</span>
-                </div>
-                <span className="text-emerald-400">كاميرا حية فقط</span>
-              </div>
-
-              {/* Graphical Card guide HUD */}
-              <div className="w-full h-28 rounded-xl bg-gradient-to-br from-slate-900 to-slate-950 border-2 border-dashed border-emerald-500/50 p-2.5 relative flex flex-col justify-between">
-                <div className="flex justify-between items-start">
-                  <div className="space-y-1">
-                    <span className="text-[10px] text-emerald-400 font-bold block">
-                      الجمهورية الجزائرية الديمقراطية الشعبية
-                    </span>
-                    <span className="text-[9px] text-slate-400 block font-mono">
-                      رخصة سياقة • PERMIS DE CONDUIRE
-                    </span>
-                  </div>
-                  <div className="w-9 h-11 rounded bg-slate-800 border border-emerald-500/30 flex items-center justify-center text-[8px] text-slate-400">
-                    صورة
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-end text-[9px] text-slate-300 font-mono">
-                  <div>
-                    <p className="font-bold text-white">1. اللقب: {lastName || 'XXXXXX'}</p>
-                    <p className="font-bold text-white">2. الاسم: {firstName || 'XXXXXX'}</p>
-                  </div>
-                  <span className="text-emerald-400 font-bold">N° {licenseNumber}</span>
-                </div>
-              </div>
-            </div>
-
             {/* License Number & Expiration */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  {t.licenseNumber}
+                  {t.licenseNumber} *
                 </label>
                 <input
                   type="text"
                   value={licenseNumber}
                   onChange={(e) => setLicenseNumber(e.target.value)}
-                  placeholder="16/XXXXXX"
+                  placeholder="مثال: 16/2021/123456"
                   className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono focus:border-emerald-500"
                 />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  {t.licenseExpiration}
+                  {t.licenseExpiration} *
                 </label>
                 <input
                   type="date"
@@ -692,59 +642,39 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             </div>
 
-            {/* Hidden file inputs for license upload */}
-            <input
-              type="file"
-              ref={licenseFrontInputRef}
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(e) => handleLicenseFileUpload('front', e)}
-            />
-            <input
-              type="file"
-              ref={licenseBackInputRef}
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={(e) => handleLicenseFileUpload('back', e)}
-            />
-
-            {/* Front & Back Live Camera Scanner / Photo Upload Trigger Cards */}
+            {/* Front & Back Live Camera Photo Slots (Clean Empty Slots - Live Camera Only) */}
             <div className="grid grid-cols-2 gap-3">
               {/* Front Side */}
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center flex flex-col justify-between">
                 <span className="text-[11px] font-bold text-slate-200 block mb-2">
-                  {t.licenseFrontPhoto}
+                  {t.licenseFrontPhoto} <span className="text-emerald-400">*</span>
                 </span>
                 {licenseFront ? (
-                  <img
-                    src={licenseFront}
-                    alt="License Front"
-                    className="w-full h-24 object-cover rounded-xl border border-emerald-500/40 mb-2.5"
-                  />
+                  <div className="relative mb-2.5">
+                    <img
+                      src={licenseFront}
+                      alt="License Front"
+                      className="w-full h-28 object-cover rounded-xl border-2 border-emerald-500"
+                    />
+                    <span className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-emerald-500 text-slate-950 text-[10px] font-black shadow">
+                      تم الالتقاط ✓
+                    </span>
+                  </div>
                 ) : (
-                  <div className="w-full h-24 rounded-xl border border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 mb-2.5">
-                    <ScanLine size={24} />
-                    <span className="text-[10px] mt-1">الوجه الأمامي مطلوب</span>
+                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5">
+                    <Camera size={26} className="text-slate-600 mb-1" />
+                    <span className="text-[11px] text-slate-400 font-semibold">الخانة فارغة</span>
+                    <span className="text-[10px] text-slate-500">مطلوب التقاط صورة حية</span>
                   </div>
                 )}
-                <div className="space-y-1.5">
-                  <button
-                    type="button"
-                    onClick={() => openLicenseLiveScanner('front')}
-                    className="w-full py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Camera size={14} />
-                    <span>{licenseFront ? t.retakeLive : t.openLiveScanner}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => licenseFrontInputRef.current?.click()}
-                    className="w-full py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <ImageIcon size={12} />
-                    <span>رفع من المعرض</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => openLicenseLiveScanner('front')}
+                  className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                >
+                  <Camera size={15} />
+                  <span>{licenseFront ? t.retakeLive : 'التقاط الوجه الأمامي'}</span>
+                </button>
               </div>
 
               {/* Back Side */}
@@ -753,35 +683,31 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   {t.licenseBackPhoto}
                 </span>
                 {licenseBack ? (
-                  <img
-                    src={licenseBack}
-                    alt="License Back"
-                    className="w-full h-24 object-cover rounded-xl border border-emerald-500/40 mb-2.5"
-                  />
+                  <div className="relative mb-2.5">
+                    <img
+                      src={licenseBack}
+                      alt="License Back"
+                      className="w-full h-28 object-cover rounded-xl border border-emerald-500/40 mb-2.5"
+                    />
+                    <span className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-emerald-500 text-slate-950 text-[10px] font-black shadow">
+                      تم الالتقاط ✓
+                    </span>
+                  </div>
                 ) : (
-                  <div className="w-full h-24 rounded-xl border border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 mb-2.5">
-                    <ScanLine size={24} />
-                    <span className="text-[10px] mt-1">الوجه الخلفي مطلوب</span>
+                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5">
+                    <Camera size={26} className="text-slate-600 mb-1" />
+                    <span className="text-[11px] text-slate-400 font-semibold">الخانة فارغة</span>
+                    <span className="text-[10px] text-slate-500">(الوجه الخلفي)</span>
                   </div>
                 )}
-                <div className="space-y-1.5">
-                  <button
-                    type="button"
-                    onClick={() => openLicenseLiveScanner('back')}
-                    className="w-full py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Camera size={14} />
-                    <span>{licenseBack ? t.retakeLive : t.openLiveScanner}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => licenseBackInputRef.current?.click()}
-                    className="w-full py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-bold transition flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <ImageIcon size={12} />
-                    <span>رفع من المعرض</span>
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => openLicenseLiveScanner('back')}
+                  className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                >
+                  <Camera size={15} />
+                  <span>{licenseBack ? t.retakeLive : 'التقاط الوجه الخلفي'}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -924,14 +850,25 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             </button>
           )}
 
+          {currentStep === 4 && (!licenseFront || !licenseNumber.trim() || !licenseExpiration) && (
+            <div className="text-[11px] text-amber-400 font-bold px-3 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
+              <Camera size={13} />
+              <span>تصوير الرخصة إلزامي</span>
+            </div>
+          )}
+
           <button
             type="button"
             id="btn-driver-wizard-next"
             onClick={handleNextStep}
-            disabled={currentStep === 2 && calculatedAge < 20}
+            disabled={
+              (currentStep === 2 && calculatedAge < 20) ||
+              (currentStep === 4 && (!licenseFront || !licenseNumber.trim() || !licenseExpiration))
+            }
             className={`px-6 py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
-              currentStep === 2 && calculatedAge < 20
-                ? 'bg-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+              (currentStep === 2 && calculatedAge < 20) ||
+              (currentStep === 4 && (!licenseFront || !licenseNumber.trim() || !licenseExpiration))
+                ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 border border-slate-700'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20'
             }`}
           >

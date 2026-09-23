@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import { ThemeMode } from '../types';
 import { reverseGeocode } from '../utils/reverseGeocoding';
-import { calculateDistanceKm, calculateSuggestedFare } from '../data/wilayas';
-import { Navigation, Crosshair, Loader2 } from 'lucide-react';
+import { calculateDistanceKm } from '../data/wilayas';
+import { Crosshair } from 'lucide-react';
 
 // Fix Leaflet default icon paths
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -67,20 +67,6 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   const onPinDroppedRef = useRef(onPinDropped);
   onPinDroppedRef.current = onPinDropped;
 
-  const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
-  const [, setLastReverseAddress] = useState<string | null>(null);
-
-  // Calculate live route distance
-  const currentDistanceKm =
-    pickupCoords && dropoffCoords
-      ? calculateDistanceKm(
-          pickupCoords.lat,
-          pickupCoords.lng,
-          dropoffCoords.lat,
-          dropoffCoords.lng
-        )
-      : null;
-
   // Calculate driver proximity to pickup
   const driverProximityKm =
     driverCoords && pickupCoords
@@ -92,20 +78,16 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         )
       : null;
 
-  // Reverse geocoding helper
+  // Reverse geocoding helper (runs quietly without fake popups or loading overlays)
   const handleGeocodePoint = useCallback(
     async (coords: { lat: number; lng: number }, mode: 'pickup' | 'dropoff') => {
-      setIsGeocoding(true);
       try {
         const resolvedAddress = await reverseGeocode(coords.lat, coords.lng, 'ar');
-        setLastReverseAddress(resolvedAddress);
         if (onPinDroppedRef.current) {
           onPinDroppedRef.current(coords, resolvedAddress, mode);
         }
       } catch (err) {
         console.warn('Reverse geocode error:', err);
-      } finally {
-        setIsGeocoding(false);
       }
     },
     []
@@ -128,23 +110,34 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       // Zoom control in bottom right
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-      // Handle map clicks
+      // Handle map clicks: directly drop/move the pin and fetch address without popup delays
       map.on('click', async (e: L.LeafletMouseEvent) => {
         const clickedCoords = { lat: e.latlng.lat, lng: e.latlng.lng };
+        const currentMode = interactiveModeRef.current || 'pickup';
 
-        // 1. Notify parent click listener
+        // 1. Instantly move or create marker on map for instantaneous visual feedback
+        if (currentMode === 'pickup') {
+          if (pickupMarkerRef.current) {
+            pickupMarkerRef.current.setLatLng([clickedCoords.lat, clickedCoords.lng]);
+          }
+        } else if (currentMode === 'dropoff') {
+          if (dropoffMarkerRef.current) {
+            dropoffMarkerRef.current.setLatLng([clickedCoords.lat, clickedCoords.lng]);
+          }
+        }
+
+        // 2. Smoothly center on the clicked point
+        map.panTo([clickedCoords.lat, clickedCoords.lng], {
+          animate: true,
+          duration: 0.25,
+        });
+
+        // 3. Immediately notify parent of raw coords
         if (onMapClickRef.current) {
           onMapClickRef.current(clickedCoords);
         }
 
-        // 2. Smoothly center on the clicked point without reloading map
-        map.panTo([clickedCoords.lat, clickedCoords.lng], {
-          animate: true,
-          duration: 0.35,
-        });
-
-        // 3. Determine active mode (default to pickup if not specified)
-        const currentMode = interactiveModeRef.current || 'pickup';
+        // 4. Perform instant reverse geocode to resolve street address and populate fields
         await handleGeocodePoint(clickedCoords, currentMode);
       });
 
@@ -444,14 +437,6 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         </div>
       )}
 
-      {/* Reverse Geocoding in Progress Banner */}
-      {isGeocoding && (
-        <div className="absolute top-14 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-xl bg-slate-950/90 text-emerald-400 border border-emerald-500/40 text-[11px] font-bold shadow-lg flex items-center gap-2 backdrop-blur">
-          <Loader2 size={13} className="animate-spin" />
-          <span>جارٍ استخراج اسم الشارع والبلدية بدقة...</span>
-        </div>
-      )}
-
       {/* Driver Proximity Badge (if active mission) */}
       {driverProximityKm !== null && (
         <div className="absolute top-3 right-3 z-20 px-3 py-1.5 rounded-2xl bg-slate-900/90 border border-emerald-500/60 shadow-xl backdrop-blur-md text-xs font-bold flex items-center gap-2">
@@ -463,20 +448,6 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
               الكابتن على بعد: <strong className="text-emerald-400 font-mono">{driverProximityKm} كم</strong>
             </span>
           )}
-        </div>
-      )}
-
-      {/* Live Distance & Fare Pill (Bottom Left) */}
-      {currentDistanceKm !== null && (
-        <div className="absolute bottom-3 left-3 z-20 px-3 py-1.5 rounded-2xl bg-slate-950/90 border border-slate-800 text-slate-200 shadow-xl backdrop-blur flex items-center gap-3 text-xs">
-          <div className="flex items-center gap-1 font-mono">
-            <Navigation size={13} className="text-emerald-400" />
-            <span className="font-bold text-white">{currentDistanceKm} كم</span>
-          </div>
-          <span className="text-slate-600">|</span>
-          <div className="flex items-center gap-1 font-mono text-emerald-400 font-bold">
-            <span>~ {calculateSuggestedFare(currentDistanceKm)} دج</span>
-          </div>
         </div>
       )}
 
