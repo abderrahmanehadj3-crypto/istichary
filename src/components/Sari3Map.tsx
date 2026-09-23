@@ -406,6 +406,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
 
   return (
     <div
+      id="sari3-main-map"
       className={`relative overflow-hidden bg-slate-900 ${className}`}
       style={{
         width: '100%',

@@ -69,14 +69,10 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
       (o.status === 'accepted' || o.status === 'in_transit')
   );
 
-  // Toggle online with real GPS validation
+  // Toggle online with real GPS validation and safe fallback
   const handleToggleOnline = async () => {
     if (!isOnline) {
-      const coords = await requestGps();
-      if (!coords && (gpsStatus === 'denied' || gpsStatus === 'disabled')) {
-        setShowGpsModal(true);
-        return;
-      }
+      await requestGps();
       setIsOnline(true);
       startLiveTracking();
     } else {
@@ -95,11 +91,6 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
 
   // Submit Counter Offer with GPS coordinates
   const handleMakeBid = (order: DeliveryOrder, extraAmount: number = 0) => {
-    if (gpsStatus === 'denied' || gpsStatus === 'disabled') {
-      setShowGpsModal(true);
-      return;
-    }
-
     const baseAmount = customBids[order.id] || order.customerOfferPrice;
     const finalBid = baseAmount + extraAmount;
 

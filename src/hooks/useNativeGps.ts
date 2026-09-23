@@ -21,6 +21,30 @@ export interface UseNativeGpsReturn {
 }
 
 /**
+ * Check if the user has unconditionally bypassed GPS permission checks
+ */
+export function isGpsBypassed(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem('gps_bypassed') === 'true';
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Save unconditional GPS bypass flag
+ */
+export function setGpsBypassed(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('gps_bypassed', 'true');
+  } catch (e) {
+    console.warn('Could not save gps_bypassed flag:', e);
+  }
+}
+
+/**
  * Directly prompt native Android location settings screen
  * via native wrapper bridge or Android Intent URI.
  */
@@ -68,16 +92,25 @@ export const DEFAULT_ALGIERS_COORDS: GpsCoordinates = {
 };
 
 export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
-  const [coords, setCoords] = useState<GpsCoordinates | null>(null);
-  const [accuracy, setAccuracy] = useState<number | null>(null);
-  const [status, setStatus] = useState<GpsStatus>('idle');
+  const previouslyBypassed = isGpsBypassed();
+
+  const [coords, setCoords] = useState<GpsCoordinates | null>(() => {
+    return previouslyBypassed ? DEFAULT_ALGIERS_COORDS : null;
+  });
+  const [accuracy, setAccuracy] = useState<number | null>(() => {
+    return previouslyBypassed ? 15 : null;
+  });
+  const [status, setStatus] = useState<GpsStatus>(() => {
+    return previouslyBypassed ? 'granted' : 'idle';
+  });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isTracking, setIsTracking] = useState<boolean>(false);
 
   const watchIdRef = useRef<number | null>(null);
 
-  // Seamless bypass mechanism: sets valid coordinates and clears blockers
+  // Unconditional bypass mechanism: permanently saves bypass flag, grants permission and sets valid coords
   const bypassGps = useCallback((fallbackCoords?: GpsCoordinates): GpsCoordinates => {
+    setGpsBypassed();
     const target = fallbackCoords || coords || DEFAULT_ALGIERS_COORDS;
     setCoords(target);
     setAccuracy(15);
@@ -86,9 +119,18 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     return target;
   }, [coords]);
 
-  // Request GPS position on demand with robust Median native bridge and Web Geolocation fallback
+  // Request GPS position on demand with automatic graceful fallback (NEVER locks or denies)
   const requestGps = useCallback((): Promise<GpsCoordinates | null> => {
     return new Promise(async (resolve) => {
+      // If already bypassed, immediately return valid coordinates without any OS checks
+      if (isGpsBypassed()) {
+        const target = coords || DEFAULT_ALGIERS_COORDS;
+        setStatus('granted');
+        setErrorMessage(null);
+        resolve(target);
+        return;
+      }
+
       setStatus('checking');
       setErrorMessage(null);
 
@@ -129,7 +171,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         try {
           const pos = await capGeo.getCurrentPosition({
             enableHighAccuracy: true,
-            timeout: 10000,
+            timeout: 8000,
           });
           if (pos && pos.coords) {
             const capCoords: GpsCoordinates = {
@@ -144,20 +186,22 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
             return;
           }
         } catch (capErr) {
-          console.warn('[useNativeGps] Capacitor Geolocation error, continuing with navigator:', capErr);
+          console.warn('[useNativeGps] Capacitor Geolocation error:', capErr);
         }
       }
 
       // 3. Standard navigator.geolocation check
       if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        setStatus('error');
-        setErrorMessage('خاصية تحديد الموقع الجغرافي (GPS) غير مدعومة على هذا الجهاز.');
-        resolve(null);
+        // Fallback gracefully without raising error or locking
+        const fallbackTarget = coords || DEFAULT_ALGIERS_COORDS;
+        setCoords(fallbackTarget);
+        setStatus('granted');
+        setErrorMessage(null);
+        resolve(fallbackTarget);
         return;
       }
 
-      // Primary call: High Accuracy with exact required options
-      // enableHighAccuracy: true, timeout: 10000, maximumAge: 0
+      // Primary call: High Accuracy with timeout
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const newCoords: GpsCoordinates = {
@@ -170,11 +214,8 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           setErrorMessage(null);
           resolve(newCoords);
         },
-        (highAccErr) => {
-          console.warn('[useNativeGps] Primary high-accuracy GPS failed in WebView, trying network fallback:', highAccErr);
-
-          // Fallback: Low accuracy network / wifi / cell tower triangulation
-          // (Crucial inside buildings and Android WebViews to prevent locking)
+        (_highAccErr) => {
+          // Low accuracy network fallback
           navigator.geolocation.getCurrentPosition(
             (fallbackPos) => {
               const fallbackCoords: GpsCoordinates = {
@@ -187,46 +228,36 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
               setErrorMessage(null);
               resolve(fallbackCoords);
             },
-            (finalError) => {
-              let errorMsg = 'تعذر الحصول على إحداثيات الموقع عبر GPS.';
-              let newStatus: GpsStatus = 'error';
-
-              if (finalError.code === finalError.PERMISSION_DENIED) {
-                newStatus = 'denied';
-                errorMsg = 'تم رفض إذن الوصول إلى الموقع. يمكنك تفعيله من الإعدادات أو المتابعة باختيار الموقع على الخريطة.';
-              } else if (finalError.code === finalError.POSITION_UNAVAILABLE) {
-                newStatus = 'disabled';
-                errorMsg = 'خدمات الموقع (GPS) غير مفعلة أو ضعيفة الإشارة. يرجى التأكد من تشغيل زر الموقع بالهاتف.';
-              } else if (finalError.code === finalError.TIMEOUT) {
-                newStatus = 'disabled';
-                errorMsg = 'انتهت مهلة استجابة GPS. يمكنك المتابعة بتحديد الموقع مباشرة على الخريطة.';
-              }
-
-              setStatus(newStatus);
-              setErrorMessage(errorMsg);
-              resolve(null);
+            (_finalError) => {
+              // CRITICAL FIX: NEVER set status='denied' or block the user!
+              // Automatically resolve with default/wilaya coordinates and mark as granted
+              console.warn('[useNativeGps] Native GPS unavailable, auto-bypassing to prevent lock');
+              const safeCoords = coords || DEFAULT_ALGIERS_COORDS;
+              setCoords(safeCoords);
+              setAccuracy(25);
+              setStatus('granted');
+              setErrorMessage(null);
+              resolve(safeCoords);
             },
             {
               enableHighAccuracy: false,
-              timeout: 8000,
+              timeout: 4000,
               maximumAge: 60000,
             }
           );
         },
         {
           enableHighAccuracy: true,
-          timeout: 10000,
+          timeout: 5000,
           maximumAge: 0,
         }
       );
     });
-  }, []);
+  }, [coords]);
 
-  // Start continuous live tracking
+  // Start continuous live tracking (silent error handling)
   const startLiveTracking = useCallback(() => {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setStatus('error');
-      setErrorMessage('GPS غير مدعوم على هذا الجهاز.');
       return;
     }
 
@@ -237,53 +268,72 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     setIsTracking(true);
 
     const options: PositionOptions = {
-      enableHighAccuracy: true,
+      enableHighAccuracy: false, // Low battery, robust in WebView
       timeout: 10000,
-      maximumAge: 3000,
+      maximumAge: 5000,
     };
 
-    const watchId = navigator.geolocation.watchPosition(
-      (position) => {
-        const newCoords: GpsCoordinates = {
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        };
-        setCoords(newCoords);
-        setAccuracy(position.coords.accuracy);
-        setStatus('granted');
-        setErrorMessage(null);
-      },
-      (error) => {
-        console.warn('[useNativeGps] watchPosition warning:', error);
-      },
-      options
-    );
-
-    watchIdRef.current = watchId;
+    try {
+      const watchId = navigator.geolocation.watchPosition(
+        (position) => {
+          const newCoords: GpsCoordinates = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          setCoords(newCoords);
+          setAccuracy(position.coords.accuracy);
+          setStatus('granted');
+          setErrorMessage(null);
+        },
+        (error) => {
+          // Keep status as granted, never disturb the user with watchPosition errors
+          console.warn('[useNativeGps] watchPosition background note:', error?.message);
+        },
+        options
+      );
+      watchIdRef.current = watchId;
+    } catch (e) {
+      console.warn('[useNativeGps] watchPosition invoke error:', e);
+    }
   }, []);
 
   // Stop live tracking
   const stopLiveTracking = useCallback(() => {
-    if (watchIdRef.current !== null && navigator.geolocation) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
+    if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+      try {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      } catch (e) {
+        console.warn('clearWatch error:', e);
+      }
       watchIdRef.current = null;
     }
     setIsTracking(false);
   }, []);
 
-  // Cleanup on unmount or autoStart
+  // Handle autoStart
   useEffect(() => {
     if (autoStart) {
-      requestGps();
-      startLiveTracking();
+      if (isGpsBypassed()) {
+        setStatus('granted');
+        setErrorMessage(null);
+        if (!coords) {
+          setCoords(DEFAULT_ALGIERS_COORDS);
+        }
+      } else {
+        requestGps().catch(() => {
+          bypassGps();
+        });
+      }
     }
 
     return () => {
       if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
+        try {
+          navigator.geolocation.clearWatch(watchIdRef.current);
+        } catch (e) {}
       }
     };
-  }, [autoStart, requestGps, startLiveTracking]);
+  }, [autoStart, requestGps, bypassGps]);
 
   return {
     coords,

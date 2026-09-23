@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import { Camera, MapPin, CheckCircle2, ShieldCheck, ArrowRight, Loader2 } from 'lucide-react';
 import { Sari3Logo } from './Sari3Logo';
+import { setGpsBypassed } from '../hooks/useNativeGps';
 
 interface PermissionsModalProps {
   isOpen: boolean;
@@ -72,9 +73,10 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
     }
 
     setIsRequesting(false);
+    setGpsBypassed();
     setTimeout(() => {
       onPermissionsCompleted(camOk, locOk);
-    }, 400);
+    }, 200);
   };
 
   return (
@@ -163,7 +165,10 @@ export const PermissionsModal: React.FC<PermissionsModalProps> = ({
 
           <button
             type="button"
-            onClick={() => onPermissionsCompleted(true, true)}
+            onClick={() => {
+              setGpsBypassed();
+              onPermissionsCompleted(true, true);
+            }}
             className="w-full py-2.5 text-center text-xs text-slate-500 hover:text-slate-300 font-semibold cursor-pointer transition"
           >
             {t.skipForNow}

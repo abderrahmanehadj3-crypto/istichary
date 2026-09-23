@@ -120,7 +120,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   }, [pickupCoords, dropoffCoords]);
 
-  // Handle GPS location click (Real Native GPS)
+  // Handle GPS location click (Real Native GPS with safe fallback)
   const handleUseCurrentGps = async () => {
     let target = liveGpsCoords;
     if (!target) {
@@ -132,7 +132,12 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       const addr = await reverseGeocode(target.lat, target.lng, lang);
       setPickupAddress(addr);
     } else {
-      setShowGpsModal(true);
+      // Unconditional safe fallback: set pickup to wilaya center and bypass without trapping
+      const fallback = { lat: currentWilayaObj.lat, lng: currentWilayaObj.lng };
+      setPickupCoords(fallback);
+      bypassGps(fallback);
+      const addr = await reverseGeocode(fallback.lat, fallback.lng, lang);
+      setPickupAddress(addr);
     }
   };
 
