@@ -13,7 +13,8 @@ export interface UseNativeGpsReturn {
   status: GpsStatus;
   errorMessage: string | null;
   isTracking: boolean;
-  requestGps: () => Promise<GpsCoordinates | null>;
+  isDetecting: boolean;
+  requestGps: (forceRealPrompt?: boolean) => Promise<GpsCoordinates | null>;
   startLiveTracking: () => void;
   stopLiveTracking: () => void;
   openLocationSettings: () => void;
@@ -105,6 +106,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isTracking, setIsTracking] = useState<boolean>(false);
+  const [isDetecting, setIsDetecting] = useState<boolean>(false);
 
   const watchIdRef = useRef<number | null>(null);
 
@@ -116,25 +118,28 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     setAccuracy(15);
     setStatus('granted');
     setErrorMessage(null);
+    setIsDetecting(false);
     return target;
   }, [coords]);
 
   // Request GPS position on demand with automatic graceful fallback (NEVER locks or denies)
-  const requestGps = useCallback((): Promise<GpsCoordinates | null> => {
+  const requestGps = useCallback((forceRealPrompt: boolean = false): Promise<GpsCoordinates | null> => {
     return new Promise(async (resolve) => {
-      // If already bypassed, immediately return valid coordinates without any OS checks
-      if (isGpsBypassed()) {
+      // If already bypassed and NOT forcing a real prompt, return target coordinates
+      if (isGpsBypassed() && !forceRealPrompt) {
         const target = coords || DEFAULT_ALGIERS_COORDS;
         setStatus('granted');
         setErrorMessage(null);
+        setIsDetecting(false);
         resolve(target);
         return;
       }
 
+      setIsDetecting(true);
       setStatus('checking');
       setErrorMessage(null);
 
-      // 1. Median / GoNative bridge integration
+      // 1. Median / GoNative bridge native permission prompt hook
       const median = (window as any).median || (window as any).gonative;
       if (median?.geolocation?.prompt) {
         try {
@@ -156,6 +161,8 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
               setAccuracy(res.accuracy || 10);
               setStatus('granted');
               setErrorMessage(null);
+              setIsDetecting(false);
+              setGpsBypassed();
               resolve(mCoords);
               return;
             }
@@ -171,7 +178,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         try {
           const pos = await capGeo.getCurrentPosition({
             enableHighAccuracy: true,
-            timeout: 8000,
+            timeout: 10000,
           });
           if (pos && pos.coords) {
             const capCoords: GpsCoordinates = {
@@ -182,6 +189,8 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
             setAccuracy(pos.coords.accuracy || 10);
             setStatus('granted');
             setErrorMessage(null);
+            setIsDetecting(false);
+            setGpsBypassed();
             resolve(capCoords);
             return;
           }
@@ -193,6 +202,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
       // 3. Standard navigator.geolocation check
       if (typeof navigator === 'undefined' || !navigator.geolocation) {
         // Fallback gracefully without raising error or locking
+        setIsDetecting(false);
         const fallbackTarget = coords || DEFAULT_ALGIERS_COORDS;
         setCoords(fallbackTarget);
         setStatus('granted');
@@ -201,7 +211,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         return;
       }
 
-      // Primary call: High Accuracy with timeout
+      // Primary call: High Accuracy with adequate timeout for native Android permission dialog
       navigator.geolocation.getCurrentPosition(
         (position) => {
           const newCoords: GpsCoordinates = {
@@ -212,10 +222,12 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           setAccuracy(position.coords.accuracy);
           setStatus('granted');
           setErrorMessage(null);
+          setIsDetecting(false);
+          setGpsBypassed();
           resolve(newCoords);
         },
         (_highAccErr) => {
-          // Low accuracy network fallback
+          // Low accuracy network fallback if high accuracy times out
           navigator.geolocation.getCurrentPosition(
             (fallbackPos) => {
               const fallbackCoords: GpsCoordinates = {
@@ -226,18 +238,17 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
               setAccuracy(fallbackPos.coords.accuracy);
               setStatus('granted');
               setErrorMessage(null);
+              setIsDetecting(false);
+              setGpsBypassed();
               resolve(fallbackCoords);
             },
-            (_finalError) => {
-              // CRITICAL FIX: NEVER set status='denied' or block the user!
-              // Automatically resolve with default/wilaya coordinates and mark as granted
-              console.warn('[useNativeGps] Native GPS unavailable, auto-bypassing to prevent lock');
-              const safeCoords = coords || DEFAULT_ALGIERS_COORDS;
-              setCoords(safeCoords);
-              setAccuracy(25);
-              setStatus('granted');
+            (finalError) => {
+              // GRACEFUL FALLBACK: Never block or show red error loops
+              console.warn('[useNativeGps] Geolocation denied or unavailable:', finalError?.message);
+              setIsDetecting(false);
+              setStatus('denied');
               setErrorMessage(null);
-              resolve(safeCoords);
+              resolve(null);
             },
             {
               enableHighAccuracy: false,
@@ -248,7 +259,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         },
         {
           enableHighAccuracy: true,
-          timeout: 5000,
+          timeout: 12000, // 12 seconds to give user ample time to tap "Allow" in Android OS dialog
           maximumAge: 0,
         }
       );
@@ -341,6 +352,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     status,
     errorMessage,
     isTracking,
+    isDetecting,
     requestGps,
     startLiveTracking,
     stopLiveTracking,

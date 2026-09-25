@@ -31,6 +31,8 @@ interface Sari3MapProps {
   showRoutePolyline?: boolean;
   userLiveGps?: { lat: number; lng: number } | null;
   onCenterOnGps?: () => void;
+  flyToCoords?: { lat: number; lng: number; zoom?: number; id?: number | string } | null;
+  isLocating?: boolean;
 }
 
 export const Sari3Map: React.FC<Sari3MapProps> = ({
@@ -47,6 +49,8 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   showRoutePolyline = true,
   userLiveGps = null,
   onCenterOnGps,
+  flyToCoords = null,
+  isLocating = false,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -216,6 +220,22 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       });
     }
   }, [center.lat, center.lng, zoom]);
+
+  // 3.5. Smooth FlyTo animation for auto-detected geolocation coordinates
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !flyToCoords || typeof flyToCoords.lat !== 'number' || typeof flyToCoords.lng !== 'number') return;
+
+    try {
+      map.flyTo([flyToCoords.lat, flyToCoords.lng], flyToCoords.zoom || 16, {
+        animate: true,
+        duration: 1.2,
+        easeLinearity: 0.25,
+      });
+    } catch (e) {
+      console.warn('Leaflet flyTo execution note:', e);
+    }
+  }, [flyToCoords]);
 
   // 4. Update Markers & Route
   useEffect(() => {
@@ -394,12 +414,14 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
     if (onCenterOnGps) {
       onCenterOnGps();
     } else if (userLiveGps && mapInstanceRef.current) {
-      mapInstanceRef.current.setView([userLiveGps.lat, userLiveGps.lng], 15, {
+      mapInstanceRef.current.flyTo([userLiveGps.lat, userLiveGps.lng], 16, {
         animate: true,
+        duration: 1.2,
       });
     } else if (pickupCoords && mapInstanceRef.current) {
-      mapInstanceRef.current.setView([pickupCoords.lat, pickupCoords.lng], 15, {
+      mapInstanceRef.current.flyTo([pickupCoords.lat, pickupCoords.lng], 16, {
         animate: true,
+        duration: 1.2,
       });
     }
   };
@@ -455,11 +477,16 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       {/* "Locate Me / GPS" Floating Button (Top Left) */}
       <button
         type="button"
+        id="btn-sari3-locate-gps"
         onClick={handleLocateMe}
-        title="تحديد موقعي الحالي على الخريطة"
-        className="absolute top-3 left-3 z-20 p-2.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center justify-center cursor-pointer active:scale-95"
+        disabled={isLocating}
+        title="تحديد موقعي الحالي بدقة (GPS)"
+        className="absolute top-3 left-3 z-20 px-3 py-2 rounded-2xl bg-slate-900/95 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-60"
       >
-        <Crosshair size={18} />
+        <Crosshair size={16} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
+        <span className="text-xs font-bold hidden sm:inline">
+          {isLocating ? 'جاري التحديد...' : 'موقعي الحالي'}
+        </span>
       </button>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import { DeliveryOrder, DriverOffer, Language, ThemeMode, UserProfile, Wilaya } from '../types';
 import { ALGERIA_WILAYAS, calculateDistanceKm, calculateSuggestedFare, getWilayaByCode } from '../data/wilayas';
@@ -24,6 +24,7 @@ import {
   Eye,
   RefreshCw,
   Navigation,
+  Crosshair,
 } from 'lucide-react';
 
 interface CustomerHomeProps {
@@ -92,8 +93,21 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     errorMessage: gpsErrorMessage,
     requestGps,
     bypassGps,
-  } = useNativeGps(true);
+  } = useNativeGps(false);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
+
+  // Dedicated state for map flyTo animation & location detection feedback
+  const [mapFlyTo, setMapFlyTo] = useState<{
+    lat: number;
+    lng: number;
+    zoom?: number;
+    id: number;
+  } | null>(null);
+  const [isLocating, setIsLocating] = useState<boolean>(false);
+  const [locationFeedback, setLocationFeedback] = useState<{
+    type: 'success' | 'info';
+    message: string;
+  } | null>(null);
 
   // Fare calculations
   const [distanceKm, setDistanceKm] = useState<number>(6.5);
@@ -120,25 +134,83 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   }, [pickupCoords, dropoffCoords]);
 
-  // Handle GPS location click (Real Native GPS with safe fallback)
-  const handleUseCurrentGps = async () => {
-    let target = liveGpsCoords;
-    if (!target) {
-      target = await requestGps();
-    }
+  // Smooth Permission-Triggered Geolocation Flow
+  const detectUserLocation = useCallback(
+    async (isInitialAutoTrigger = false) => {
+      setIsLocating(true);
+      if (!isInitialAutoTrigger) {
+        setLocationFeedback(null);
+      }
 
-    if (target) {
-      setPickupCoords(target);
-      const addr = await reverseGeocode(target.lat, target.lng, lang);
-      setPickupAddress(addr);
-    } else {
-      // Unconditional safe fallback: set pickup to wilaya center and bypass without trapping
-      const fallback = { lat: currentWilayaObj.lat, lng: currentWilayaObj.lng };
-      setPickupCoords(fallback);
-      bypassGps(fallback);
-      const addr = await reverseGeocode(fallback.lat, fallback.lng, lang);
-      setPickupAddress(addr);
-    }
+      try {
+        // 1. Call requestGps with forceRealPrompt=true to trigger native Android/WebView prompt
+        const target = await requestGps(true);
+
+        if (target && target.lat && target.lng) {
+          // 2. The exact moment user grants permission:
+          // A. Instantly fetch real-time lat/lng and drop pickup marker
+          setPickupCoords(target);
+
+          // B. Automatically center & pan Leaflet map smoothly to those exact coordinates
+          setMapFlyTo({
+            lat: target.lat,
+            lng: target.lng,
+            zoom: 16,
+            id: Date.now(),
+          });
+
+          // C. Execute reverse geocoding to automatically fill pickup street address
+          try {
+            const addr = await reverseGeocode(target.lat, target.lng, lang);
+            if (addr) {
+              setPickupAddress(addr);
+            }
+          } catch (geoErr) {
+            console.warn('Reverse geocode note:', geoErr);
+          }
+
+          // D. Visual success confirmation
+          setLocationFeedback({
+            type: 'success',
+            message:
+              lang === 'ar'
+                ? 'تم تحديد موقعك بدقة عبر GPS بنجاح 📍'
+                : 'Your location was accurately detected via GPS 📍',
+          });
+          setTimeout(() => setLocationFeedback(null), 4500);
+        } else {
+          // 3. Graceful denial / error fallback: fall back to manual map selection without freezing or loops
+          if (!isInitialAutoTrigger) {
+            setLocationFeedback({
+              type: 'info',
+              message:
+                lang === 'ar'
+                  ? 'تعذر تحديد الموقع تلقائياً - يمكنك النقر مباشرة على الخريطة لتحديد مكانك'
+                  : 'GPS detection unavailable - tap directly on the map to set location',
+            });
+            setTimeout(() => setLocationFeedback(null), 4500);
+          }
+        }
+      } catch (err) {
+        console.warn('GPS detection flow note:', err);
+      } finally {
+        setIsLocating(false);
+      }
+    },
+    [requestGps, lang]
+  );
+
+  // Trigger 1: Auto-detection on initial page load
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      detectUserLocation(true);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [detectUserLocation]);
+
+  // Handle GPS location click (Real Native GPS with safe fallback)
+  const handleUseCurrentGps = () => {
+    detectUserLocation(false);
   };
 
   // Handle Direct Map-Tap Pinning with automated reverse geocoding
@@ -411,9 +483,28 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               <Navigation size={14} className="text-emerald-400" />
               <span>خريطة المسار التفاعلية</span>
             </span>
-            <span className="text-[11px] font-mono text-emerald-400 font-bold">
-              {distanceKm} {t.km} • {suggestedFare} {t.dzd} (سعر مقترح)
-            </span>
+
+            {/* Dedicated "Detect My Location" Trigger in Header */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                id="btn-detect-location-header"
+                onClick={() => detectUserLocation(false)}
+                disabled={isLocating}
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-400 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95 shadow-sm"
+              >
+                <Crosshair size={13} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
+                <span>
+                  {isLocating
+                    ? (lang === 'ar' ? 'جاري التحديد...' : 'Locating...')
+                    : (lang === 'ar' ? 'موقعي الحالي (GPS)' : 'Detect My Location')}
+                </span>
+              </button>
+
+              <span className="text-[11px] font-mono text-emerald-400 font-bold hidden xs:inline">
+                {distanceKm} {t.km} • {suggestedFare} {t.dzd}
+              </span>
+            </div>
           </div>
 
           <Sari3Map
@@ -424,7 +515,9 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             onMapClick={handleMapClick}
             onPinDropped={handlePinDropped}
             userLiveGps={liveGpsCoords}
-            onCenterOnGps={handleUseCurrentGps}
+            onCenterOnGps={() => detectUserLocation(false)}
+            flyToCoords={mapFlyTo}
+            isLocating={isLocating}
             theme={theme}
             className="min-h-[350px] h-[350px] w-full"
           />
@@ -459,6 +552,33 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           </div>
         </div>
 
+        {/* Location Detection Status / Guidance Banner */}
+        {locationFeedback && (
+          <div
+            className={`px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-between gap-2 border shadow-lg transition animate-in fade-in duration-300 ${
+              locationFeedback.type === 'success'
+                ? 'bg-emerald-500/15 border-emerald-500/35 text-emerald-300'
+                : 'bg-amber-500/15 border-amber-500/35 text-amber-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {locationFeedback.type === 'success' ? (
+                <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+              ) : (
+                <MapPin size={16} className="text-amber-400 shrink-0" />
+              )}
+              <span>{locationFeedback.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setLocationFeedback(null)}
+              className="text-slate-400 hover:text-white text-xs cursor-pointer px-1 py-0.5"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         {/* Addresses Inputs */}
         <div className="p-4 rounded-3xl bg-slate-900 border border-slate-800 shadow-xl space-y-3">
           {/* Pickup Address */}
@@ -470,11 +590,17 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               </label>
               <button
                 type="button"
-                onClick={handleUseCurrentGps}
-                className="text-[11px] text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                id="btn-use-current-gps-pickup"
+                onClick={() => detectUserLocation(false)}
+                disabled={isLocating}
+                className="text-[11px] text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
               >
-                <Navigation size={12} />
-                <span>{t.useCurrentGps}</span>
+                <Crosshair size={12} className={isLocating ? 'animate-spin' : ''} />
+                <span>
+                  {isLocating
+                    ? (lang === 'ar' ? 'جاري التحديد...' : 'Locating...')
+                    : t.useCurrentGps}
+                </span>
               </button>
             </div>
             <input
