@@ -80,6 +80,7 @@ export const ActiveDeliveryView: React.FC<ActiveDeliveryViewProps> = ({
           driverCoords={effectiveDriverCoords}
           userLiveGps={liveGpsCoords}
           theme={theme}
+          lang={lang}
           className="min-h-[350px] h-[350px] w-full"
         />
 

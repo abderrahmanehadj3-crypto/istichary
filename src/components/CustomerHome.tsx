@@ -6,6 +6,7 @@ import { Sari3Map } from './Sari3Map';
 import { useNativeGps } from '../hooks/useNativeGps';
 import { MandatoryGpsModal } from './MandatoryGpsModal';
 import { reverseGeocode } from '../utils/reverseGeocoding';
+import { OsrmRouteResult } from '../utils/osrmRouting';
 import { NativeCameraModal } from './NativeCameraModal';
 import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
 import {
@@ -133,6 +134,21 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       setCustomerOffer(fare);
     }
   }, [pickupCoords, dropoffCoords]);
+
+  // Handle Real Road Route calculated via OSRM engine
+  const handleRouteCalculated = useCallback((route: OsrmRouteResult) => {
+    if (route && route.distanceKm > 0) {
+      setDistanceKm(route.distanceKm);
+      const fare = calculateSuggestedFare(route.distanceKm);
+      setSuggestedFare(fare);
+      setCustomerOffer((prev) => {
+        if (!prev || prev === 500) {
+          return fare;
+        }
+        return prev;
+      });
+    }
+  }, []);
 
   // Smooth Permission-Triggered Geolocation Flow
   const detectUserLocation = useCallback(
@@ -519,6 +535,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             flyToCoords={mapFlyTo}
             isLocating={isLocating}
             theme={theme}
+            lang={lang}
+            onRouteCalculated={handleRouteCalculated}
             className="min-h-[350px] h-[350px] w-full"
           />
 

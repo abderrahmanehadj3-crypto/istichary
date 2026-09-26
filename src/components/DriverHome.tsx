@@ -192,6 +192,7 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             }
             userLiveGps={driverGpsCoords}
             theme={theme}
+            lang={lang}
             className="min-h-[350px] h-[350px] w-full"
           />
 

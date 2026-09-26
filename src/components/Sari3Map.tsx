@@ -1,9 +1,24 @@
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef, useCallback, useState } from 'react';
 import L from 'leaflet';
-import { ThemeMode } from '../types';
+import { Language, ThemeMode } from '../types';
 import { reverseGeocode } from '../utils/reverseGeocoding';
 import { calculateDistanceKm } from '../data/wilayas';
-import { Crosshair } from 'lucide-react';
+import { fetchOsrmRoute, OsrmRouteResult, RouteStep } from '../utils/osrmRouting';
+import {
+  Crosshair,
+  Route,
+  Clock,
+  Maximize2,
+  ChevronDown,
+  ChevronUp,
+  CornerUpRight,
+  CornerUpLeft,
+  ArrowUp,
+  MapPin,
+  Loader2,
+  Navigation,
+  Compass,
+} from 'lucide-react';
 
 // Fix Leaflet default icon paths
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -27,12 +42,14 @@ interface Sari3MapProps {
     mode: 'pickup' | 'dropoff'
   ) => void;
   theme?: ThemeMode;
+  lang?: Language;
   className?: string;
   showRoutePolyline?: boolean;
   userLiveGps?: { lat: number; lng: number } | null;
   onCenterOnGps?: () => void;
   flyToCoords?: { lat: number; lng: number; zoom?: number; id?: number | string } | null;
   isLocating?: boolean;
+  onRouteCalculated?: (route: OsrmRouteResult) => void;
 }
 
 export const Sari3Map: React.FC<Sari3MapProps> = ({
@@ -45,21 +62,34 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   onMapClick,
   onPinDropped,
   theme = 'dark',
+  lang = 'ar',
   className = 'min-h-[350px] h-[350px] w-full rounded-2xl',
   showRoutePolyline = true,
   userLiveGps = null,
   onCenterOnGps,
   flyToCoords = null,
   isLocating = false,
+  onRouteCalculated,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
+
+  // Markers
   const pickupMarkerRef = useRef<L.Marker | null>(null);
   const dropoffMarkerRef = useRef<L.Marker | null>(null);
   const driverMarkerRef = useRef<L.Marker | null>(null);
   const userGpsMarkerRef = useRef<L.Marker | null>(null);
-  const polylineRef = useRef<L.Polyline | null>(null);
+
+  // Road Routing Polylines (Dual-layer for realistic street appearance)
+  const routeCasingRef = useRef<L.Polyline | null>(null); // Dark outer casing
+  const routeCoreRef = useRef<L.Polyline | null>(null); // Vibrant neon emerald inner line
+  const driverApproachRef = useRef<L.Polyline | null>(null); // Driver to pickup dashed line
+
+  // Real OSRM Route State
+  const [routeInfo, setRouteInfo] = useState<OsrmRouteResult | null>(null);
+  const [isRouteLoading, setIsRouteLoading] = useState<boolean>(false);
+  const [showStepsSheet, setShowStepsSheet] = useState<boolean>(false);
 
   // Stale-closure prevention refs
   const interactiveModeRef = useRef<'pickup' | 'dropoff' | null>(interactivePinDropMode);
@@ -70,6 +100,9 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
 
   const onPinDroppedRef = useRef(onPinDropped);
   onPinDroppedRef.current = onPinDropped;
+
+  const onRouteCalculatedRef = useRef(onRouteCalculated);
+  onRouteCalculatedRef.current = onRouteCalculated;
 
   // Calculate driver proximity to pickup
   const driverProximityKm =
@@ -82,11 +115,11 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         )
       : null;
 
-  // Reverse geocoding helper (runs quietly without fake popups or loading overlays)
+  // Enhanced reverse geocoding helper (fetches precise street name, neighborhood and city)
   const handleGeocodePoint = useCallback(
     async (coords: { lat: number; lng: number }, mode: 'pickup' | 'dropoff') => {
       try {
-        const resolvedAddress = await reverseGeocode(coords.lat, coords.lng, 'ar');
+        const resolvedAddress = await reverseGeocode(coords.lat, coords.lng, lang);
         if (onPinDroppedRef.current) {
           onPinDroppedRef.current(coords, resolvedAddress, mode);
         }
@@ -94,7 +127,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         console.warn('Reverse geocode error:', err);
       }
     },
-    []
+    [lang]
   );
 
   // 1. Initialize Map Instance and Resize Observer
@@ -180,7 +213,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
     };
   }, []);
 
-  // 2. 100% Free Public OpenStreetMap Tile Layer (Zero API Keys, Zero External Auth)
+  // 2. 100% Free Public OpenStreetMap Tile Layer
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -237,7 +270,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
     }
   }, [flyToCoords]);
 
-  // 4. Update Markers & Route
+  // 4. Update Markers (Pickup, Dropoff, Driver, Device GPS)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -246,6 +279,9 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
     const handleMarkerDragEnd = async (marker: L.Marker, mode: 'pickup' | 'dropoff') => {
       const pos = marker.getLatLng();
       const coords = { lat: pos.lat, lng: pos.lng };
+      if (onMapClickRef.current) {
+        onMapClickRef.current(coords);
+      }
       await handleGeocodePoint(coords, mode);
     };
 
@@ -269,7 +305,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         const marker = L.marker([pickupCoords.lat, pickupCoords.lng], {
           icon: pickupIcon,
           draggable: true,
-          title: 'مكان الاستلام (يمكنك سحب الدبوس)',
+          title: lang === 'ar' ? 'مكان الاستلام (اسحب للتعديل)' : 'Pickup (drag to adjust)',
           zIndexOffset: 100,
         }).addTo(map);
 
@@ -303,7 +339,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         const marker = L.marker([dropoffCoords.lat, dropoffCoords.lng], {
           icon: dropoffIcon,
           draggable: true,
-          title: 'مكان التسليم (يمكنك سحب الدبوس)',
+          title: lang === 'ar' ? 'مكان التسليم (اسحب للتعديل)' : 'Dropoff (drag to adjust)',
           zIndexOffset: 90,
         }).addTo(map);
 
@@ -373,7 +409,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       if (!userGpsMarkerRef.current) {
         userGpsMarkerRef.current = L.marker([userLiveGps.lat, userLiveGps.lng], {
           icon: userGpsIcon,
-          title: 'موقع جهازك الحالي',
+          title: lang === 'ar' ? 'موقع جهازك الحالي' : 'Your device location',
           zIndexOffset: 80,
         }).addTo(map);
       } else {
@@ -383,31 +419,112 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
       map.removeLayer(userGpsMarkerRef.current);
       userGpsMarkerRef.current = null;
     }
+  }, [pickupCoords, dropoffCoords, driverCoords, userLiveGps, lang, handleGeocodePoint]);
 
-    // E. Route Polyline
-    if (showRoutePolyline && pickupCoords && dropoffCoords) {
-      const waypoints: [number, number][] = [];
-      if (driverCoords) {
-        waypoints.push([driverCoords.lat, driverCoords.lng]);
-      }
-      waypoints.push([pickupCoords.lat, pickupCoords.lng]);
-      waypoints.push([dropoffCoords.lat, dropoffCoords.lng]);
+  // 5. Real Turn-by-Turn Street Routing via OSRM Engine
+  useEffect(() => {
+    let isCancelled = false;
+    const map = mapInstanceRef.current;
 
-      if (!polylineRef.current) {
-        polylineRef.current = L.polyline(waypoints, {
-          color: '#00D589',
-          weight: 4.5,
-          opacity: 0.9,
-          dashArray: driverCoords ? '7, 9' : undefined,
-        }).addTo(map);
-      } else {
-        polylineRef.current.setLatLngs(waypoints);
+    if (!map || !pickupCoords || !dropoffCoords || !showRoutePolyline) {
+      if (routeCasingRef.current) {
+        map?.removeLayer(routeCasingRef.current);
+        routeCasingRef.current = null;
       }
-    } else if (polylineRef.current) {
-      map.removeLayer(polylineRef.current);
-      polylineRef.current = null;
+      if (routeCoreRef.current) {
+        map?.removeLayer(routeCoreRef.current);
+        routeCoreRef.current = null;
+      }
+      if (driverApproachRef.current) {
+        map?.removeLayer(driverApproachRef.current);
+        driverApproachRef.current = null;
+      }
+      setRouteInfo(null);
+      return;
     }
-  }, [pickupCoords, dropoffCoords, driverCoords, userLiveGps, showRoutePolyline, handleGeocodePoint]);
+
+    setIsRouteLoading(true);
+
+    fetchOsrmRoute(pickupCoords, dropoffCoords, lang)
+      .then((routeResult) => {
+        if (isCancelled || !mapInstanceRef.current) return;
+        setRouteInfo(routeResult);
+        setIsRouteLoading(false);
+
+        if (onRouteCalculatedRef.current) {
+          onRouteCalculatedRef.current(routeResult);
+        }
+
+        const currentMap = mapInstanceRef.current;
+        const coords = routeResult.coordinates;
+
+        // 1. Outer Casing (Dark emerald outline for high contrast on streets)
+        if (!routeCasingRef.current) {
+          routeCasingRef.current = L.polyline(coords, {
+            color: '#064E3B',
+            weight: 8,
+            opacity: 0.85,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }).addTo(currentMap);
+        } else {
+          routeCasingRef.current.setLatLngs(coords);
+        }
+
+        // 2. Core Navigation Road Line (Vibrant Sari3 Emerald following real streets)
+        if (!routeCoreRef.current) {
+          routeCoreRef.current = L.polyline(coords, {
+            color: '#00D589',
+            weight: 5,
+            opacity: 0.98,
+            lineCap: 'round',
+            lineJoin: 'round',
+          }).addTo(currentMap);
+        } else {
+          routeCoreRef.current.setLatLngs(coords);
+        }
+
+        // 3. Driver Approach Line (if courier is assigned and moving to pickup)
+        if (driverCoords) {
+          const driverLeg: [number, number][] = [
+            [driverCoords.lat, driverCoords.lng],
+            [pickupCoords.lat, pickupCoords.lng],
+          ];
+          if (!driverApproachRef.current) {
+            driverApproachRef.current = L.polyline(driverLeg, {
+              color: '#38BDF8',
+              weight: 4,
+              opacity: 0.9,
+              dashArray: '8, 8',
+            }).addTo(currentMap);
+          } else {
+            driverApproachRef.current.setLatLngs(driverLeg);
+          }
+        } else if (driverApproachRef.current) {
+          currentMap.removeLayer(driverApproachRef.current);
+          driverApproachRef.current = null;
+        }
+      })
+      .catch((err) => {
+        if (!isCancelled) {
+          console.warn('OSRM route calculation error:', err);
+          setIsRouteLoading(false);
+        }
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [
+    pickupCoords?.lat,
+    pickupCoords?.lng,
+    dropoffCoords?.lat,
+    dropoffCoords?.lng,
+    driverCoords?.lat,
+    driverCoords?.lng,
+    showRoutePolyline,
+    lang,
+  ]);
 
   // Handle "Center on GPS" click
   const handleLocateMe = () => {
@@ -424,6 +541,32 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         duration: 1.2,
       });
     }
+  };
+
+  // Re-fit map view to the full turn-by-turn road route
+  const handleFitRoute = () => {
+    if (routeInfo && routeInfo.coordinates.length > 0 && mapInstanceRef.current) {
+      const bounds = L.latLngBounds(routeInfo.coordinates);
+      mapInstanceRef.current.fitBounds(bounds, {
+        padding: [45, 45],
+        maxZoom: 16,
+        animate: true,
+      });
+    }
+  };
+
+  // Render direction step icon
+  const renderStepIcon = (modifier?: string, type?: string) => {
+    if (modifier?.includes('left')) {
+      return <CornerUpLeft size={14} className="text-emerald-400 shrink-0" />;
+    }
+    if (modifier?.includes('right')) {
+      return <CornerUpRight size={14} className="text-emerald-400 shrink-0" />;
+    }
+    if (type === 'arrive') {
+      return <MapPin size={14} className="text-purple-400 shrink-0" />;
+    }
+    return <ArrowUp size={14} className="text-emerald-400 shrink-0" />;
   };
 
   return (
@@ -454,8 +597,12 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
           <span className="text-xs font-black">
             {interactivePinDropMode === 'pickup'
-              ? '📍 انقر على الخريطة لتحديد مكان الاستلام'
-              : '🎯 انقر على الخريطة لتحديد مكان التسليم'}
+              ? lang === 'ar'
+                ? '📍 انقر على الخريطة لتحديد مكان الاستلام'
+                : '📍 Click map to set pickup location'
+              : lang === 'ar'
+              ? '🎯 انقر على الخريطة لتحديد مكان التسليم'
+              : '🎯 Click map to set dropoff location'}
           </span>
         </div>
       )}
@@ -465,10 +612,13 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         <div className="absolute top-3 right-3 z-20 px-3 py-1.5 rounded-2xl bg-slate-900/90 border border-emerald-500/60 shadow-xl backdrop-blur-md text-xs font-bold flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           {driverProximityKm < 0.15 ? (
-            <span className="text-emerald-400 font-black animate-pulse">الكابتن وصل الآن! ✓</span>
+            <span className="text-emerald-400 font-black animate-pulse">
+              {lang === 'ar' ? 'الكابتن وصل الآن! ✓' : 'Driver arrived! ✓'}
+            </span>
           ) : (
             <span className="text-slate-200">
-              الكابتن على بعد: <strong className="text-emerald-400 font-mono">{driverProximityKm} كم</strong>
+              {lang === 'ar' ? 'الكابتن على بعد: ' : 'Driver is: '}
+              <strong className="text-emerald-400 font-mono">{driverProximityKm} {lang === 'ar' ? 'كم' : 'km'}</strong>
             </span>
           )}
         </div>
@@ -480,14 +630,128 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         id="btn-sari3-locate-gps"
         onClick={handleLocateMe}
         disabled={isLocating}
-        title="تحديد موقعي الحالي بدقة (GPS)"
+        title={lang === 'ar' ? 'تحديد موقعي الحالي بدقة (GPS)' : 'Detect my location (GPS)'}
         className="absolute top-3 left-3 z-20 px-3 py-2 rounded-2xl bg-slate-900/95 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-60"
       >
         <Crosshair size={16} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
         <span className="text-xs font-bold hidden sm:inline">
-          {isLocating ? 'جاري التحديد...' : 'موقعي الحالي'}
+          {isLocating
+            ? lang === 'ar'
+              ? 'جاري التحديد...'
+              : 'Locating...'
+            : lang === 'ar'
+            ? 'موقعي الحالي'
+            : 'My Location'}
         </span>
       </button>
+
+      {/* Floating Real-Route Info Bar (Turn-by-Turn OSRM Navigation Badge) */}
+      {pickupCoords && dropoffCoords && (
+        <div className="absolute bottom-3 left-3 right-3 z-20 flex flex-col gap-2 pointer-events-none">
+          {/* Turn-by-Turn Steps Sheet (Expandable) */}
+          {showStepsSheet && routeInfo && routeInfo.steps.length > 0 && (
+            <div className="p-3.5 rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl backdrop-blur-md text-slate-100 max-h-48 overflow-y-auto space-y-2 pointer-events-auto animate-in slide-in-from-bottom duration-200">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <span className="text-xs font-black text-white flex items-center gap-1.5">
+                  <Navigation size={13} className="text-emerald-400" />
+                  <span>{lang === 'ar' ? 'خطوات المسار الحقيقي بالشوارع' : 'Turn-by-Turn Street Directions'}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowStepsSheet(false)}
+                  className="text-slate-400 hover:text-white text-xs cursor-pointer p-0.5"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-1.5 text-xs">
+                {routeInfo.steps.map((step, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-start gap-2 p-1.5 rounded-lg bg-slate-950/60 border border-slate-800/60"
+                  >
+                    <span className="mt-0.5">{renderStepIcon(step.modifier, step.type)}</span>
+                    <div className="flex-1">
+                      <p className="font-semibold text-slate-200 text-[11px] leading-tight">
+                        {step.instruction}
+                      </p>
+                      {step.distanceMeters > 0 && (
+                        <span className="text-[10px] text-emerald-400 font-mono">
+                          {step.distanceMeters >= 1000
+                            ? `${(step.distanceMeters / 1000).toFixed(1)} ${lang === 'ar' ? 'كم' : 'km'}`
+                            : `${step.distanceMeters} ${lang === 'ar' ? 'متر' : 'm'}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Main Route Bar */}
+          <div className="p-2.5 rounded-2xl bg-slate-900/95 border border-emerald-500/40 shadow-2xl backdrop-blur-md text-slate-100 flex items-center justify-between gap-2 pointer-events-auto">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center shrink-0">
+                {isRouteLoading ? (
+                  <Loader2 size={16} className="text-emerald-400 animate-spin" />
+                ) : (
+                  <Route size={16} className="text-emerald-400" />
+                )}
+              </div>
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-black text-emerald-400 font-mono">
+                    {routeInfo ? `${routeInfo.distanceKm} ${lang === 'ar' ? 'كم' : 'km'}` : '...'}
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1 font-mono">
+                    <Clock size={11} className="text-slate-400" />
+                    <span>~{routeInfo?.durationMinutes || 5} {lang === 'ar' ? 'دقيقة' : 'min'}</span>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 text-[9px] font-bold uppercase hidden xs:inline">
+                    {routeInfo?.isRealRoadRoute
+                      ? lang === 'ar'
+                        ? 'مسار حقيقي ✓'
+                        : 'Real Streets ✓'
+                      : lang === 'ar'
+                      ? 'تقديري'
+                      : 'Estimated'}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 truncate max-w-[180px] sm:max-w-[260px]">
+                  {routeInfo?.summary || (lang === 'ar' ? 'جاري رسم المسار...' : 'Routing...')}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Fit Entire Route Button */}
+              <button
+                type="button"
+                onClick={handleFitRoute}
+                title={lang === 'ar' ? 'عرض كامل المسار' : 'Fit route to screen'}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition cursor-pointer"
+              >
+                <Maximize2 size={13} />
+              </button>
+
+              {/* Toggle Steps Drawer */}
+              {routeInfo && routeInfo.steps.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowStepsSheet(!showStepsSheet)}
+                  className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <span>{lang === 'ar' ? 'الخطوات' : 'Steps'}</span>
+                  {showStepsSheet ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
