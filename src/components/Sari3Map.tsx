@@ -47,6 +47,7 @@ interface Sari3MapProps {
   showRoutePolyline?: boolean;
   userLiveGps?: { lat: number; lng: number } | null;
   onCenterOnGps?: () => void;
+  onCancelLocating?: () => void;
   flyToCoords?: { lat: number; lng: number; zoom?: number; id?: number | string } | null;
   isLocating?: boolean;
   onRouteCalculated?: (route: OsrmRouteResult) => void;
@@ -67,6 +68,7 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
   showRoutePolyline = true,
   userLiveGps = null,
   onCenterOnGps,
+  onCancelLocating,
   flyToCoords = null,
   isLocating = false,
   onRouteCalculated,
@@ -528,6 +530,10 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
 
   // Handle "Center on GPS" click
   const handleLocateMe = () => {
+    if (isLocating && onCancelLocating) {
+      onCancelLocating();
+      return;
+    }
     if (onCenterOnGps) {
       onCenterOnGps();
     } else if (userLiveGps && mapInstanceRef.current) {
@@ -629,20 +635,59 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         type="button"
         id="btn-sari3-locate-gps"
         onClick={handleLocateMe}
-        title={lang === 'ar' ? 'تحديد موقعي الحالي بدقة (GPS)' : 'Detect my location (GPS)'}
-        className="absolute top-3 left-3 z-20 px-3 py-2 rounded-2xl bg-slate-900/95 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+        disabled={false}
+        style={{ pointerEvents: 'auto' }}
+        title={
+          isLocating
+            ? lang === 'ar' ? 'انقر لإلغاء التحديد' : 'Click to cancel'
+            : lang === 'ar' ? 'تحديد موقعي الحالي بدقة (GPS)' : 'Detect my location (GPS)'
+        }
+        className="absolute top-3 left-3 z-20 px-3 py-2 rounded-2xl bg-slate-900/95 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer active:scale-95 pointer-events-auto"
       >
         <Crosshair size={16} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
         <span className="text-xs font-bold hidden sm:inline">
           {isLocating
             ? lang === 'ar'
-              ? 'جاري التحديد...'
-              : 'Locating...'
+              ? 'جاري التحديد... (إلغاء)'
+              : 'Locating... (Cancel)'
             : lang === 'ar'
             ? 'موقعي الحالي'
             : 'My Location'}
         </span>
       </button>
+
+      {/* Floating Locating Indicator with Cancel Button on Map */}
+      {isLocating && (
+        <div
+          id="map-floating-locating-banner"
+          onClick={(e) => {
+            e.stopPropagation();
+            onCancelLocating?.();
+          }}
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-2xl bg-slate-900/95 text-emerald-300 border border-emerald-500/50 shadow-2xl backdrop-blur-md flex items-center gap-2 cursor-pointer pointer-events-auto animate-in fade-in duration-150"
+          style={{ pointerEvents: 'auto' }}
+        >
+          <Crosshair size={14} className="animate-spin text-emerald-400 shrink-0" />
+          <span className="text-xs font-bold">
+            {lang === 'ar' ? 'جاري التحديد...' : 'Locating...'}
+          </span>
+          {onCancelLocating && (
+            <button
+              type="button"
+              id="btn-map-cancel-locating"
+              disabled={false}
+              style={{ pointerEvents: 'auto' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCancelLocating();
+              }}
+              className="ml-1 px-2.5 py-0.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-white text-[11px] font-black border border-emerald-500/40 transition cursor-pointer pointer-events-auto"
+            >
+              {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Floating Real-Route Info Bar (Turn-by-Turn OSRM Navigation Badge) */}
       {pickupCoords && dropoffCoords && (

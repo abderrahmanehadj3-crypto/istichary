@@ -15,6 +15,7 @@ export interface UseNativeGpsReturn {
   isTracking: boolean;
   isDetecting: boolean;
   requestGps: (forceRealPrompt?: boolean) => Promise<GpsCoordinates | null>;
+  cancelGps: () => void;
   startLiveTracking: () => void;
   stopLiveTracking: () => void;
   openLocationSettings: () => void;
@@ -109,6 +110,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
 
   const watchIdRef = useRef<number | null>(null);
+  const activeCancelRef = useRef<(() => void) | null>(null);
   const coordsRef = useRef<GpsCoordinates | null>(coords);
   coordsRef.current = coords;
 
@@ -124,7 +126,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     return target;
   }, []);
 
-  // Request GPS position on demand with strict 4s timeout & automatic graceful fallback (NEVER locks or hangs)
+  // Request GPS position on demand with strict 3s timeout & automatic graceful fallback (NEVER locks or hangs)
   const requestGps = useCallback((forceRealPrompt: boolean = false): Promise<GpsCoordinates | null> => {
     return new Promise((resolve) => {
       let isDone = false;
@@ -134,6 +136,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         if (isDone) return;
         isDone = true;
         clearTimeout(safetyTimer);
+        activeCancelRef.current = null;
         setIsDetecting(false);
         if (result) {
           setCoords(result);
@@ -146,11 +149,15 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         resolve(result);
       };
 
-      // Strict 4-second timeout: unconditionally dismiss loading state if no response
-      const safetyTimer = setTimeout(() => {
-        console.warn('[useNativeGps] Strict 4s timeout reached, auto-dismissing location loading');
+      activeCancelRef.current = () => {
         finish(null, 'denied');
-      }, 4000);
+      };
+
+      // Strict 3-second timeout: unconditionally dismiss loading state if no response within 3s
+      const safetyTimer = setTimeout(() => {
+        console.warn('[useNativeGps] Strict 3s timeout reached, auto-dismissing location loading');
+        finish(null, 'denied');
+      }, 3000);
 
       // If already bypassed and NOT forcing a real prompt, return target coordinates immediately
       if (isGpsBypassed() && !forceRealPrompt) {
@@ -196,7 +203,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           capGeo
             .getCurrentPosition({
               enableHighAccuracy: true,
-              timeout: 3500,
+              timeout: 2500,
             })
             .then((pos: any) => {
               if (pos && pos.coords) {
@@ -221,7 +228,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         return;
       }
 
-      // Primary call: High Accuracy with 3.5s timeout (within 4s safety window)
+      // Primary call: High Accuracy with 2.8s timeout (within 3s safety window)
       try {
         navigator.geolocation.getCurrentPosition(
           (position) => {
@@ -245,14 +252,14 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
               },
               {
                 enableHighAccuracy: false,
-                timeout: 1500,
+                timeout: 1200,
                 maximumAge: 60000,
               }
             );
           },
           {
             enableHighAccuracy: true,
-            timeout: 3500,
+            timeout: 2800,
             maximumAge: 0,
           }
         );
@@ -261,6 +268,14 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         finish(null, 'denied');
       }
     });
+  }, []);
+
+  // Cancel any active geolocation detection immediately
+  const cancelGps = useCallback(() => {
+    if (activeCancelRef.current) {
+      activeCancelRef.current();
+    }
+    setIsDetecting(false);
   }, []);
 
   // Start continuous live tracking (silent error handling)
@@ -351,6 +366,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     isTracking,
     isDetecting,
     requestGps,
+    cancelGps,
     startLiveTracking,
     stopLiveTracking,
     openLocationSettings: openNativeLocationSettings,

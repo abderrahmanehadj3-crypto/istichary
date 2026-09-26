@@ -93,6 +93,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     status: gpsStatus,
     errorMessage: gpsErrorMessage,
     requestGps,
+    cancelGps,
     bypassGps,
   } = useNativeGps(false);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
@@ -113,14 +114,15 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   const hasAutoTriggeredRef = useRef<boolean>(false);
   const locatingTimeoutRef = useRef<any>(null);
 
-  // Helper to unconditionally dismiss loading spinner
+  // Helper to unconditionally dismiss loading spinner and unlock UI
   const cancelLocating = useCallback(() => {
     if (locatingTimeoutRef.current) {
       clearTimeout(locatingTimeoutRef.current);
       locatingTimeoutRef.current = null;
     }
+    cancelGps();
     setIsLocating(false);
-  }, []);
+  }, [cancelGps]);
 
   // Fare calculations
   const [distanceKm, setDistanceKm] = useState<number>(6.5);
@@ -162,7 +164,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   }, []);
 
-  // Smooth Permission-Triggered Geolocation Flow with STRICT 4s TIMEOUT
+  // Smooth Permission-Triggered Geolocation Flow with STRICT 3s TIMEOUT
   const detectUserLocation = useCallback(
     async (isInitialAutoTrigger = false) => {
       // Clear any prior timer
@@ -175,16 +177,17 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
         setLocationFeedback(null);
       }
 
-      // Strict 4-second safety timer: Unconditionally release UI loading after 4s
+      // Strict 3-second safety timer: Unconditionally release UI loading after 3s
       locatingTimeoutRef.current = setTimeout(() => {
-        console.warn('[CustomerHome] Strict 4s safety timeout reached, unlocking UI');
+        console.warn('[CustomerHome] Strict 3s safety timeout reached, forcing setIsLocating(false) and unlocking UI');
         setIsLocating(false);
-      }, 4000);
+        cancelLocating();
+      }, 3000);
 
       try {
-        // Race GPS against strict 4s promise
+        // Race GPS against strict 3s promise
         const deadlinePromise = new Promise<null>((resolve) =>
-          setTimeout(() => resolve(null), 4000)
+          setTimeout(() => resolve(null), 3000)
         );
         const target = await Promise.race([requestGps(true), deadlinePromise]);
 
@@ -197,10 +200,10 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             id: Date.now(),
           });
 
-          // Quick reverse geocode with 2s timeout
+          // Quick reverse geocode with 1.8s timeout
           try {
             const geoTimeout = new Promise<string>((resolve) =>
-              setTimeout(() => resolve(''), 2000)
+              setTimeout(() => resolve(''), 1800)
             );
             const addr = await Promise.race([
               reverseGeocode(target.lat, target.lng, lang),
@@ -537,13 +540,21 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               <button
                 type="button"
                 id="btn-detect-location-header"
-                onClick={() => detectUserLocation(false)}
-                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-400 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                disabled={false}
+                style={{ pointerEvents: 'auto' }}
+                onClick={() => {
+                  if (isLocating) {
+                    cancelLocating();
+                  } else {
+                    detectUserLocation(false);
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-400 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm pointer-events-auto"
               >
                 <Crosshair size={13} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
                 <span>
                   {isLocating
-                    ? (lang === 'ar' ? 'جاري التحديد...' : 'Locating...')
+                    ? (lang === 'ar' ? 'جاري التحديد... (إلغاء)' : 'Locating... (Cancel)')
                     : (lang === 'ar' ? 'موقعي الحالي (GPS)' : 'Detect My Location')}
                 </span>
               </button>
@@ -563,6 +574,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             onPinDropped={handlePinDropped}
             userLiveGps={liveGpsCoords}
             onCenterOnGps={() => detectUserLocation(false)}
+            onCancelLocating={cancelLocating}
             flyToCoords={mapFlyTo}
             isLocating={isLocating}
             theme={theme}
@@ -572,15 +584,17 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           />
 
           {/* Quick pin drop controls - Always clickable and active, never blocked by loading */}
-          <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 text-xs relative z-30">
+          <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 text-xs relative z-30" style={{ pointerEvents: 'auto' }}>
             <button
               type="button"
               id="btn-manual-pin-pickup"
+              disabled={false}
+              style={{ pointerEvents: 'auto' }}
               onClick={() => {
                 cancelLocating();
                 setInteractiveMode(interactiveMode === 'pickup' ? null : 'pickup');
               }}
-              className={`flex-1 py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 ${
+              className={`flex-1 py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 pointer-events-auto ${
                 interactiveMode === 'pickup'
                   ? 'border-emerald-500 bg-emerald-500/25 text-emerald-400 ring-2 ring-emerald-500/30'
                   : 'border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white'
@@ -593,11 +607,13 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             <button
               type="button"
               id="btn-manual-pin-dropoff"
+              disabled={false}
+              style={{ pointerEvents: 'auto' }}
               onClick={() => {
                 cancelLocating();
                 setInteractiveMode(interactiveMode === 'dropoff' ? null : 'dropoff');
               }}
-              className={`flex-1 py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 ${
+              className={`flex-1 py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 pointer-events-auto ${
                 interactiveMode === 'dropoff'
                   ? 'border-purple-500 bg-purple-500/25 text-purple-400 ring-2 ring-purple-500/30'
                   : 'border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white'
@@ -608,6 +624,46 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Geolocation Loading Banner with Clear "إلغاء" (Cancel) Button */}
+        {isLocating && (
+          <div
+            id="geolocation-loading-banner"
+            role="status"
+            aria-live="polite"
+            onClick={() => cancelLocating()}
+            className="px-4 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-between gap-3 border shadow-xl bg-slate-900/95 border-emerald-500/50 text-emerald-300 backdrop-blur-md animate-in fade-in duration-150 relative z-30 cursor-pointer pointer-events-auto"
+            style={{ pointerEvents: 'auto' }}
+            title={lang === 'ar' ? 'انقر في أي مكان للإلغاء' : 'Click anywhere to cancel'}
+          >
+            <div className="flex items-center gap-2.5 pointer-events-auto">
+              <Crosshair size={16} className="animate-spin text-emerald-400 shrink-0" />
+              <div className="flex flex-col sm:flex-row sm:items-center sm:gap-2">
+                <span className="font-black text-white">
+                  {lang === 'ar' ? 'جاري تحديد موقعك الجغرافي...' : 'Detecting your location...'}
+                </span>
+                <span className="text-[11px] text-slate-400">
+                  {lang === 'ar' ? '(أو انقر إلغاء للاختيار اليدوي)' : '(or click cancel to select manually)'}
+                </span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              id="btn-cancel-geolocation-banner"
+              disabled={false}
+              style={{ pointerEvents: 'auto' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                cancelLocating();
+              }}
+              className="px-3.5 py-1.5 rounded-xl bg-rose-500/25 hover:bg-rose-500/40 text-rose-300 hover:text-white border border-rose-500/50 text-xs font-black transition cursor-pointer flex items-center gap-1.5 active:scale-95 shrink-0 pointer-events-auto shadow-md"
+            >
+              <span>{lang === 'ar' ? 'إلغاء' : 'Cancel'}</span>
+              <span className="text-rose-300 text-xs font-bold">✕</span>
+            </button>
+          </div>
+        )}
 
         {/* Location Detection Status / Guidance Banner */}
         {locationFeedback && (
