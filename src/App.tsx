@@ -21,6 +21,9 @@ import {
 } from './utils/supabaseSync';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
+import { UnifiedAuthFlow } from './components/UnifiedAuthFlow';
+import { RoleSelectionScreen } from './components/RoleSelectionScreen';
+import { DriverVerificationWizard } from './components/DriverVerificationWizard';
 import { RoleGateway } from './components/RoleGateway';
 import { CustomerAuthFlow } from './components/CustomerAuthFlow';
 import { DriverAuthFlow } from './components/DriverAuthFlow';
@@ -265,68 +268,105 @@ export function App() {
   );
 
   // =========================================================================
-  // VIEW ROUTING & STRICT ROLE SEPARATION
+  // VIEW ROUTING & USER JOURNEY
   // =========================================================================
 
-  // 1. UNCOMMITTED / NOT LOGGED IN FLOW
+  // 1. INITIAL AUTHENTICATION SCREEN: Clean unified auth supporting Email or Phone Number
   if (!currentUser) {
-    // Stage A: Welcome Screen / Role Gateway
-    if (!selectedPortal) {
-      return (
-        <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
-          <RoleGateway
+    return (
+      <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
+        <UnifiedAuthFlow
+          t={t}
+          lang={lang}
+          theme={theme}
+          onLanguageChange={setLang}
+          onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onAuthSuccess={(authenticatedUser) => {
+            setCurrentUser(authenticatedUser);
+            saveUserProfile(authenticatedUser);
+          }}
+        />
+      </div>
+    );
+  }
+
+  // 2. ROLE SELECTION SCREEN: Immediately after successful authentication, choose Customer or Driver
+  if (!currentUser.role) {
+    return (
+      <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
+        <RoleSelectionScreen
+          currentUser={currentUser}
+          t={t}
+          lang={lang}
+          theme={theme}
+          onSelectRole={(selectedRole) => {
+            const updatedUser: UserProfile = {
+              ...currentUser,
+              role: selectedRole,
+            };
+            setCurrentUser(updatedUser);
+            saveUserProfile(updatedUser);
+            setActiveNotification({
+              id: `notif-${Date.now()}`,
+              title: selectedRole === 'driver' ? 'مرحباً بك ككابتن في سريع!' : 'مرحباً بك كزبون في سريع!',
+              desc:
+                selectedRole === 'driver'
+                  ? 'يرجى إكمال توثيق بياناتك ومستنداتك لبدء العمل'
+                  : 'تم إعداد حسابك بنجاح للبدء في نشر وتتبع الطرود',
+              type: 'accepted',
+            });
+          }}
+          onLanguageChange={setLang}
+          onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onLogout={handleLogout}
+        />
+      </div>
+    );
+  }
+
+  // 3. DRIVER FLOW: The moment the user selects "Driver", redirect them directly to complete onboarding, verification & documents
+  if (
+    currentUser.role === 'driver' &&
+    (!currentUser.driverDetails || currentUser.driverDetails.verificationStatus !== 'verified')
+  ) {
+    return (
+      <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200 p-4 sm:p-6`}>
+        <div className="max-w-xl mx-auto">
+          <DriverVerificationWizard
+            currentUser={currentUser}
             t={t}
             lang={lang}
-            theme={theme}
-            onSelectRole={(role) => setSelectedPortal(role)}
-            onLanguageChange={setLang}
-            onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+            onComplete={(driverDetails) => {
+              const verifiedUser: UserProfile = {
+                ...currentUser,
+                driverDetails: {
+                  ...driverDetails,
+                  verificationStatus: 'verified',
+                },
+                accountConfirmed: true,
+              };
+              setCurrentUser(verifiedUser);
+              saveUserProfile(verifiedUser);
+              setActiveNotification({
+                id: `notif-${Date.now()}`,
+                title: '🎉 تم توثيق حساب الكابتن بنجاح!',
+                desc: 'مرحباً بك في أسطول كباتن سريع، يمكنك الآن استقبال وتوصيل الطلبات',
+                type: 'accepted',
+              });
+            }}
+            onCancel={() => {
+              // Return to role selection screen
+              const resetRoleUser: UserProfile = {
+                ...currentUser,
+                role: undefined,
+              };
+              setCurrentUser(resetRoleUser);
+              saveUserProfile(resetRoleUser);
+            }}
           />
         </div>
-      );
-    }
-
-    // Stage B: Isolated Customer Authentication Flow
-    if (selectedPortal === 'customer') {
-      return (
-        <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
-          <CustomerAuthFlow
-            t={t}
-            lang={lang}
-            onAuthComplete={handleAuthComplete}
-            onBackToGateway={() => setSelectedPortal(null)}
-          />
-
-          {/* Permissions Modal strictly AFTER role-specific login, BEFORE final confirmation */}
-          <PermissionsModal
-            isOpen={showPermissionsModal}
-            t={t}
-            onPermissionsCompleted={handlePermissionsCompleted}
-          />
-        </div>
-      );
-    }
-
-    // Stage C: Isolated Driver Authentication Flow
-    if (selectedPortal === 'driver') {
-      return (
-        <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
-          <DriverAuthFlow
-            t={t}
-            lang={lang}
-            onAuthComplete={handleAuthComplete}
-            onBackToGateway={() => setSelectedPortal(null)}
-          />
-
-          {/* Permissions Modal strictly AFTER role-specific login, BEFORE final confirmation */}
-          <PermissionsModal
-            isOpen={showPermissionsModal}
-            t={t}
-            onPermissionsCompleted={handlePermissionsCompleted}
-          />
-        </div>
-      );
-    }
+      </div>
+    );
   }
 
   // 2. AUTHENTICATED USER FLOW (DEDICATED DASHBOARDS)
@@ -379,26 +419,39 @@ export function App() {
 
           {/* Controls: Role Badge, Language, Theme, Logout */}
           <div className="flex items-center gap-2">
-            {/* Active Role Indicator Badge */}
-            <div
-              className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 border ${
+            {/* Active Role Indicator Badge (Clickable to switch between Customer and Driver) */}
+            <button
+              type="button"
+              id="btn-header-switch-role"
+              onClick={() => {
+                const switchUser: UserProfile = {
+                  ...currentUser,
+                  role: undefined,
+                };
+                setCurrentUser(switchUser);
+                saveUserProfile(switchUser);
+              }}
+              className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition cursor-pointer hover:scale-105 active:scale-95 ${
                 currentUser.role === 'driver'
-                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-400'
-                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-400 hover:bg-purple-500/20'
+                  : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
               }`}
+              title="انقر لتبديل الدور (زبون / كابتن)"
             >
               {currentUser.role === 'driver' ? (
                 <>
                   <Bike size={14} />
                   <span className="hidden sm:inline">كابتن سريع</span>
+                  <span className="text-[10px] text-purple-400/80 mr-0.5">🔄</span>
                 </>
               ) : (
                 <>
                   <Package size={14} />
                   <span className="hidden sm:inline">زبون</span>
+                  <span className="text-[10px] text-emerald-400/80 mr-0.5">🔄</span>
                 </>
               )}
-            </div>
+            </button>
 
             {/* Language Selector (4 Languages: AR, FR, EN, RU) */}
             <div className="relative flex items-center">

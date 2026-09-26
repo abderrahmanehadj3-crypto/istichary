@@ -28,6 +28,7 @@ import {
   Crosshair,
   Layers,
   AlertTriangle,
+  X,
 } from 'lucide-react';
 
 interface CustomerHomeProps {
@@ -102,6 +103,11 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
   } = useNativeGps(false);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
   const [showOverlayWarning, setShowOverlayWarning] = useState<boolean>(false);
+
+  // Track whether the pickup location was explicitly determined via GPS or manual pin drop
+  const [hasConfirmedLocation, setHasConfirmedLocation] = useState<boolean>(false);
+  // Action-Based Search Trigger Modal: When clicking search for nearest drivers without confirmed location
+  const [showSearchLocationModal, setShowSearchLocationModal] = useState<boolean>(false);
 
   // Dedicated state for map flyTo animation & location detection feedback
   const [mapFlyTo, setMapFlyTo] = useState<{
@@ -224,6 +230,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           setShowOverlayWarning(false);
           clearOverlayBlocked();
           setPickupCoords(target);
+          setHasConfirmedLocation(true);
           setMapFlyTo({
             lat: target.lat,
             lng: target.lng,
@@ -303,6 +310,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     cancelLocating();
     if (mode === 'pickup') {
       setPickupCoords(coords);
+      setHasConfirmedLocation(true);
       setPickupAddress(address);
       setInteractiveMode(null);
     } else if (mode === 'dropoff') {
@@ -319,12 +327,23 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       setDropoffCoords(coords);
     } else {
       setPickupCoords(coords);
+      setHasConfirmedLocation(true);
     }
   };
 
-  // Publish New Order with coordinates verification
+  // Publish New Order with coordinates verification (Action-Based Search Trigger)
   const handleCreateOrder = (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Action-Based Search Trigger:
+    // If the user skipped or denied location permission on entry and has not pinned manually,
+    // trigger a mandatory location request/modal with the prompt:
+    // "يجب تشغيل محدد المواقع لتتمكن من العثور على السائقين الأقرب إليك"
+    if (!hasConfirmedLocation || !pickupCoords) {
+      setShowSearchLocationModal(true);
+      return;
+    }
+
     if (!packagePhoto) {
       alert(t.packagePhotoMandatory);
       return;
@@ -560,7 +579,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       {/* Main Order Creation Form */}
       <form onSubmit={handleCreateOrder} className="space-y-4">
         {/* Interactive Map Preview */}
-        <div className="rounded-3xl overflow-hidden border border-slate-800 shadow-xl bg-slate-900">
+        <div id="sari3-interactive-map-card" className="rounded-3xl overflow-hidden border border-slate-800 shadow-xl bg-slate-900">
           <div className="p-3 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between text-xs">
             <span className="font-bold text-white flex items-center gap-1.5">
               <Navigation size={14} className="text-emerald-400" />
@@ -970,16 +989,151 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           </div>
         </div>
 
-        {/* Submit Order Button */}
+        {/* Submit Order Button (Action-Based Search Trigger) */}
         <button
           type="submit"
           id="btn-publish-order"
-          className="w-full py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-base shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-2 cursor-pointer"
+          className="w-full py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-base shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-2 cursor-pointer active:scale-[0.99]"
         >
           <Package size={20} />
-          <span>{t.publishOrder}</span>
+          <span>
+            {lang === 'ar'
+              ? 'البحث عن السائقين الأقرب (نشر الطلب)'
+              : 'Search for Nearest Drivers (Publish Order)'}
+          </span>
         </button>
       </form>
+
+      {/* Action-Based Search Trigger: Mandatory Location Request Modal */}
+      {showSearchLocationModal && (
+        <div
+          id="modal-search-location-required"
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div className="w-full max-w-sm bg-slate-900 border-2 border-emerald-500/70 rounded-3xl p-6 shadow-2xl text-slate-100 relative space-y-4">
+            {/* Top Close Button */}
+            <button
+              type="button"
+              id="btn-close-search-location-modal"
+              onClick={() => setShowSearchLocationModal(false)}
+              className="absolute top-4 left-4 p-1.5 rounded-full bg-slate-800 text-slate-400 hover:text-white transition cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Radar / Pin Pulse Icon */}
+            <div className="text-center pt-2">
+              <div className="relative w-16 h-16 mx-auto mb-3 flex items-center justify-center">
+                <span className="absolute inset-0 rounded-full bg-emerald-500/20 animate-ping" />
+                <div className="w-14 h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shadow-lg shadow-emerald-500/25">
+                  <Navigation size={28} className="animate-pulse" />
+                </div>
+              </div>
+
+              <h3 className="text-base font-black text-white font-['Cairo']">
+                {lang === 'ar' ? 'تحديد الموقع مطلوب' : 'Location Required'}
+              </h3>
+
+              {/* Exact user requirement prompt */}
+              <p className="text-xs text-amber-300 font-bold mt-2 leading-relaxed bg-amber-500/10 border border-amber-500/30 p-3 rounded-2xl">
+                {lang === 'ar'
+                  ? 'يجب تشغيل محدد المواقع لتتمكن من العثور على السائقين الأقرب إليك'
+                  : 'Location services must be enabled to find the nearest drivers to you'}
+              </p>
+
+              <p className="text-[11px] text-slate-400 mt-2">
+                {lang === 'ar'
+                  ? 'اختر تشغيل نظام GPS تلقائياً أو تثبيت مكان الاستلام يدوياً على الخريطة:'
+                  : 'Enable automatic GPS or place your pickup pin manually on the map:'}
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="space-y-2 pt-1">
+              {/* Option 1: Turn on GPS */}
+              <button
+                type="button"
+                id="btn-modal-trigger-gps"
+                onClick={async () => {
+                  setShowSearchLocationModal(false);
+                  const res = await requestGps(true);
+                  if (res && res.lat && res.lng) {
+                    setPickupCoords(res);
+                    setHasConfirmedLocation(true);
+                    setMapFlyTo({ lat: res.lat, lng: res.lng, zoom: 16, id: Date.now() });
+                    try {
+                      const addr = await reverseGeocode(res.lat, res.lng, lang);
+                      if (addr) setPickupAddress(addr);
+                    } catch (e) {}
+                    setLocationFeedback({
+                      type: 'success',
+                      message:
+                        lang === 'ar'
+                          ? 'تم تحديد موقعك بدقة! يمكنك الآن النقر مجدداً للبحث عن الكباتن 📍'
+                          : 'Location confirmed! Click search to find couriers 📍',
+                    });
+                    setTimeout(() => setLocationFeedback(null), 5000);
+                  } else {
+                    setShowOverlayWarning(true);
+                  }
+                }}
+                className="w-full py-3 px-4 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg active:scale-95"
+              >
+                <Crosshair size={16} />
+                <span>
+                  {lang === 'ar'
+                    ? 'تشغيل GPS وتحديد موقعي تلقائياً'
+                    : 'Turn on GPS & Detect Automatically'}
+                </span>
+              </button>
+
+              {/* Option 2: Manual Map Pin */}
+              <button
+                type="button"
+                id="btn-modal-manual-pin"
+                onClick={() => {
+                  setShowSearchLocationModal(false);
+                  cancelLocating();
+                  setInteractiveMode('pickup');
+                  setLocationFeedback({
+                    type: 'info',
+                    message:
+                      lang === 'ar'
+                        ? 'تم تفعيل التحديد اليدوي - انقر على الخريطة لتثبيت مكان الاستلام 📍'
+                        : 'Manual pin drop enabled - tap on the map to set pickup 📍',
+                  });
+                  setTimeout(() => {
+                    const mapCard = document.getElementById('sari3-interactive-map-card');
+                    if (mapCard) {
+                      mapCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                  }, 50);
+                }}
+                className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+              >
+                <MapPin size={15} />
+                <span>
+                  {lang === 'ar'
+                    ? 'تحديد مكان الاستلام يدوياً على الخريطة'
+                    : 'Set Pickup Manually on Map'}
+                </span>
+              </button>
+
+              {/* Option 3: Cancel */}
+              <button
+                type="button"
+                id="btn-modal-cancel-search-location"
+                onClick={() => setShowSearchLocationModal(false)}
+                className="w-full py-1.5 text-slate-500 hover:text-slate-300 text-xs font-bold transition text-center cursor-pointer"
+              >
+                {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mandatory Device GPS Modal */}
       <MandatoryGpsModal
