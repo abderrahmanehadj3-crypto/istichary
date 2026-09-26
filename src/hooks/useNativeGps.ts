@@ -109,29 +109,53 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
 
   const watchIdRef = useRef<number | null>(null);
+  const coordsRef = useRef<GpsCoordinates | null>(coords);
+  coordsRef.current = coords;
 
   // Unconditional bypass mechanism: permanently saves bypass flag, grants permission and sets valid coords
   const bypassGps = useCallback((fallbackCoords?: GpsCoordinates): GpsCoordinates => {
     setGpsBypassed();
-    const target = fallbackCoords || coords || DEFAULT_ALGIERS_COORDS;
+    const target = fallbackCoords || coordsRef.current || DEFAULT_ALGIERS_COORDS;
     setCoords(target);
     setAccuracy(15);
     setStatus('granted');
     setErrorMessage(null);
     setIsDetecting(false);
     return target;
-  }, [coords]);
+  }, []);
 
-  // Request GPS position on demand with automatic graceful fallback (NEVER locks or denies)
+  // Request GPS position on demand with strict 4s timeout & automatic graceful fallback (NEVER locks or hangs)
   const requestGps = useCallback((forceRealPrompt: boolean = false): Promise<GpsCoordinates | null> => {
-    return new Promise(async (resolve) => {
-      // If already bypassed and NOT forcing a real prompt, return target coordinates
-      if (isGpsBypassed() && !forceRealPrompt) {
-        const target = coords || DEFAULT_ALGIERS_COORDS;
-        setStatus('granted');
-        setErrorMessage(null);
+    return new Promise((resolve) => {
+      let isDone = false;
+
+      // Safe finish wrapper that clears timeout and always resets isDetecting
+      const finish = (result: GpsCoordinates | null, newStatus?: GpsStatus) => {
+        if (isDone) return;
+        isDone = true;
+        clearTimeout(safetyTimer);
         setIsDetecting(false);
-        resolve(target);
+        if (result) {
+          setCoords(result);
+          setStatus('granted');
+          setErrorMessage(null);
+          setGpsBypassed();
+        } else if (newStatus) {
+          setStatus(newStatus);
+        }
+        resolve(result);
+      };
+
+      // Strict 4-second timeout: unconditionally dismiss loading state if no response
+      const safetyTimer = setTimeout(() => {
+        console.warn('[useNativeGps] Strict 4s timeout reached, auto-dismissing location loading');
+        finish(null, 'denied');
+      }, 4000);
+
+      // If already bypassed and NOT forcing a real prompt, return target coordinates immediately
+      if (isGpsBypassed() && !forceRealPrompt) {
+        const target = coordsRef.current || DEFAULT_ALGIERS_COORDS;
+        finish(target, 'granted');
         return;
       }
 
@@ -153,17 +177,10 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         try {
           median.geolocation.getCurrentPosition((res: any) => {
             if (res && (res.latitude || res.lat)) {
-              const mCoords: GpsCoordinates = {
+              finish({
                 lat: Number(res.latitude || res.lat),
                 lng: Number(res.longitude || res.lng),
-              };
-              setCoords(mCoords);
-              setAccuracy(res.accuracy || 10);
-              setStatus('granted');
-              setErrorMessage(null);
-              setIsDetecting(false);
-              setGpsBypassed();
-              resolve(mCoords);
+              });
               return;
             }
           });
@@ -176,24 +193,22 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
       const capGeo = (window as any).Capacitor?.Plugins?.Geolocation;
       if (capGeo?.getCurrentPosition) {
         try {
-          const pos = await capGeo.getCurrentPosition({
-            enableHighAccuracy: true,
-            timeout: 10000,
-          });
-          if (pos && pos.coords) {
-            const capCoords: GpsCoordinates = {
-              lat: pos.coords.latitude,
-              lng: pos.coords.longitude,
-            };
-            setCoords(capCoords);
-            setAccuracy(pos.coords.accuracy || 10);
-            setStatus('granted');
-            setErrorMessage(null);
-            setIsDetecting(false);
-            setGpsBypassed();
-            resolve(capCoords);
-            return;
-          }
+          capGeo
+            .getCurrentPosition({
+              enableHighAccuracy: true,
+              timeout: 3500,
+            })
+            .then((pos: any) => {
+              if (pos && pos.coords) {
+                finish({
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude,
+                });
+              }
+            })
+            .catch((capErr: any) => {
+              console.warn('[useNativeGps] Capacitor Geolocation note:', capErr);
+            });
         } catch (capErr) {
           console.warn('[useNativeGps] Capacitor Geolocation error:', capErr);
         }
@@ -201,70 +216,52 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
 
       // 3. Standard navigator.geolocation check
       if (typeof navigator === 'undefined' || !navigator.geolocation) {
-        // Fallback gracefully without raising error or locking
-        setIsDetecting(false);
-        const fallbackTarget = coords || DEFAULT_ALGIERS_COORDS;
-        setCoords(fallbackTarget);
-        setStatus('granted');
-        setErrorMessage(null);
-        resolve(fallbackTarget);
+        const fallbackTarget = coordsRef.current || DEFAULT_ALGIERS_COORDS;
+        finish(fallbackTarget, 'granted');
         return;
       }
 
-      // Primary call: High Accuracy with adequate timeout for native Android permission dialog
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const newCoords: GpsCoordinates = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          };
-          setCoords(newCoords);
-          setAccuracy(position.coords.accuracy);
-          setStatus('granted');
-          setErrorMessage(null);
-          setIsDetecting(false);
-          setGpsBypassed();
-          resolve(newCoords);
-        },
-        (_highAccErr) => {
-          // Low accuracy network fallback if high accuracy times out
-          navigator.geolocation.getCurrentPosition(
-            (fallbackPos) => {
-              const fallbackCoords: GpsCoordinates = {
-                lat: fallbackPos.coords.latitude,
-                lng: fallbackPos.coords.longitude,
-              };
-              setCoords(fallbackCoords);
-              setAccuracy(fallbackPos.coords.accuracy);
-              setStatus('granted');
-              setErrorMessage(null);
-              setIsDetecting(false);
-              setGpsBypassed();
-              resolve(fallbackCoords);
-            },
-            (finalError) => {
-              // GRACEFUL FALLBACK: Never block or show red error loops
-              console.warn('[useNativeGps] Geolocation denied or unavailable:', finalError?.message);
-              setIsDetecting(false);
-              setStatus('denied');
-              setErrorMessage(null);
-              resolve(null);
-            },
-            {
-              enableHighAccuracy: false,
-              timeout: 4000,
-              maximumAge: 60000,
-            }
-          );
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 12000, // 12 seconds to give user ample time to tap "Allow" in Android OS dialog
-          maximumAge: 0,
-        }
-      );
+      // Primary call: High Accuracy with 3.5s timeout (within 4s safety window)
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            finish({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            });
+          },
+          (_highAccErr) => {
+            // Low accuracy network fallback if high accuracy times out
+            navigator.geolocation.getCurrentPosition(
+              (fallbackPos) => {
+                finish({
+                  lat: fallbackPos.coords.latitude,
+                  lng: fallbackPos.coords.longitude,
+                });
+              },
+              (_finalError) => {
+                // Graceful denial fallback
+                finish(null, 'denied');
+              },
+              {
+                enableHighAccuracy: false,
+                timeout: 1500,
+                maximumAge: 60000,
+              }
+            );
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 3500,
+            maximumAge: 0,
+          }
+        );
+      } catch (callError) {
+        console.warn('[useNativeGps] Geolocation invocation note:', callError);
+        finish(null, 'denied');
+      }
     });
-  }, [coords]);
+  }, []);
 
   // Start continuous live tracking (silent error handling)
   const startLiveTracking = useCallback(() => {

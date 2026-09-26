@@ -629,9 +629,8 @@ export const Sari3Map: React.FC<Sari3MapProps> = ({
         type="button"
         id="btn-sari3-locate-gps"
         onClick={handleLocateMe}
-        disabled={isLocating}
         title={lang === 'ar' ? 'تحديد موقعي الحالي بدقة (GPS)' : 'Detect my location (GPS)'}
-        className="absolute top-3 left-3 z-20 px-3 py-2 rounded-2xl bg-slate-900/95 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer active:scale-95 disabled:opacity-60"
+        className="absolute top-3 left-3 z-20 px-3 py-2 rounded-2xl bg-slate-900/95 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 shadow-xl backdrop-blur-md transition flex items-center gap-1.5 cursor-pointer active:scale-95"
       >
         <Crosshair size={16} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
         <span className="text-xs font-bold hidden sm:inline">

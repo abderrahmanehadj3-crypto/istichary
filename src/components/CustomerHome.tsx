@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import { DeliveryOrder, DriverOffer, Language, ThemeMode, UserProfile, Wilaya } from '../types';
 import { ALGERIA_WILAYAS, calculateDistanceKm, calculateSuggestedFare, getWilayaByCode } from '../data/wilayas';
@@ -110,6 +110,18 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     message: string;
   } | null>(null);
 
+  const hasAutoTriggeredRef = useRef<boolean>(false);
+  const locatingTimeoutRef = useRef<any>(null);
+
+  // Helper to unconditionally dismiss loading spinner
+  const cancelLocating = useCallback(() => {
+    if (locatingTimeoutRef.current) {
+      clearTimeout(locatingTimeoutRef.current);
+      locatingTimeoutRef.current = null;
+    }
+    setIsLocating(false);
+  }, []);
+
   // Fare calculations
   const [distanceKm, setDistanceKm] = useState<number>(6.5);
   const [suggestedFare, setSuggestedFare] = useState<number>(550);
@@ -150,24 +162,34 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   }, []);
 
-  // Smooth Permission-Triggered Geolocation Flow
+  // Smooth Permission-Triggered Geolocation Flow with STRICT 4s TIMEOUT
   const detectUserLocation = useCallback(
     async (isInitialAutoTrigger = false) => {
+      // Clear any prior timer
+      if (locatingTimeoutRef.current) {
+        clearTimeout(locatingTimeoutRef.current);
+      }
+
       setIsLocating(true);
       if (!isInitialAutoTrigger) {
         setLocationFeedback(null);
       }
 
+      // Strict 4-second safety timer: Unconditionally release UI loading after 4s
+      locatingTimeoutRef.current = setTimeout(() => {
+        console.warn('[CustomerHome] Strict 4s safety timeout reached, unlocking UI');
+        setIsLocating(false);
+      }, 4000);
+
       try {
-        // 1. Call requestGps with forceRealPrompt=true to trigger native Android/WebView prompt
-        const target = await requestGps(true);
+        // Race GPS against strict 4s promise
+        const deadlinePromise = new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), 4000)
+        );
+        const target = await Promise.race([requestGps(true), deadlinePromise]);
 
         if (target && target.lat && target.lng) {
-          // 2. The exact moment user grants permission:
-          // A. Instantly fetch real-time lat/lng and drop pickup marker
           setPickupCoords(target);
-
-          // B. Automatically center & pan Leaflet map smoothly to those exact coordinates
           setMapFlyTo({
             lat: target.lat,
             lng: target.lng,
@@ -175,9 +197,15 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             id: Date.now(),
           });
 
-          // C. Execute reverse geocoding to automatically fill pickup street address
+          // Quick reverse geocode with 2s timeout
           try {
-            const addr = await reverseGeocode(target.lat, target.lng, lang);
+            const geoTimeout = new Promise<string>((resolve) =>
+              setTimeout(() => resolve(''), 2000)
+            );
+            const addr = await Promise.race([
+              reverseGeocode(target.lat, target.lng, lang),
+              geoTimeout,
+            ]);
             if (addr) {
               setPickupAddress(addr);
             }
@@ -185,7 +213,6 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             console.warn('Reverse geocode note:', geoErr);
           }
 
-          // D. Visual success confirmation
           setLocationFeedback({
             type: 'success',
             message:
@@ -193,9 +220,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                 ? 'تم تحديد موقعك بدقة عبر GPS بنجاح 📍'
                 : 'Your location was accurately detected via GPS 📍',
           });
-          setTimeout(() => setLocationFeedback(null), 4500);
+          setTimeout(() => setLocationFeedback(null), 4000);
         } else {
-          // 3. Graceful denial / error fallback: fall back to manual map selection without freezing or loops
           if (!isInitialAutoTrigger) {
             setLocationFeedback({
               type: 'info',
@@ -204,23 +230,27 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                   ? 'تعذر تحديد الموقع تلقائياً - يمكنك النقر مباشرة على الخريطة لتحديد مكانك'
                   : 'GPS detection unavailable - tap directly on the map to set location',
             });
-            setTimeout(() => setLocationFeedback(null), 4500);
+            setTimeout(() => setLocationFeedback(null), 4000);
           }
         }
       } catch (err) {
         console.warn('GPS detection flow note:', err);
       } finally {
-        setIsLocating(false);
+        cancelLocating();
       }
     },
-    [requestGps, lang]
+    [requestGps, lang, cancelLocating]
   );
 
-  // Trigger 1: Auto-detection on initial page load
+  // Trigger 1: Auto-detection on initial page load (ONLY ONCE ON MOUNT)
   useEffect(() => {
+    if (hasAutoTriggeredRef.current) return;
+    hasAutoTriggeredRef.current = true;
+
     const timer = setTimeout(() => {
       detectUserLocation(true);
-    }, 500);
+    }, 400);
+
     return () => clearTimeout(timer);
   }, [detectUserLocation]);
 
@@ -235,6 +265,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     address: string,
     mode: 'pickup' | 'dropoff'
   ) => {
+    cancelLocating();
     if (mode === 'pickup') {
       setPickupCoords(coords);
       setPickupAddress(address);
@@ -248,6 +279,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 
   // Handle Map Click for instant coordinate update
   const handleMapClick = (coords: { lat: number; lng: number }) => {
+    cancelLocating();
     if (interactiveMode === 'dropoff') {
       setDropoffCoords(coords);
     } else {
@@ -506,8 +538,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                 type="button"
                 id="btn-detect-location-header"
                 onClick={() => detectUserLocation(false)}
-                disabled={isLocating}
-                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-400 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95 shadow-sm"
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-400 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
               >
                 <Crosshair size={13} className={isLocating ? 'animate-spin text-emerald-400' : 'text-emerald-400'} />
                 <span>
@@ -540,32 +571,40 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
             className="min-h-[350px] h-[350px] w-full"
           />
 
-          {/* Quick pin drop controls */}
-          <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 text-xs">
+          {/* Quick pin drop controls - Always clickable and active, never blocked by loading */}
+          <div className="p-2.5 bg-slate-950 border-t border-slate-800 flex items-center justify-between gap-2 text-xs relative z-30">
             <button
               type="button"
-              onClick={() => setInteractiveMode(interactiveMode === 'pickup' ? null : 'pickup')}
-              className={`flex-1 py-1.5 rounded-xl border text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
+              id="btn-manual-pin-pickup"
+              onClick={() => {
+                cancelLocating();
+                setInteractiveMode(interactiveMode === 'pickup' ? null : 'pickup');
+              }}
+              className={`flex-1 py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 ${
                 interactiveMode === 'pickup'
-                  ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400'
-                  : 'border-slate-800 bg-slate-900 text-slate-300'
+                  ? 'border-emerald-500 bg-emerald-500/25 text-emerald-400 ring-2 ring-emerald-500/30'
+                  : 'border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <MapPin size={12} className="text-emerald-400" />
-              <span>تحديد الاستلام بالنقر</span>
+              <MapPin size={14} className="text-emerald-400 shrink-0" />
+              <span>{lang === 'ar' ? 'تحديد الاستلام بالنقر' : 'Select Pickup on Map'}</span>
             </button>
 
             <button
               type="button"
-              onClick={() => setInteractiveMode(interactiveMode === 'dropoff' ? null : 'dropoff')}
-              className={`flex-1 py-1.5 rounded-xl border text-[11px] font-bold transition cursor-pointer flex items-center justify-center gap-1 ${
+              id="btn-manual-pin-dropoff"
+              onClick={() => {
+                cancelLocating();
+                setInteractiveMode(interactiveMode === 'dropoff' ? null : 'dropoff');
+              }}
+              className={`flex-1 py-2 px-3 rounded-xl border text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-sm active:scale-95 ${
                 interactiveMode === 'dropoff'
-                  ? 'border-purple-500 bg-purple-500/20 text-purple-400'
-                  : 'border-slate-800 bg-slate-900 text-slate-300'
+                  ? 'border-purple-500 bg-purple-500/25 text-purple-400 ring-2 ring-purple-500/30'
+                  : 'border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              <MapPin size={12} className="text-purple-400" />
-              <span>تحديد التسليم بالنقر</span>
+              <MapPin size={14} className="text-purple-400 shrink-0" />
+              <span>{lang === 'ar' ? 'تحديد التسليم بالنقر' : 'Select Dropoff on Map'}</span>
             </button>
           </div>
         </div>
@@ -610,8 +649,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
                 type="button"
                 id="btn-use-current-gps-pickup"
                 onClick={() => detectUserLocation(false)}
-                disabled={isLocating}
-                className="text-[11px] text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                className="text-[11px] text-emerald-400 font-bold hover:underline flex items-center gap-1 cursor-pointer"
               >
                 <Crosshair size={12} className={isLocating ? 'animate-spin' : ''} />
                 <span>
