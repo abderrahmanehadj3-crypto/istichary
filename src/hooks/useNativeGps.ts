@@ -14,12 +14,37 @@ export interface UseNativeGpsReturn {
   errorMessage: string | null;
   isTracking: boolean;
   isDetecting: boolean;
+  isOverlayBlocked: boolean;
   requestGps: (forceRealPrompt?: boolean) => Promise<GpsCoordinates | null>;
   cancelGps: () => void;
+  clearOverlayBlocked: () => void;
   startLiveTracking: () => void;
   stopLiveTracking: () => void;
   openLocationSettings: () => void;
   bypassGps: (fallbackCoords?: GpsCoordinates) => GpsCoordinates;
+}
+
+/**
+ * Checks if a geolocation error is caused by an Android screen overlay,
+ * chat bubble (e.g. Messenger chat heads), or tapjacking security block.
+ */
+export function isScreenOverlayError(err: any): boolean {
+  if (!err) return false;
+  // Android error code 1: PERMISSION_DENIED (frequently triggered when screen overlay blocks touch or permission)
+  if (err.code === 1 || err.code === (window as any).GeolocationPositionError?.PERMISSION_DENIED) {
+    return true;
+  }
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    msg.includes('overlay') ||
+    msg.includes('bubble') ||
+    msg.includes('permission') ||
+    msg.includes('denied') ||
+    msg.includes('blocked') ||
+    msg.includes('obscured') ||
+    msg.includes('tapjacking') ||
+    msg.includes('not allowed')
+  );
 }
 
 /**
@@ -108,11 +133,16 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isTracking, setIsTracking] = useState<boolean>(false);
   const [isDetecting, setIsDetecting] = useState<boolean>(false);
+  const [isOverlayBlocked, setIsOverlayBlocked] = useState<boolean>(false);
 
   const watchIdRef = useRef<number | null>(null);
   const activeCancelRef = useRef<(() => void) | null>(null);
   const coordsRef = useRef<GpsCoordinates | null>(coords);
   coordsRef.current = coords;
+
+  const clearOverlayBlocked = useCallback(() => {
+    setIsOverlayBlocked(false);
+  }, []);
 
   // Unconditional bypass mechanism: permanently saves bypass flag, grants permission and sets valid coords
   const bypassGps = useCallback((fallbackCoords?: GpsCoordinates): GpsCoordinates => {
@@ -123,6 +153,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     setStatus('granted');
     setErrorMessage(null);
     setIsDetecting(false);
+    setIsOverlayBlocked(false);
     return target;
   }, []);
 
@@ -132,7 +163,11 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
       let isDone = false;
 
       // Safe finish wrapper that clears timeout and always resets isDetecting
-      const finish = (result: GpsCoordinates | null, newStatus?: GpsStatus) => {
+      const finish = (
+        result: GpsCoordinates | null,
+        newStatus?: GpsStatus,
+        opts?: { isOverlay?: boolean; errorMsg?: string }
+      ) => {
         if (isDone) return;
         isDone = true;
         clearTimeout(safetyTimer);
@@ -142,9 +177,18 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
           setCoords(result);
           setStatus('granted');
           setErrorMessage(null);
+          setIsOverlayBlocked(false);
           setGpsBypassed();
-        } else if (newStatus) {
-          setStatus(newStatus);
+        } else {
+          if (newStatus) {
+            setStatus(newStatus);
+          }
+          if (opts?.errorMsg) {
+            setErrorMessage(opts.errorMsg);
+          }
+          if (opts?.isOverlay) {
+            setIsOverlayBlocked(true);
+          }
         }
         resolve(result);
       };
@@ -156,7 +200,11 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
       // Strict 3-second timeout: unconditionally dismiss loading state if no response within 3s
       const safetyTimer = setTimeout(() => {
         console.warn('[useNativeGps] Strict 3s timeout reached, auto-dismissing location loading');
-        finish(null, 'denied');
+        const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '');
+        finish(null, 'denied', {
+          isOverlay: isAndroid,
+          errorMsg: 'Location timeout (potential screen overlay)',
+        });
       }, 3000);
 
       // If already bypassed and NOT forcing a real prompt, return target coordinates immediately
@@ -169,6 +217,7 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
       setIsDetecting(true);
       setStatus('checking');
       setErrorMessage(null);
+      setIsOverlayBlocked(false);
 
       // 1. Median / GoNative bridge native permission prompt hook
       const median = (window as any).median || (window as any).gonative;
@@ -237,7 +286,9 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
               lng: position.coords.longitude,
             });
           },
-          (_highAccErr) => {
+          (highAccErr) => {
+            console.warn('[useNativeGps] High accuracy geolocation note:', highAccErr);
+            const highAccIsOverlay = isScreenOverlayError(highAccErr);
             // Low accuracy network fallback if high accuracy times out
             navigator.geolocation.getCurrentPosition(
               (fallbackPos) => {
@@ -246,9 +297,13 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
                   lng: fallbackPos.coords.longitude,
                 });
               },
-              (_finalError) => {
-                // Graceful denial fallback
-                finish(null, 'denied');
+              (finalError) => {
+                console.warn('[useNativeGps] Final geolocation note:', finalError);
+                const finalIsOverlay = isScreenOverlayError(finalError) || highAccIsOverlay;
+                finish(null, 'denied', {
+                  isOverlay: finalIsOverlay,
+                  errorMsg: finalError?.message || highAccErr?.message,
+                });
               },
               {
                 enableHighAccuracy: false,
@@ -263,9 +318,10 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
             maximumAge: 0,
           }
         );
-      } catch (callError) {
+      } catch (callError: any) {
         console.warn('[useNativeGps] Geolocation invocation note:', callError);
-        finish(null, 'denied');
+        const isOverlay = isScreenOverlayError(callError);
+        finish(null, 'denied', { isOverlay, errorMsg: callError?.message });
       }
     });
   }, []);
@@ -365,8 +421,10 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
     errorMessage,
     isTracking,
     isDetecting,
+    isOverlayBlocked,
     requestGps,
     cancelGps,
+    clearOverlayBlocked,
     startLiveTracking,
     stopLiveTracking,
     openLocationSettings: openNativeLocationSettings,

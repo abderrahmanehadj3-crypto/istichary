@@ -26,6 +26,8 @@ import {
   RefreshCw,
   Navigation,
   Crosshair,
+  Layers,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface CustomerHomeProps {
@@ -92,11 +94,14 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     coords: liveGpsCoords,
     status: gpsStatus,
     errorMessage: gpsErrorMessage,
+    isOverlayBlocked,
     requestGps,
     cancelGps,
+    clearOverlayBlocked,
     bypassGps,
   } = useNativeGps(false);
   const [showGpsModal, setShowGpsModal] = useState<boolean>(false);
+  const [showOverlayWarning, setShowOverlayWarning] = useState<boolean>(false);
 
   // Dedicated state for map flyTo animation & location detection feedback
   const [mapFlyTo, setMapFlyTo] = useState<{
@@ -123,6 +128,29 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     cancelGps();
     setIsLocating(false);
   }, [cancelGps]);
+
+  // Keep overlay warning synced if hook detects overlay block
+  useEffect(() => {
+    if (isOverlayBlocked) {
+      setShowOverlayWarning(true);
+    }
+  }, [isOverlayBlocked]);
+
+  // Switch immediately to manual map pinning
+  const handleSwitchToManualPinning = useCallback(() => {
+    setShowOverlayWarning(false);
+    clearOverlayBlocked();
+    cancelLocating();
+    setInteractiveMode('pickup');
+    setLocationFeedback({
+      type: 'info',
+      message:
+        lang === 'ar'
+          ? 'تم تفعيل التحديد اليدوي - انقر في أي مكان على الخريطة لتحديد مكان الاستلام 📍'
+          : 'Manual pin drop active - tap anywhere on the map to set pickup location 📍',
+    });
+    setTimeout(() => setLocationFeedback(null), 5000);
+  }, [clearOverlayBlocked, cancelLocating, lang]);
 
   // Fare calculations
   const [distanceKm, setDistanceKm] = useState<number>(6.5);
@@ -164,7 +192,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
   }, []);
 
-  // Smooth Permission-Triggered Geolocation Flow with STRICT 3s TIMEOUT
+  // Smooth Permission-Triggered Geolocation Flow with STRICT 3s TIMEOUT & Overlay Handling
   const detectUserLocation = useCallback(
     async (isInitialAutoTrigger = false) => {
       // Clear any prior timer
@@ -182,6 +210,7 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
         console.warn('[CustomerHome] Strict 3s safety timeout reached, forcing setIsLocating(false) and unlocking UI');
         setIsLocating(false);
         cancelLocating();
+        setShowOverlayWarning(true);
       }, 3000);
 
       try {
@@ -192,6 +221,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
         const target = await Promise.race([requestGps(true), deadlinePromise]);
 
         if (target && target.lat && target.lng) {
+          setShowOverlayWarning(false);
+          clearOverlayBlocked();
           setPickupCoords(target);
           setMapFlyTo({
             lat: target.lat,
@@ -225,25 +256,26 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
           });
           setTimeout(() => setLocationFeedback(null), 4000);
         } else {
-          if (!isInitialAutoTrigger) {
-            setLocationFeedback({
-              type: 'info',
-              message:
-                lang === 'ar'
-                  ? 'تعذر تحديد الموقع تلقائياً - يمكنك النقر مباشرة على الخريطة لتحديد مكانك'
-                  : 'GPS detection unavailable - tap directly on the map to set location',
-            });
-            setTimeout(() => setLocationFeedback(null), 4000);
-          }
+          // Blocked / Overlay Path (Error Handling)
+          // Android blocked request or permission failed (e.g. chat bubbles, screen filter, or denied)
+          setShowOverlayWarning(true);
         }
       } catch (err) {
         console.warn('GPS detection flow note:', err);
+        setShowOverlayWarning(true);
       } finally {
         cancelLocating();
       }
     },
-    [requestGps, lang, cancelLocating]
+    [requestGps, lang, cancelLocating, clearOverlayBlocked]
   );
+
+  // Retry location detection once overlay is closed
+  const handleRetryAfterOverlay = useCallback(() => {
+    setShowOverlayWarning(false);
+    clearOverlayBlocked();
+    detectUserLocation(false);
+  }, [clearOverlayBlocked, detectUserLocation]);
 
   // Trigger 1: Auto-detection on initial page load (ONLY ONCE ON MOUNT)
   useEffect(() => {
@@ -662,6 +694,73 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
               <span>{lang === 'ar' ? 'إلغاء' : 'Cancel'}</span>
               <span className="text-rose-300 text-xs font-bold">✕</span>
             </button>
+          </div>
+        )}
+
+        {/* Screen Overlay / Blocked Path Helpful Banner & Manual Switch */}
+        {showOverlayWarning && (
+          <div
+            id="screen-overlay-warning-banner"
+            role="alert"
+            className="p-4 rounded-3xl bg-amber-500/15 border border-amber-500/40 text-amber-200 shadow-2xl backdrop-blur-md space-y-3 animate-in fade-in slide-in-from-top-2 duration-200 relative z-30 pointer-events-auto"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0 text-amber-400 mt-0.5 shadow-sm">
+                  <Layers size={18} className="animate-pulse" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-xs font-black text-white flex items-center gap-1.5">
+                    <span>
+                      {lang === 'ar'
+                        ? 'تنبيه تراكب الشاشة (Screen Overlay)'
+                        : 'Screen Overlay Notice'}
+                    </span>
+                  </h4>
+                  <p className="text-xs text-amber-100 font-medium leading-relaxed">
+                    {lang === 'ar'
+                      ? 'تم رصد تراكب شاشة (مثل فقاعة محادثة). يرجى التحديد يدوياً على الخريطة أو إغلاق الفقاعة للمحاولة آلياً.'
+                      : 'Screen overlay detected (e.g. chat bubble). Please select your location manually on the map or close the overlay to retry automatically.'}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                id="btn-dismiss-overlay-warning"
+                onClick={() => {
+                  setShowOverlayWarning(false);
+                  clearOverlayBlocked();
+                }}
+                className="text-amber-400/80 hover:text-white text-xs p-1.5 rounded-xl hover:bg-amber-500/20 transition cursor-pointer shrink-0"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Direct Action Buttons: Manual Switch & Auto Retry */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-amber-500/20">
+              <button
+                type="button"
+                id="btn-overlay-manual-pin"
+                onClick={handleSwitchToManualPinning}
+                className="flex-1 min-w-[170px] py-2.5 px-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black text-xs transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg active:scale-95"
+              >
+                <MapPin size={14} className="shrink-0" />
+                <span>{lang === 'ar' ? 'تحديد يدوياً على الخريطة' : 'Select Manually on Map'}</span>
+              </button>
+
+              <button
+                type="button"
+                id="btn-overlay-retry-gps"
+                onClick={handleRetryAfterOverlay}
+                className="py-2.5 px-3.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-amber-300 border border-amber-500/30 font-bold text-xs transition cursor-pointer flex items-center justify-center gap-1.5 active:scale-95 shadow-sm"
+              >
+                <Crosshair size={13} className="shrink-0 text-amber-400" />
+                <span>{lang === 'ar' ? 'إعادة المحاولة آلياً' : 'Retry Auto'}</span>
+              </button>
+            </div>
           </div>
         )}
 
