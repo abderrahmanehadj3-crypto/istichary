@@ -133,13 +133,13 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
                       {lang === 'ar' ? 'زبون (Customer)' : 'Customer'}
                     </h2>
                     <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 text-[10px] font-bold">
-                      مباشر
+                      إعداد الملف والخريطة
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-1 leading-relaxed">
                     {lang === 'ar'
-                      ? 'الدخول فوراً إلى الخريطة التفاعلية، إنشاء طلبات التوصيل، وتتبع الطرود لحظة بلحظة'
-                      : 'Proceed directly to the map interface, publish orders, and track deliveries'}
+                      ? 'إعداد ملفك الشخصي (استيراد فوري من البريد أو يدوي) ثم الانتقال إلى الخريطة ونشر الطرود'
+                      : 'Customize your profile (instant email sync or manual) then proceed to the map and orders'}
                   </p>
                 </div>
               </div>
@@ -152,12 +152,12 @@ export const RoleSelectionScreen: React.FC<RoleSelectionScreenProps> = ({
             {/* Micro Highlights */}
             <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-3 text-[11px] text-slate-400">
               <span className="flex items-center gap-1">
-                <MapPin size={13} className="text-emerald-400" />
-                <span>خريطة ذكية تفاعلية</span>
+                <User size={13} className="text-emerald-400" />
+                <span>تخصيص ذكي للملف</span>
               </span>
               <span className="flex items-center gap-1">
-                <DollarSign size={13} className="text-emerald-400" />
-                <span>عروض أسعار حرة</span>
+                <MapPin size={13} className="text-emerald-400" />
+                <span>خريطة ذكية تفاعلية</span>
               </span>
             </div>
           </div>

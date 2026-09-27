@@ -23,6 +23,7 @@ import { Sari3Logo } from './components/Sari3Logo';
 import { UnifiedAuthFlow } from './components/UnifiedAuthFlow';
 import { RoleSelectionScreen } from './components/RoleSelectionScreen';
 import { DriverVerificationWizard } from './components/DriverVerificationWizard';
+import { CustomerProfileSetupScreen } from './components/CustomerProfileSetupScreen';
 import { CustomerHome } from './components/CustomerHome';
 import { DriverHome } from './components/DriverHome';
 import { ActiveDeliveryView } from './components/ActiveDeliveryView';
@@ -252,6 +253,10 @@ export function App() {
             const updatedUser: UserProfile = {
               ...currentUser,
               role: selectedRole,
+              customerProfileCompleted:
+                selectedRole === 'customer'
+                  ? currentUser.customerProfileCompleted ?? false
+                  : undefined,
             };
             setCurrentUser(updatedUser);
             saveUserProfile(updatedUser);
@@ -261,7 +266,7 @@ export function App() {
               desc:
                 selectedRole === 'driver'
                   ? 'يرجى إكمال توثيق بياناتك ومستنداتك لبدء العمل'
-                  : 'تم إعداد حسابك بنجاح للبدء في نشر وتتبع الطرود',
+                  : 'يرجى إكمال إعداد ملفك الشخصي للانتقال إلى الخريطة',
               type: 'accepted',
             });
           }}
@@ -273,7 +278,55 @@ export function App() {
     );
   }
 
-  // 3. DRIVER FLOW: The moment the user selects "Driver", redirect them directly to complete onboarding, verification & documents
+  // 3. CUSTOMER PROFILE CUSTOMIZATION FLOW:
+  // Once "Customer" is selected, present a smart prompt/choice for their profile setup:
+  // - Quick Option: Instantly use Email account's name, profile picture, and birthdate
+  // - Manual Option: Input alternative/custom personal information manually
+  if (currentUser.role === 'customer' && !currentUser.customerProfileCompleted) {
+    return (
+      <div className={`min-h-screen ${theme === 'dark' ? 'bg-[#0B0F17] text-slate-100' : 'bg-slate-50 text-slate-900'} transition-colors duration-200`}>
+        <CustomerProfileSetupScreen
+          currentUser={currentUser}
+          t={t}
+          lang={lang}
+          theme={theme}
+          onLanguageChange={setLang}
+          onThemeToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          onBackToRoleSelection={() => {
+            const resetUser: UserProfile = {
+              ...currentUser,
+              role: undefined,
+              customerProfileCompleted: false,
+            };
+            setCurrentUser(resetUser);
+            saveUserProfile(resetUser);
+          }}
+          onCompleteProfile={({ displayName, avatarUrl, birthDate, wilaya }) => {
+            const completedUser: UserProfile = {
+              ...currentUser,
+              displayName,
+              avatarUrl,
+              birthDate,
+              wilaya,
+              customerProfileCompleted: true,
+              accountConfirmed: true,
+            };
+            setCurrentUser(completedUser);
+            saveUserProfile(completedUser);
+            setSelectedWilaya(wilaya);
+            setActiveNotification({
+              id: `notif-${Date.now()}`,
+              title: '✨ تم إعداد ملفك الشخصي بنجاح!',
+              desc: `أهلاً بك يا ${displayName}، يمكنك الآن تحديد موقعك وبدء نشر الطلبات`,
+              type: 'accepted',
+            });
+          }}
+        />
+      </div>
+    );
+  }
+
+  // 4. DRIVER FLOW: The moment the user selects "Driver", redirect them directly to complete onboarding, verification & documents
   if (
     currentUser.role === 'driver' &&
     (!currentUser.driverDetails || currentUser.driverDetails.verificationStatus !== 'verified')

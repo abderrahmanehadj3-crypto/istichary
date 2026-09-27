@@ -104,6 +104,7 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
   // Profile Edit State
   const [displayName, setDisplayName] = useState(currentUser.displayName);
   const [phone, setPhone] = useState(currentUser.phone || '+213 555 12 34 56');
+  const [birthDate, setBirthDate] = useState(currentUser.birthDate || '1998-05-14');
   const [selectedAvatar, setSelectedAvatar] = useState(
     currentUser.avatarUrl || ''
   );
@@ -117,6 +118,7 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
       displayName: displayName.trim(),
       phone: phone.trim(),
       avatarUrl: selectedAvatar,
+      birthDate,
     });
     setSaveSuccess(true);
     setTimeout(() => {
@@ -323,6 +325,21 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
                   onChange={(e) => setPhone(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 px-4 text-xs font-mono font-bold text-white focus:outline-none focus:border-emerald-500 transition"
                   required
+                />
+              </div>
+
+              {/* Birthdate */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  تاريخ الميلاد
+                </label>
+                <input
+                  type="date"
+                  value={birthDate}
+                  onChange={(e) => setBirthDate(e.target.value)}
+                  max="2010-01-01"
+                  min="1940-01-01"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 px-4 text-xs font-mono font-bold text-white focus:outline-none focus:border-emerald-500 transition"
                 />
               </div>
 

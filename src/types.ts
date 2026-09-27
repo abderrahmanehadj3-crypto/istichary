@@ -45,8 +45,10 @@ export interface UserProfile {
   phoneVerified: boolean;
   displayName: string;
   avatarUrl?: string;
+  birthDate?: string;
   role?: UserRole;
   wilaya: string;
+  customerProfileCompleted?: boolean;
   driverDetails?: DriverDetails;
   cameraPermissionGranted?: boolean;
   locationPermissionGranted?: boolean;
