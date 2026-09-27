@@ -16,7 +16,6 @@ import {
   acceptDriverOffer,
   updateOrderStatus,
   saveUserProfile,
-  loadCachedUserProfile,
   INITIAL_DEMO_ORDERS,
 } from './utils/supabaseSync';
 import { soundNotifier } from './utils/audioNotification';
@@ -24,10 +23,6 @@ import { Sari3Logo } from './components/Sari3Logo';
 import { UnifiedAuthFlow } from './components/UnifiedAuthFlow';
 import { RoleSelectionScreen } from './components/RoleSelectionScreen';
 import { DriverVerificationWizard } from './components/DriverVerificationWizard';
-import { RoleGateway } from './components/RoleGateway';
-import { CustomerAuthFlow } from './components/CustomerAuthFlow';
-import { DriverAuthFlow } from './components/DriverAuthFlow';
-import { PermissionsModal } from './components/PermissionsModal';
 import { CustomerHome } from './components/CustomerHome';
 import { DriverHome } from './components/DriverHome';
 import { ActiveDeliveryView } from './components/ActiveDeliveryView';
@@ -59,17 +54,8 @@ export function App() {
   // Global Wilaya state (default Wilaya 16 - Algiers)
   const [selectedWilaya, setSelectedWilaya] = useState<string>('16');
 
-  // Authenticated User State
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    return loadCachedUserProfile();
-  });
-
-  // Selected Auth Gateway Portal ('customer' | 'driver' | null)
-  const [selectedPortal, setSelectedPortal] = useState<UserRole | null>(null);
-
-  // Pending user awaiting permissions confirmation (Crucial Permissions Timing)
-  const [pendingUser, setPendingUser] = useState<UserProfile | null>(null);
-  const [showPermissionsModal, setShowPermissionsModal] = useState<boolean>(false);
+  // Authenticated User State (Must be null on startup to ensure login is the mandatory first screen)
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
 
   // Package Inspection Modal
   const [inspectionPhoto, setInspectionPhoto] = useState<string | null>(null);
@@ -113,46 +99,9 @@ export function App() {
     }
   }, [lang, theme]);
 
-  // 1. Role-specific Auth Completion Handler (Timing: Login completed -> Request Permissions)
-  const handleAuthComplete = (user: UserProfile) => {
-    setPendingUser(user);
-    // Request Camera and Location Services strictly AFTER login/role selection, BEFORE final account confirmation
-    setShowPermissionsModal(true);
-  };
-
-  // 2. Hardware Permissions Granted -> Final Account Confirmation
-  const handlePermissionsCompleted = (cam: boolean, loc: boolean) => {
-    if (!pendingUser) return;
-    const confirmedUser: UserProfile = {
-      ...pendingUser,
-      cameraPermissionGranted: cam,
-      locationPermissionGranted: loc,
-      accountConfirmed: true,
-    };
-
-    setCurrentUser(confirmedUser);
-    saveUserProfile(confirmedUser);
-    setPendingUser(null);
-    setShowPermissionsModal(false);
-    setSelectedPortal(null);
-
-    // Notification toast
-    setActiveNotification({
-      id: `notif-${Date.now()}`,
-      title: 'تم تفعيل الحساب والصلاحيات بنجاح!',
-      desc:
-        confirmedUser.role === 'driver'
-          ? 'مرحباً بك يا كابتن! أنت الآن جاهز لاستقبال طلبات التوصيل'
-          : 'مرحباً بك! يمكنك الآن نشر طرودك واستقبال عروض الكباتن',
-      type: 'accepted',
-    });
-  };
-
-  // Logout / Switch Role Gateway
+  // Logout / Reset to Entry Authentication Flow
   const handleLogout = () => {
     setCurrentUser(null);
-    setPendingUser(null);
-    setSelectedPortal(null);
     setIsSidebarOpen(false);
     localStorage.removeItem('sari3_user_profile');
   };
