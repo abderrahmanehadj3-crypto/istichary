@@ -55,17 +55,27 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceStreamRef = useRef<MediaStream | null>(null);
 
+  const inferredFirst = currentUser.displayName ? currentUser.displayName.split(' ')[0] : '';
+  const inferredLast =
+    currentUser.displayName && currentUser.displayName.includes(' ')
+      ? currentUser.displayName.split(' ').slice(1).join(' ')
+      : '';
+
   // STEP 2: Personal Info & Strict Age Check (>= 20)
-  const [firstName, setFirstName] = useState(currentUser.driverDetails?.firstName || 'كريم');
-  const [lastName, setLastName] = useState(currentUser.driverDetails?.lastName || 'الدراجي');
-  const [birthDate, setBirthDate] = useState(
-    currentUser.driverDetails?.birthDate || '2001-05-14' // default ~25 years
+  const [firstName, setFirstName] = useState(
+    currentUser.driverDetails?.firstName || inferredFirst
   );
-  const [calculatedAge, setCalculatedAge] = useState<number>(25);
+  const [lastName, setLastName] = useState(
+    currentUser.driverDetails?.lastName || inferredLast
+  );
+  const [birthDate, setBirthDate] = useState(
+    currentUser.driverDetails?.birthDate || currentUser.birthDate || ''
+  );
+  const [calculatedAge, setCalculatedAge] = useState<number>(0);
 
   // STEP 3: Phone Verification via SMS OTP
-  const [phone, setPhone] = useState(currentUser.phone || '+213 661 88 99 00');
-  const [isPhoneVerified, setIsPhoneVerified] = useState(true);
+  const [phone, setPhone] = useState(currentUser.phone || '');
+  const [isPhoneVerified, setIsPhoneVerified] = useState(!!currentUser.phoneVerified);
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
   const [otpTestCode, setOtpTestCode] = useState<string | null>(null);
@@ -98,13 +108,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     currentUser.driverDetails?.vehicleRegType || 'permanent'
   );
   const [vehiclePlate, setVehiclePlate] = useState(
-    currentUser.driverDetails?.vehiclePlate || '01234-121-16'
+    currentUser.driverDetails?.vehiclePlate || ''
   );
   const [vehicleBrand, setVehicleBrand] = useState(
-    currentUser.driverDetails?.vehicleBrand || 'Sym'
+    currentUser.driverDetails?.vehicleBrand || ''
   );
   const [vehicleModel, setVehicleModel] = useState(
-    currentUser.driverDetails?.vehicleModel || 'Orbit II 150cc (2023)'
+    currentUser.driverDetails?.vehicleModel || ''
   );
 
   // Real-time strict age calculation
@@ -286,25 +296,35 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     if (currentStep < 5) {
       setCurrentStep(currentStep + 1);
     } else {
+      // Step 5 Check: Vehicle Information
+      if (!vehiclePlate.trim() || !vehicleBrand.trim() || !vehicleModel.trim()) {
+        setErrorMsg(
+          lang === 'ar'
+            ? 'يرجى إدخال رقم لوحة الترقيم، العلامة والموديل للمركبة'
+            : 'Please enter vehicle plate, brand and model'
+        );
+        return;
+      }
+
       // Step 5 Submission
       const finalDriverDetails: DriverDetails = {
         facePhotoUrl: facePhoto || '',
         publicAvatarUrl: publicAvatar,
-        firstName,
-        lastName,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         birthDate,
         age: calculatedAge,
-        phone,
+        phone: phone.trim(),
         phoneVerified: isPhoneVerified,
-        licenseNumber,
+        licenseNumber: licenseNumber.trim(),
         licenseExpirationDate: licenseExpiration,
         licenseFrontUrl: licenseFront || '',
         licenseBackUrl: licenseBack || '',
         vehicleType,
         vehicleRegType,
-        vehiclePlate,
-        vehicleBrand,
-        vehicleModel,
+        vehiclePlate: vehiclePlate.trim(),
+        vehicleBrand: vehicleBrand.trim(),
+        vehicleModel: vehicleModel.trim(),
         verificationStatus: 'verified',
         isOnline: true,
         rating: 5.0,

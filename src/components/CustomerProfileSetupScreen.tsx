@@ -84,23 +84,19 @@ export const CustomerProfileSetupScreen: React.FC<CustomerProfileSetupScreenProp
   // Active view: 'quick_choice' or 'manual_edit'
   const [setupMode, setSetupMode] = useState<'quick' | 'manual'>('quick');
 
-  // Derive smart default values from the email account
-  const detectedEmail = currentUser.email || 'abderrahmanehadj3@gmail.com';
-  const emailPrefix = detectedEmail.split('@')[0];
+  // Derive dynamic values from the authenticated user
+  const detectedEmail = currentUser.email || '';
   const derivedEmailName =
     currentUser.displayName && currentUser.displayName !== 'مستخدم سريع'
       ? currentUser.displayName
-      : emailPrefix.includes('hadj') || emailPrefix.includes('abderrahmane')
-      ? 'عبد الرحمان حاج'
-      : emailPrefix
-          .replace(/[._\d]/g, ' ')
-          .replace(/\b\w/g, (c) => c.toUpperCase())
-          .trim() || 'زبون سريع';
+      : currentUser.email
+      ? currentUser.email.split('@')[0]
+      : 'زبون سريع';
 
   const defaultEmailAvatar =
     currentUser.avatarUrl ||
     'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80';
-  const defaultEmailBirthDate = currentUser.birthDate || '1998-05-14';
+  const defaultEmailBirthDate = currentUser.birthDate || '2000-01-01';
 
   // Manual Form States
   const [manualName, setManualName] = useState(derivedEmailName);
@@ -330,7 +326,7 @@ export const CustomerProfileSetupScreen: React.FC<CustomerProfileSetupScreenProp
                   </p>
                   <p className="text-xs text-slate-400 font-mono flex items-center gap-1">
                     <Smartphone size={12} className="text-emerald-400" />
-                    <span>{currentUser.phone || '+213 555 12 34 56'}</span>
+                    <span>{currentUser.phone || ''}</span>
                   </p>
                 </div>
               </div>
@@ -341,15 +337,15 @@ export const CustomerProfileSetupScreen: React.FC<CustomerProfileSetupScreenProp
                   <span className="block text-[10px] text-slate-400">تاريخ الميلاد المستخرج:</span>
                   <span className="text-xs font-mono font-bold text-white flex items-center gap-1.5 mt-0.5">
                     <Calendar size={13} className="text-emerald-400" />
-                    <span>14 مايو 1998 (~28 سنة)</span>
+                    <span>{defaultEmailBirthDate} (~{calculateAge(defaultEmailBirthDate)} سنة)</span>
                   </span>
                 </div>
 
                 <div className="p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80">
-                  <span className="block text-[10px] text-slate-400">الولاية الحالية:</span>
+                  <span className="block text-[10px] text-slate-400">الولاية:</span>
                   <span className="text-xs font-bold text-white flex items-center gap-1.5 mt-0.5">
                     <MapPin size={13} className="text-emerald-400" />
-                    <span>الجزائر العاصمة (16)</span>
+                    <span>ولاية {currentUser.wilaya || '16'}</span>
                   </span>
                 </div>
               </div>

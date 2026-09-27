@@ -41,10 +41,10 @@ export async function getOrdersFromSupabase(wilayaFilter?: string): Promise<Deli
           ? {
               id: item.assigned_driver_id,
               name: item.assigned_driver_name || 'كابتن سريع',
-              phone: item.assigned_driver_phone || '+213 661 00 00 00',
-              rating: 4.9,
-              vehicle: 'دراجة سريعة',
-              plate: '16-Matricule',
+              phone: item.assigned_driver_phone || '',
+              rating: item.assigned_driver_rating || 5.0,
+              vehicle: item.assigned_driver_vehicle || 'مركبة توصيل',
+              plate: item.assigned_driver_plate || '—',
               currentCoords: item.driver_lat
                 ? { lat: item.driver_lat, lng: item.driver_lng }
                 : undefined,

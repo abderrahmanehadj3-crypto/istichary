@@ -99,14 +99,15 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
       orderId: order.id,
       driverId: currentUser.id,
       driverName: currentUser.displayName,
-      driverPhone: currentUser.phone || '+213 661 00 00 00',
-      driverRating: currentUser.driverDetails?.rating || 4.9,
+      driverPhone: currentUser.phone || '',
+      driverRating: currentUser.driverDetails?.rating || 5.0,
       driverAvatar:
         currentUser.driverDetails?.facePhotoUrl ||
-        currentUser.avatarUrl ||
-        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-      vehicleInfo: `${currentUser.driverDetails?.vehicleBrand || 'Sym'} (${currentUser.driverDetails?.vehiclePlate || '16-Matricule'})`,
-      vehiclePlate: currentUser.driverDetails?.vehiclePlate || '16-12345-121',
+        currentUser.avatarUrl,
+      vehicleInfo: currentUser.driverDetails?.vehicleBrand
+        ? `${currentUser.driverDetails.vehicleBrand} (${currentUser.driverDetails.vehiclePlate})`
+        : 'مركبة توصيل',
+      vehiclePlate: currentUser.driverDetails?.vehiclePlate || '—',
       offeredPrice: finalBid,
       etaMinutes: 10,
       status: 'pending',

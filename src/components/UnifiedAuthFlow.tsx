@@ -42,33 +42,6 @@ interface UnifiedAuthFlowProps {
   onAuthSuccess: (user: UserProfile) => void;
 }
 
-interface SavedGoogleAccount {
-  id: string;
-  email: string;
-  name: string;
-  avatarUrl: string;
-  birthDate: string;
-  isPrimary?: boolean;
-}
-
-const DEVICE_GOOGLE_ACCOUNTS: SavedGoogleAccount[] = [
-  {
-    id: 'g-acc-1',
-    email: 'abderrahmanehadj3@gmail.com',
-    name: 'عبد الرحمان حاج',
-    avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-    birthDate: '1998-05-14',
-    isPrimary: true,
-  },
-  {
-    id: 'g-acc-2',
-    email: 'amine.hadj.dz@gmail.com',
-    name: 'أمين بلحاج',
-    avatarUrl: 'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=200&auto=format&fit=crop&q=80',
-    birthDate: '1995-10-22',
-  },
-];
-
 type AuthMethod = 'phone' | 'google';
 type AuthStep = 'select_method' | 'verify_phone_otp' | 'google_phone_prompt';
 
@@ -91,6 +64,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
   const [phoneNumber, setPhoneNumber] = useState('');
   const [carrierInfo, setCarrierInfo] = useState<CarrierInfo>(() => detectAlgerianCarrier(''));
   const [emailAddress, setEmailAddress] = useState('');
+  const [googleEmailInput, setGoogleEmailInput] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [selectedAvatarUrl, setSelectedAvatarUrl] = useState<string | undefined>(undefined);
   const [selectedBirthDate, setSelectedBirthDate] = useState<string | undefined>(undefined);
@@ -140,7 +114,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     try {
       // Attempt native One-Tap / Google Identity Services
       const googleUser = await triggerGoogleSignIn();
-      if (googleUser) {
+      if (googleUser && googleUser.email) {
         setEmailAddress(googleUser.email);
         setDisplayName(googleUser.name);
         setSelectedAvatarUrl(googleUser.avatarUrl);
@@ -153,32 +127,34 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
       console.warn('Google GSI error:', e);
     }
 
-    // Default to the primary device Google account prompt
-    const defaultGoogle = DEVICE_GOOGLE_ACCOUNTS[0];
-    setTimeout(() => {
-      setEmailAddress(defaultGoogle.email);
-      setDisplayName(defaultGoogle.name);
-      setSelectedAvatarUrl(defaultGoogle.avatarUrl);
-      setSelectedBirthDate(defaultGoogle.birthDate);
-      setIsLoading(false);
-      setStatusNotice(null);
-      setStep('google_phone_prompt');
-    }, 400);
+    // Attempt Supabase Google OAuth
+    try {
+      await signInWithSupabaseGoogle();
+    } catch (e) {
+      console.warn('Supabase OAuth notice:', e);
+    }
+
+    setIsLoading(false);
+    setStatusNotice(null);
   };
 
-  // 2. Select Google Account directly from device list
-  const handleSelectGoogleAccount = (acc: SavedGoogleAccount) => {
-    setIsLoading(true);
+  // 2. Direct Google Email Entry Handler
+  const handleDirectGoogleEmailSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = googleEmailInput.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErrorMsg(
+        lang === 'ar'
+          ? 'يرجى إدخال عنوان بريد Google إلكتروني صالح'
+          : 'Please enter a valid Google email address'
+      );
+      return;
+    }
+    setEmailAddress(cleanEmail);
+    const inferredName = cleanEmail.split('@')[0].replace(/[._]/g, ' ');
+    setDisplayName(inferredName);
     setErrorMsg(null);
-    setEmailAddress(acc.email);
-    setDisplayName(acc.name);
-    setSelectedAvatarUrl(acc.avatarUrl);
-    setSelectedBirthDate(acc.birthDate);
-
-    setTimeout(() => {
-      setIsLoading(false);
-      setStep('google_phone_prompt');
-    }, 350);
+    setStep('google_phone_prompt');
   };
 
   // 3. Dispatch Live Algerian SMS/OTP to Phone
@@ -268,7 +244,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
       // Verification Succeeded! Create Production UserProfile
       const calculatedName =
         displayName.trim() ||
-        (emailAddress ? emailAddress.split('@')[0] : 'مستخدم سريع');
+        (emailAddress ? emailAddress.split('@')[0].replace(/[._]/g, ' ') : 'مستخدم سريع');
 
       const authenticatedUser: UserProfile = {
         id: `usr-${Date.now()}`,
@@ -276,10 +252,8 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         phone: carrierInfo.formattedNational,
         phoneVerified: true,
         displayName: calculatedName,
-        avatarUrl:
-          selectedAvatarUrl ||
-          'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-        birthDate: selectedBirthDate || '1998-05-14',
+        avatarUrl: selectedAvatarUrl || undefined,
+        birthDate: selectedBirthDate || '',
         wilaya: '16',
         customerProfileCompleted: false,
         cameraPermissionGranted: false,
@@ -515,7 +489,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                 </form>
               )}
 
-              {/* Form 1B: Official Google Sign-In & Device Account Chooser */}
+              {/* Form 1B: Official Google Sign-In */}
               {method === 'google' && (
                 <div className="space-y-4 animate-in fade-in duration-300">
                   {/* Official Google Sign-In Button */}
@@ -524,7 +498,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     id="btn-official-google-signin"
                     onClick={handleGoogleSignInClick}
                     disabled={isLoading}
-                    className="w-full py-3.5 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-bold text-sm shadow-xl shadow-white/10 transition flex items-center justify-center gap-3 cursor-pointer active:scale-95 border border-slate-300"
+                    className="w-full py-4 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-black text-sm shadow-xl shadow-white/10 transition flex items-center justify-center gap-3 cursor-pointer active:scale-95 border border-slate-300"
                   >
                     <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                       <path
@@ -547,54 +521,48 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     <span>
                       {isLoading
                         ? lang === 'ar'
-                          ? 'جاري فتح Google...'
-                          : 'Opening Google...'
+                          ? 'جاري الاتصال بـ Google...'
+                          : 'Connecting to Google...'
                         : lang === 'ar'
                         ? 'المتابعة باستخدام حساب Google'
                         : 'Sign in with Google'}
                     </span>
                   </button>
 
-                  {/* Device Google Accounts List (Native One-Tap Selection) */}
-                  <div className="pt-2">
-                    <div className="flex items-center justify-between text-xs text-slate-400 mb-2 px-1">
-                      <span>{lang === 'ar' ? 'أو اختر حساب Google من جهازك:' : 'Or pick a Google account on device:'}</span>
-                      <span className="text-[10px] text-emerald-400 font-mono font-bold">One-Tap</span>
-                    </div>
-
-                    <div className="space-y-2">
-                      {DEVICE_GOOGLE_ACCOUNTS.map((acc) => (
-                        <button
-                          key={acc.id}
-                          type="button"
-                          id={`btn-google-account-${acc.id}`}
-                          onClick={() => handleSelectGoogleAccount(acc)}
-                          disabled={isLoading}
-                          className="w-full p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 hover:border-emerald-500/50 hover:bg-slate-900 transition-all flex items-center justify-between gap-3 text-start cursor-pointer group active:scale-[0.99]"
-                        >
-                          <div className="flex items-center gap-3 min-w-0">
-                            <img
-                              src={acc.avatarUrl}
-                              alt={acc.name}
-                              className="w-10 h-10 rounded-full object-cover border border-slate-700 group-hover:border-emerald-400 transition flex-shrink-0"
-                            />
-                            <div className="min-w-0">
-                              <p className="text-xs font-bold text-white group-hover:text-emerald-400 transition truncate">
-                                {acc.name}
-                              </p>
-                              <p className="text-[11px] text-slate-400 font-mono truncate">
-                                {acc.email}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="w-8 h-8 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 group-hover:text-emerald-400 group-hover:border-emerald-500/40 flex items-center justify-center transition flex-shrink-0">
-                            <SubArrowIcon size={16} />
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+                  <div className="relative flex items-center justify-center my-3">
+                    <div className="border-t border-slate-800 w-full" />
+                    <span className="bg-slate-900 px-3 text-[11px] text-slate-500 font-bold shrink-0">
+                      {lang === 'ar' ? 'أو أدخل عنوان بريدك' : 'Or enter your email'}
+                    </span>
+                    <div className="border-t border-slate-800 w-full" />
                   </div>
+
+                  <form onSubmit={handleDirectGoogleEmailSubmit} className="space-y-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                        {lang === 'ar' ? 'عنوان بريد Google (@gmail.com)' : 'Google Email Address (@gmail.com)'}
+                      </label>
+                      <input
+                        type="email"
+                        id="input-direct-google-email"
+                        value={googleEmailInput}
+                        onChange={(e) => setGoogleEmailInput(e.target.value)}
+                        placeholder="yourname@gmail.com"
+                        dir="ltr"
+                        className="w-full px-4 py-3 rounded-2xl bg-slate-950 border border-slate-700/80 text-white font-mono text-sm focus:border-emerald-500 focus:outline-none transition shadow-inner font-bold"
+                        required
+                      />
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading || !googleEmailInput.trim()}
+                      className="w-full py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                    >
+                      <span>{lang === 'ar' ? 'متابعة إلى ربط الهاتف' : 'Continue to Phone Link'}</span>
+                      <ArrowIcon size={15} />
+                    </button>
+                  </form>
                 </div>
               )}
             </div>
@@ -606,13 +574,19 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
               {/* Selected Google Account Summary Pill */}
               <div className="p-3.5 rounded-2xl bg-slate-950 border border-emerald-500/40 flex items-center justify-between gap-3 shadow-lg shadow-emerald-950/20">
                 <div className="flex items-center gap-3 min-w-0">
-                  <img
-                    src={selectedAvatarUrl}
-                    alt="Google Avatar"
-                    className="w-10 h-10 rounded-full object-cover border border-emerald-400 flex-shrink-0"
-                  />
+                  {selectedAvatarUrl ? (
+                    <img
+                      src={selectedAvatarUrl}
+                      alt="Google Avatar"
+                      className="w-10 h-10 rounded-full object-cover border border-emerald-400 flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center font-bold text-sm shrink-0">
+                      {displayName ? displayName.charAt(0).toUpperCase() : 'G'}
+                    </div>
+                  )}
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{displayName}</p>
+                    <p className="text-xs font-bold text-white truncate">{displayName || emailAddress}</p>
                     <p className="text-[11px] text-emerald-400 font-mono truncate">{emailAddress}</p>
                   </div>
                 </div>

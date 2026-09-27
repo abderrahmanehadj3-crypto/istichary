@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import {
   CustomerContactCall,
+  DeliveryOrder,
   Language,
   ThemeMode,
   UserProfile,
@@ -32,6 +33,7 @@ interface CustomerDrawerMenuProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserProfile;
+  orders?: DeliveryOrder[];
   t: AppTranslations;
   lang: Language;
   theme: ThemeMode;
@@ -43,50 +45,11 @@ interface CustomerDrawerMenuProps {
 
 type DrawerView = 'menu' | 'profile' | 'call_history';
 
-// Mock Contact History for Customer
-const INITIAL_CALL_HISTORY: CustomerContactCall[] = [
-  {
-    id: 'call-1',
-    driverId: 'drv-1',
-    driverName: 'كريم الدراجي',
-    driverPhone: '+213 661 88 99 00',
-    driverRating: 4.95,
-    vehicle: 'Sym Orbit II (دراجة نارية)',
-    plate: '01234-121-16',
-    orderTitle: 'توصيل وثائق وعقود مستعجلة',
-    date: 'اليوم، 14:15',
-    status: 'completed',
-  },
-  {
-    id: 'call-2',
-    driverId: 'drv-2',
-    driverName: 'ياسين بوعلام',
-    driverPhone: '+213 550 44 33 22',
-    driverRating: 4.88,
-    vehicle: 'Peugeot 208 (سيارة)',
-    plate: '09812-118-16',
-    orderTitle: 'طرد إلكترونيات وهاتف ذكي',
-    date: 'أمس، 17:30',
-    status: 'completed',
-  },
-  {
-    id: 'call-3',
-    driverId: 'drv-3',
-    driverName: 'مراد سلطاني',
-    driverPhone: '+213 770 12 90 45',
-    driverRating: 4.92,
-    vehicle: 'Kymco Agility 125',
-    plate: '04512-120-16',
-    orderTitle: 'وجبة طعام عائلية خاصة',
-    date: '18 سبتمبر، 13:00',
-    status: 'completed',
-  },
-];
-
 export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
   isOpen,
   onClose,
   currentUser,
+  orders = [],
   t,
   lang,
   theme,
@@ -101,10 +64,31 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
 
   const [activeView, setActiveView] = useState<DrawerView>('menu');
 
+  // Derive driver contacts from real orders with an assigned driver
+  const callHistory: CustomerContactCall[] = orders
+    .filter((o) => o.customerId === currentUser.id && o.assignedDriver)
+    .map((o) => ({
+      id: o.id,
+      driverId: o.assignedDriver!.id,
+      driverName: o.assignedDriver!.name,
+      driverPhone: o.assignedDriver!.phone,
+      driverRating: o.assignedDriver!.rating || 5,
+      vehicle: o.assignedDriver!.vehicle,
+      plate: o.assignedDriver!.plate,
+      orderTitle: o.packageDescription || 'طرد سريع',
+      date: new Date(o.createdAt).toLocaleDateString('ar-DZ', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: 'numeric',
+        month: 'short',
+      }),
+      status: o.status,
+    }));
+
   // Profile Edit State
-  const [displayName, setDisplayName] = useState(currentUser.displayName);
-  const [phone, setPhone] = useState(currentUser.phone || '+213 555 12 34 56');
-  const [birthDate, setBirthDate] = useState(currentUser.birthDate || '1998-05-14');
+  const [displayName, setDisplayName] = useState(currentUser.displayName || '');
+  const [phone, setPhone] = useState(currentUser.phone || '');
+  const [birthDate, setBirthDate] = useState(currentUser.birthDate || '');
   const [selectedAvatar, setSelectedAvatar] = useState(
     currentUser.avatarUrl || ''
   );
@@ -358,48 +342,58 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs text-slate-400 px-1">
                 <span>سجل الكباتن المتواصل معهم</span>
-                <span className="font-mono font-bold text-emerald-400">{INITIAL_CALL_HISTORY.length} اتصالات</span>
+                <span className="font-mono font-bold text-emerald-400">{callHistory.length} اتصالات</span>
               </div>
 
-              <div className="space-y-2.5">
-                {INITIAL_CALL_HISTORY.map((call) => (
-                  <div
-                    key={call.id}
-                    className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 shadow-md"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-10 h-10 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-sm">
-                          <User size={18} />
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <h4 className="font-black text-xs text-white">{call.driverName}</h4>
-                            <span className="text-[11px] text-amber-400 font-bold">★ {call.driverRating}</span>
+              {callHistory.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 text-center space-y-2">
+                  <PhoneCall size={28} className="mx-auto text-slate-600" />
+                  <p className="text-xs font-bold text-slate-300">لا يوجد سجل اتصالات مع كباتن حتى الآن</p>
+                  <p className="text-[11px] text-slate-500 leading-relaxed">
+                    عند قبول عرض كابتن لتوصيل شحنتك، ستظهر بيانات الاتصال والتفاصيل المباشرة هنا تلقائياً.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {callHistory.map((call) => (
+                    <div
+                      key={call.id}
+                      className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3 shadow-md"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-10 h-10 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center font-bold text-sm">
+                            <User size={18} />
                           </div>
-                          <p className="text-[11px] text-slate-400 mt-0.5">{call.vehicle}</p>
-                          <span className="text-[10px] font-mono text-emerald-400 font-bold">{call.plate}</span>
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <h4 className="font-black text-xs text-white">{call.driverName}</h4>
+                              <span className="text-[11px] text-amber-400 font-bold">★ {call.driverRating}</span>
+                            </div>
+                            <p className="text-[11px] text-slate-400 mt-0.5">{call.vehicle}</p>
+                            <span className="text-[10px] font-mono text-emerald-400 font-bold">{call.plate}</span>
+                          </div>
                         </div>
+
+                        {/* Direct Call Button */}
+                        <a
+                          href={`tel:${call.driverPhone}`}
+                          className="py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-md shadow-emerald-500/20 transition flex items-center gap-1.5 cursor-pointer flex-shrink-0"
+                        >
+                          <Phone size={13} />
+                          <span>اتصال الآن</span>
+                        </a>
                       </div>
 
-                      {/* Direct Call Button */}
-                      <a
-                        href={`tel:${call.driverPhone}`}
-                        className="py-2 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-md shadow-emerald-500/20 transition flex items-center gap-1.5 cursor-pointer flex-shrink-0"
-                      >
-                        <Phone size={13} />
-                        <span>اتصال الآن</span>
-                      </a>
+                      {/* Order Details & Call Date */}
+                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                        <span className="truncate max-w-[180px]">📦 {call.orderTitle}</span>
+                        <span className="font-mono text-slate-500">{call.date}</span>
+                      </div>
                     </div>
-
-                    {/* Order Details & Call Date */}
-                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                      <span className="truncate max-w-[180px]">📦 {call.orderTitle}</span>
-                      <span className="font-mono text-slate-500">{call.date}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

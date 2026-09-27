@@ -62,27 +62,20 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 }) => {
   const currentWilayaObj = getWilayaByCode(selectedWilaya);
 
-  // Form states
-  const [pickupAddress, setPickupAddress] = useState('الجزائر الوسطى، شارع ديدوش مراد');
+  // Form states - Initialized with clean production states
+  const [pickupAddress, setPickupAddress] = useState('');
   const [pickupCoords, setPickupCoords] = useState<{ lat: number; lng: number }>({
     lat: currentWilayaObj.lat,
     lng: currentWilayaObj.lng,
   });
 
-  const [dropoffAddress, setDropoffAddress] = useState('باب الزوار، الجزائر');
-  const [dropoffCoords, setDropoffCoords] = useState<{ lat: number; lng: number }>({
-    lat: currentWilayaObj.lat + 0.04,
-    lng: currentWilayaObj.lng + 0.05,
-  });
+  const [dropoffAddress, setDropoffAddress] = useState('');
+  const [dropoffCoords, setDropoffCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-  // Package mandatory photo & details
-  const [packagePhoto, setPackagePhoto] = useState<string>(
-    'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=800&auto=format&fit=crop&q=80'
-  );
+  // Package mandatory photo & details - Clean production states (requires real capture)
+  const [packagePhoto, setPackagePhoto] = useState<string>('');
   const [isPackageCameraOpen, setIsPackageCameraOpen] = useState<boolean>(false);
-  const [packageDescription, setPackageDescription] = useState(
-    'طرد متوسط الحجم، أوراق ومستندات رسمية هامة مغلفة بإحكام'
-  );
+  const [packageDescription, setPackageDescription] = useState('');
   const [packageCategory, setPackageCategory] = useState<
     'documents' | 'food' | 'electronics' | 'clothes' | 'fragile' | 'other'
   >('documents');
@@ -169,17 +162,25 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
 
   // Update distance & fare when coords change
   useEffect(() => {
-    const dist = calculateDistanceKm(
-      pickupCoords.lat,
-      pickupCoords.lng,
-      dropoffCoords.lat,
-      dropoffCoords.lng
-    );
-    setDistanceKm(dist);
-    const fare = calculateSuggestedFare(dist);
-    setSuggestedFare(fare);
-    if (!customerOffer || customerOffer === 500) {
-      setCustomerOffer(fare);
+    if (pickupCoords && dropoffCoords) {
+      const dist = calculateDistanceKm(
+        pickupCoords.lat,
+        pickupCoords.lng,
+        dropoffCoords.lat,
+        dropoffCoords.lng
+      );
+      setDistanceKm(dist);
+      const fare = calculateSuggestedFare(dist);
+      setSuggestedFare(fare);
+      if (!customerOffer || customerOffer === 500) {
+        setCustomerOffer(fare);
+      }
+    } else {
+      setDistanceKm(0);
+      setSuggestedFare(300);
+      if (!customerOffer) {
+        setCustomerOffer(300);
+      }
     }
   }, [pickupCoords, dropoffCoords]);
 
@@ -344,14 +345,23 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       return;
     }
 
+    if (!pickupAddress.trim() || !pickupCoords) {
+      alert(lang === 'ar' ? 'يرجى تحديد موقع وعنوان الاستلام' : 'Please specify pickup address and location');
+      return;
+    }
+
+    if (!dropoffAddress.trim() || !dropoffCoords) {
+      alert(lang === 'ar' ? 'يرجى تحديد موقع وعنوان التسليم على الخريطة' : 'Please select dropoff address and location');
+      return;
+    }
+
     if (!packagePhoto) {
       alert(t.packagePhotoMandatory);
       return;
     }
 
-    // Verify valid coordinates exist
-    if (!pickupCoords || !dropoffCoords) {
-      alert(lang === 'ar' ? 'يرجى تحديد موقع الاستلام والتسليم على الخريطة' : 'Please select pickup and dropoff locations on the map');
+    if (!packageDescription.trim()) {
+      alert(lang === 'ar' ? 'يرجى إدخال وصف لمحتوى الطرد' : 'Please provide a package description');
       return;
     }
 
@@ -359,18 +369,18 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
       id: `ord-${Date.now()}`,
       customerId: currentUser.id,
       customerName: currentUser.displayName,
-      customerPhone: currentUser.phone || '+213 555 00 00 00',
+      customerPhone: currentUser.phone || '',
       wilaya: selectedWilaya,
-      pickupAddress,
+      pickupAddress: pickupAddress.trim(),
       pickupCoords,
-      dropoffAddress,
+      dropoffAddress: dropoffAddress.trim(),
       dropoffCoords,
       packagePhotoUrl: packagePhoto,
-      packageDescription,
+      packageDescription: packageDescription.trim(),
       packageCategory,
-      distanceKm,
-      suggestedBasePrice: suggestedFare,
-      customerOfferPrice: customerOffer,
+      distanceKm: distanceKm || 1,
+      suggestedBasePrice: suggestedFare || 300,
+      customerOfferPrice: customerOffer || 300,
       status: 'searching',
       offers: [],
       createdAt: new Date().toISOString(),

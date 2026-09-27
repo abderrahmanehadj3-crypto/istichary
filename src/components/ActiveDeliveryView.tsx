@@ -123,14 +123,18 @@ export const ActiveDeliveryView: React.FC<ActiveDeliveryViewProps> = ({
                   <h4 className="font-black text-sm text-white">{driver?.name || 'كابتن سريع'}</h4>
                   <span className="text-xs text-amber-400 font-bold">★ {driver?.rating || 4.9}</span>
                 </div>
-                <p className="text-xs text-slate-400 mt-0.5">{driver?.vehicle || 'دراجة نارية'}</p>
+                <p className="text-xs text-slate-400 mt-0.5">{driver?.vehicle || 'مركبة توصيل'}</p>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 font-mono text-[11px] text-emerald-400 font-bold">
-                    {driver?.plate || '16-12345-121'}
-                  </span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    {driver?.phone || '+213 661 88 99 00'}
-                  </span>
+                  {driver?.plate && (
+                    <span className="px-2 py-0.5 rounded-md bg-slate-800 font-mono text-[11px] text-emerald-400 font-bold">
+                      {driver.plate}
+                    </span>
+                  )}
+                  {driver?.phone && (
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      {driver.phone}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -138,14 +142,21 @@ export const ActiveDeliveryView: React.FC<ActiveDeliveryViewProps> = ({
             {/* Direct Contact & Action Buttons: Prominent Call & Cancel */}
             <div className="grid grid-cols-2 gap-3 pt-2">
               {/* Prominent Call Button */}
-              <a
-                id="btn-customer-call-driver"
-                href={`tel:${driver?.phone || '+213661889900'}`}
-                className="py-3 px-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Phone size={17} />
-                <span>{t.btnCall} ({driver?.phone || '+213 661 88 99 00'})</span>
-              </a>
+              {driver?.phone ? (
+                <a
+                  id="btn-customer-call-driver"
+                  href={`tel:${driver.phone}`}
+                  className="py-3 px-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Phone size={17} />
+                  <span>{t.btnCall} ({driver.phone})</span>
+                </a>
+              ) : (
+                <div className="py-3 px-4 rounded-2xl bg-slate-800 text-slate-400 text-xs font-bold flex items-center justify-center gap-2">
+                  <Phone size={17} />
+                  <span>{t.btnCall}</span>
+                </div>
+              )}
 
               {/* Prominent Cancel Button */}
               <button

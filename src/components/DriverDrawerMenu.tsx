@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import {
   DeliveryEarningRecord,
+  DeliveryOrder,
   DriverDetails,
   Language,
   ThemeMode,
@@ -36,12 +37,14 @@ import {
   Calendar,
   Phone,
   Filter,
+  Package,
 } from 'lucide-react';
 
 interface DriverDrawerMenuProps {
   isOpen: boolean;
   onClose: () => void;
   currentUser: UserProfile;
+  orders?: DeliveryOrder[];
   t: AppTranslations;
   lang: Language;
   theme: ThemeMode;
@@ -53,112 +56,11 @@ interface DriverDrawerMenuProps {
 
 type DrawerView = 'menu' | 'profile' | 'stats' | 'wallet';
 
-// Mock Initial Earnings Data for Driver
-const INITIAL_EARNINGS: DeliveryEarningRecord[] = [
-  {
-    id: 'ern-1',
-    orderId: 'ord-101',
-    date: 'اليوم، 14:20',
-    amount: 950,
-    commission: 95,
-    netEarning: 855,
-    pickup: 'ديدوش مراد، الجزائر الوسطى',
-    dropoff: 'باب الزوار',
-    distanceKm: 14.2,
-    status: 'completed',
-  },
-  {
-    id: 'ern-2',
-    orderId: 'ord-102',
-    date: 'اليوم، 11:45',
-    amount: 1400,
-    commission: 140,
-    netEarning: 1260,
-    pickup: 'بئر خادم',
-    dropoff: 'الرويبة',
-    distanceKm: 22.0,
-    status: 'completed',
-  },
-  {
-    id: 'ern-3',
-    orderId: 'ord-103',
-    date: 'أمس، 18:10',
-    amount: 700,
-    commission: 70,
-    netEarning: 630,
-    pickup: 'حيدرة',
-    dropoff: 'الأبيار',
-    distanceKm: 6.5,
-    status: 'completed',
-  },
-  {
-    id: 'ern-4',
-    orderId: 'ord-104',
-    date: 'أمس، 15:30',
-    amount: 1100,
-    commission: 0,
-    netEarning: 0,
-    pickup: 'القبة',
-    dropoff: 'الدار البيضاء',
-    distanceKm: 16.0,
-    status: 'cancelled',
-  },
-  {
-    id: 'ern-5',
-    orderId: 'ord-105',
-    date: '19 سبتمبر، 16:00',
-    amount: 1800,
-    commission: 180,
-    netEarning: 1620,
-    pickup: 'زرالدة',
-    dropoff: 'الشراقة',
-    distanceKm: 18.5,
-    status: 'completed',
-  },
-];
-
-// Mock Initial Wallet Transactions
-const INITIAL_TRANSACTIONS: WalletTransaction[] = [
-  {
-    id: 'tx-1',
-    type: 'topup_edahabia',
-    amount: 5000,
-    date: '2026-09-21 16:30',
-    status: 'completed',
-    description: 'شحن رصيد إلكتروني (البطاقة الذهبية)',
-    txRef: 'EDAH-998241',
-  },
-  {
-    id: 'tx-2',
-    type: 'delivery_earning',
-    amount: 855,
-    date: '2026-09-22 14:20',
-    status: 'completed',
-    description: 'أرباح توصيل طرد #101',
-  },
-  {
-    id: 'tx-3',
-    type: 'commission_fee',
-    amount: -95,
-    date: '2026-09-22 14:20',
-    status: 'completed',
-    description: 'عمولة تطبيق Sari3 (10%)',
-  },
-  {
-    id: 'tx-4',
-    type: 'topup_baridimob',
-    amount: 3000,
-    date: '2026-09-19 11:00',
-    status: 'completed',
-    description: 'تحويل بريدي موب (وصل يدوي مؤكد)',
-    txRef: 'BMOB-341908',
-  },
-];
-
 export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
   isOpen,
   onClose,
   currentUser,
+  orders = [],
   t,
   lang,
   theme,
@@ -174,14 +76,32 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
   const [activeView, setActiveView] = useState<DrawerView>('menu');
   const [statsPeriod, setStatsPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
 
-  // Wallet State
-  const [walletBalance, setWalletBalance] = useState<number>(14500);
-  const [transactions, setTransactions] = useState<WalletTransaction[]>(INITIAL_TRANSACTIONS);
+  // Load wallet balance from local storage or default to 0
+  const walletStorageKey = `sari3_driver_wallet_${currentUser.id}`;
+  const [walletBalance, setWalletBalance] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem(walletStorageKey);
+      return saved ? parseFloat(saved) : 0;
+    } catch {
+      return 0;
+    }
+  });
+
+  const txStorageKey = `sari3_driver_txs_${currentUser.id}`;
+  const [transactions, setTransactions] = useState<WalletTransaction[]>(() => {
+    try {
+      const saved = localStorage.getItem(txStorageKey);
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
   const [topUpMethod, setTopUpMethod] = useState<'edahabia' | 'baridimob'>('edahabia');
-  const [topUpAmount, setTopUpAmount] = useState<number>(2000);
-  const [cardNumber, setCardNumber] = useState('6280 1234 5678 9012');
-  const [cardExpiry, setCardExpiry] = useState('08/28');
-  const [cardCvv, setCardCvv] = useState('789');
+  const [topUpAmount, setTopUpAmount] = useState<number>(1000);
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
   const [receiptUploaded, setReceiptUploaded] = useState(false);
   const [topUpSuccessMsg, setTopUpSuccessMsg] = useState<string | null>(null);
 
@@ -189,20 +109,54 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
 
   const driver = currentUser.driverDetails;
 
-  // Stats Calculations
-  const completedCount = INITIAL_EARNINGS.filter((e) => e.status === 'completed').length;
-  const cancelledCount = INITIAL_EARNINGS.filter((e) => e.status === 'cancelled').length;
-  const totalNetEarnings = INITIAL_EARNINGS.filter((e) => e.status === 'completed').reduce(
-    (acc, curr) => acc + curr.netEarning,
-    0
+  // Real-time Delivery Earnings derived from live orders
+  const deliveredOrders = orders.filter(
+    (o) => o.assignedDriver?.id === currentUser.id && o.status === 'delivered'
+  );
+  const cancelledOrders = orders.filter(
+    (o) => o.assignedDriver?.id === currentUser.id && o.status === 'cancelled'
   );
 
-  // Handle Top-Up Simulation
+  const earnings: DeliveryEarningRecord[] = deliveredOrders.map((o) => {
+    const gross = o.agreedPrice || o.customerOfferPrice || 0;
+    const commission = Math.round(gross * 0.1);
+    const net = gross - commission;
+    return {
+      id: `ern-${o.id}`,
+      orderId: o.id,
+      date: o.completedAt
+        ? new Date(o.completedAt).toLocaleDateString('ar-DZ', {
+            hour: '2-digit',
+            minute: '2-digit',
+            day: 'numeric',
+            month: 'short',
+          })
+        : 'مكتمل',
+      amount: gross,
+      commission,
+      netEarning: net,
+      pickup: o.pickupAddress,
+      dropoff: o.dropoffAddress,
+      distanceKm: o.distanceKm,
+      status: 'completed' as const,
+    };
+  });
+
+  // Stats Calculations
+  const completedCount = deliveredOrders.length;
+  const cancelledCount = cancelledOrders.length;
+  const totalNetEarnings = earnings.reduce((acc, curr) => acc + curr.netEarning, 0);
+
+  // Handle Top-Up Execution
   const handleProcessTopUp = (e: React.FormEvent) => {
     e.preventDefault();
     if (topUpAmount <= 0) return;
 
     if (topUpMethod === 'edahabia') {
+      if (!cardNumber.trim() || !cardExpiry.trim() || !cardCvv.trim()) {
+        alert('يرجى إدخال بيانات البطاقة الذهبية / CIB كاملة');
+        return;
+      }
       const newTx: WalletTransaction = {
         id: `tx-${Date.now()}`,
         type: 'topup_edahabia',
@@ -212,10 +166,37 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
         description: 'شحن رصيد إلكتروني (البطاقة الذهبية / CIB)',
         txRef: `EDAH-${Math.floor(100000 + Math.random() * 900000)}`,
       };
-      setTransactions([newTx, ...transactions]);
-      setWalletBalance((prev) => prev + topUpAmount);
+      const updatedTxs = [newTx, ...transactions];
+      const updatedBalance = walletBalance + topUpAmount;
+      setTransactions(updatedTxs);
+      setWalletBalance(updatedBalance);
+      localStorage.setItem(txStorageKey, JSON.stringify(updatedTxs));
+      localStorage.setItem(walletStorageKey, String(updatedBalance));
       setTopUpSuccessMsg(`تم شحن المحفظة بنجاح بمبلغ ${topUpAmount} دج`);
+      setCardNumber('');
+      setCardExpiry('');
+      setCardCvv('');
     } else {
+      if (!receiptUploaded) {
+        alert('يرجى إرفاق صورة وصل تحويل بريدي موب للمتابعة');
+        return;
+      }
+      const newTx: WalletTransaction = {
+        id: `tx-${Date.now()}`,
+        type: 'topup_baridimob',
+        amount: topUpAmount,
+        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        status: 'pending',
+        description: 'تحويل بريدي موب (قيد التأكيد الآلي)',
+        txRef: `BMOB-${Math.floor(100000 + Math.random() * 900000)}`,
+      };
+      const updatedTxs = [newTx, ...transactions];
+      setTransactions(updatedTxs);
+      localStorage.setItem(txStorageKey, JSON.stringify(updatedTxs));
+      setTopUpSuccessMsg(`تم استلام وصل التحويل بمبلغ ${topUpAmount} دج وسيتم تفعيله فوراً`);
+      setReceiptUploaded(false);
+    }
+  };
       const newTx: WalletTransaction = {
         id: `tx-${Date.now()}`,
         type: 'topup_baridimob',
@@ -449,19 +430,23 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400">الاسم الكامل:</span>
-                    <span className="font-bold text-white">{driver?.firstName || 'كريم'} {driver?.lastName || 'الدراجي'}</span>
+                    <span className="font-bold text-white">
+                      {driver?.firstName || currentUser.displayName} {driver?.lastName || ''}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">العمر القانوني:</span>
-                    <span className="font-bold text-white">{driver?.age || 25} سنة (≥ 20)</span>
+                    <span className="font-bold text-white">
+                      {driver?.age ? `${driver.age} سنة (≥ 20)` : 'مؤهل (≥ 20)'}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">تاريخ الميلاد:</span>
-                    <span className="font-mono text-white">{driver?.birthDate || '2001-05-14'}</span>
+                    <span className="font-mono text-white">{driver?.birthDate || currentUser.birthDate || '—'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">رقم الهاتف:</span>
-                    <span className="font-mono text-emerald-400 font-bold">{currentUser.phone}</span>
+                    <span className="font-mono text-emerald-400 font-bold">{currentUser.phone || '—'}</span>
                   </div>
                 </div>
               </div>
@@ -475,11 +460,11 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400">رقم الرخصة:</span>
-                    <span className="font-mono font-bold text-white">{driver?.licenseNumber || '16/2021/987654'}</span>
+                    <span className="font-mono font-bold text-white">{driver?.licenseNumber || '—'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">تاريخ الانتهاء:</span>
-                    <span className="font-mono text-white">{driver?.licenseExpirationDate || '2030-12-31'}</span>
+                    <span className="font-mono text-white">{driver?.licenseExpirationDate || '—'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">المسح الحي للكاميرا:</span>
@@ -497,15 +482,23 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400">نوع المركبة:</span>
-                    <span className="font-bold text-white">دراجة نارية (Moto)</span>
+                    <span className="font-bold text-white">
+                      {driver?.vehicleType === 'car'
+                        ? 'سيارة (Voiture)'
+                        : driver?.vehicleType === 'van'
+                        ? 'شاحنة صغيرة (Fourgonnette)'
+                        : 'دراجة نارية (Moto)'}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">العلامة والموديل:</span>
-                    <span className="font-bold text-white">{driver?.vehicleBrand || 'Sym'} {driver?.vehicleModel || 'Orbit II 150cc'}</span>
+                    <span className="font-bold text-white">
+                      {driver?.vehicleBrand || '—'} {driver?.vehicleModel || ''}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">رقم لوحة الترقيم (Matricule):</span>
-                    <span className="font-mono font-bold text-emerald-400">{driver?.vehiclePlate || '01234-121-16'}</span>
+                    <span className="font-mono font-bold text-emerald-400">{driver?.vehiclePlate || '—'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">نوع البطاقة الرمادية:</span>
@@ -563,7 +556,7 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                     <span>الطلبات المكتملة</span>
                   </div>
                   <p className="text-2xl font-black text-white font-mono">{completedCount}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">معدل الإنجاز 96%</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">من الطلبات المسندة</p>
                 </div>
 
                 <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
@@ -572,7 +565,7 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                     <span>الطلبات الملغاة</span>
                   </div>
                   <p className="text-2xl font-black text-white font-mono">{cancelledCount}</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">ملغاة من الزبون أو الظروف</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">ملغاة من الزبون</p>
                 </div>
               </div>
 
@@ -593,34 +586,44 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
               <div className="space-y-2 pt-2">
                 <p className="text-xs font-bold text-white px-1">تفاصيل الأرباح لكل طلب فردي</p>
 
-                <div className="space-y-2">
-                  {INITIAL_EARNINGS.map((rec) => (
-                    <div
-                      key={rec.id}
-                      className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5 text-xs"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-white truncate max-w-[180px]">
-                          {rec.pickup} ← {rec.dropoff}
-                        </span>
-                        <span
-                          className={`font-mono font-bold ${
-                            rec.status === 'completed' ? 'text-emerald-400' : 'text-red-400'
-                          }`}
-                        >
-                          {rec.status === 'completed' ? `+${rec.netEarning} دج` : 'ملغاة (0 دج)'}
-                        </span>
-                      </div>
+                {earnings.length === 0 ? (
+                  <div className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 text-center space-y-2">
+                    <Package size={28} className="mx-auto text-slate-600" />
+                    <p className="text-xs font-bold text-slate-300">لا توجد عمليات توصيل مكتملة حتى الآن</p>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      عند قبول عروضك وإتمام أول توصيلة بنجاح، ستُسجل أرباحك وتفاصيل المسافة هنا تلقائياً.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {earnings.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5 text-xs"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-white truncate max-w-[180px]">
+                            {rec.pickup} ← {rec.dropoff}
+                          </span>
+                          <span
+                            className={`font-mono font-bold ${
+                              rec.status === 'completed' ? 'text-emerald-400' : 'text-red-400'
+                            }`}
+                          >
+                            {rec.status === 'completed' ? `+${rec.netEarning} دج` : 'ملغاة (0 دج)'}
+                          </span>
+                        </div>
 
-                      <div className="flex items-center justify-between text-[11px] text-slate-400">
-                        <span>{rec.date} • {rec.distanceKm} كم</span>
-                        {rec.status === 'completed' && (
-                          <span>(الإجمالي {rec.amount} - عمولة {rec.commission})</span>
-                        )}
+                        <div className="flex items-center justify-between text-[11px] text-slate-400">
+                          <span>{rec.date} • {rec.distanceKm} كم</span>
+                          {rec.status === 'completed' && (
+                            <span>(الإجمالي {rec.amount} - عمولة {rec.commission})</span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -794,41 +797,51 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
               <div className="space-y-2 pt-2">
                 <p className="text-xs font-bold text-white px-1">سجل العمليات المالية بالمحفظة</p>
 
-                <div className="space-y-2">
-                  {transactions.map((tx) => (
-                    <div
-                      key={tx.id}
-                      className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs"
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <div
-                          className={`w-8 h-8 rounded-xl flex items-center justify-center ${
-                            tx.amount > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
-                          }`}
-                        >
-                          <Receipt size={16} />
+                {transactions.length === 0 ? (
+                  <div className="p-5 rounded-2xl bg-slate-900/80 border border-slate-800 text-center space-y-1.5">
+                    <Receipt size={24} className="mx-auto text-slate-600" />
+                    <p className="text-xs font-bold text-slate-300">لا توجد عمليات مالية مسجلة</p>
+                    <p className="text-[10px] text-slate-500">
+                      عمليات شحن المحفظة واقتطاع العمولات ستظهر هنا.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {transactions.map((tx) => (
+                      <div
+                        key={tx.id}
+                        className="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div
+                            className={`w-8 h-8 rounded-xl flex items-center justify-center ${
+                              tx.amount > 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'
+                            }`}
+                          >
+                            <Receipt size={16} />
+                          </div>
+                          <div>
+                            <p className="font-bold text-white truncate max-w-[160px]">{tx.description}</p>
+                            <p className="text-[10px] text-slate-500 font-mono mt-0.5">{tx.date}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="font-bold text-white truncate max-w-[160px]">{tx.description}</p>
-                          <p className="text-[10px] text-slate-500 font-mono mt-0.5">{tx.date}</p>
-                        </div>
-                      </div>
 
-                      <div className="text-left">
-                        <span
-                          className={`font-mono font-black ${
-                            tx.amount > 0 ? 'text-emerald-400' : 'text-slate-400'
-                          }`}
-                        >
-                          {tx.amount > 0 ? `+${tx.amount}` : tx.amount} دج
-                        </span>
-                        <p className="text-[10px] text-slate-500 font-medium">
-                          {tx.status === 'completed' ? 'مكتمل' : 'قيد المراجعة'}
-                        </p>
+                        <div className="text-left">
+                          <span
+                            className={`font-mono font-black ${
+                              tx.amount > 0 ? 'text-emerald-400' : 'text-slate-400'
+                            }`}
+                          >
+                            {tx.amount > 0 ? `+${tx.amount}` : tx.amount} دج
+                          </span>
+                          <p className="text-[10px] text-slate-500 font-medium">
+                            {tx.status === 'completed' ? 'مكتمل' : 'قيد المراجعة'}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

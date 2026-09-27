@@ -501,6 +501,7 @@ export function App() {
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           currentUser={currentUser}
+          orders={orders}
           t={t}
           lang={lang}
           theme={theme}
@@ -517,6 +518,7 @@ export function App() {
           isOpen={isSidebarOpen}
           onClose={() => setIsSidebarOpen(false)}
           currentUser={currentUser}
+          orders={orders}
           t={t}
           lang={lang}
           theme={theme}
