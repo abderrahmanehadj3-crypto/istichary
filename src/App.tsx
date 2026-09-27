@@ -16,7 +16,6 @@ import {
   acceptDriverOffer,
   updateOrderStatus,
   saveUserProfile,
-  INITIAL_DEMO_ORDERS,
 } from './utils/supabaseSync';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
@@ -70,8 +69,8 @@ export function App() {
     type: 'order' | 'bid' | 'accepted';
   } | null>(null);
 
-  // Orders State
-  const [orders, setOrders] = useState<DeliveryOrder[]>(INITIAL_DEMO_ORDERS);
+  // Orders State (Real-time live orders from Supabase)
+  const [orders, setOrders] = useState<DeliveryOrder[]>([]);
   const [activeTrackingOrderId, setActiveTrackingOrderId] = useState<string | null>(null);
 
   // Side Navigation Drawer State

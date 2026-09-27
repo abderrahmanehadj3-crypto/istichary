@@ -4,65 +4,8 @@ import { DeliveryOrder, DriverOffer, OrderStatus, UserProfile } from '../types';
 const LOCAL_STORAGE_ORDERS_KEY = 'sari3_delivery_orders_v1';
 const LOCAL_STORAGE_PROFILE_KEY = 'sari3_current_user_profile_v1';
 
-// Seed demo initial orders across Algeria (Algiers, Oran, Constantine) for instant testing
-export const INITIAL_DEMO_ORDERS: DeliveryOrder[] = [
-  {
-    id: 'ord-alger-101',
-    customerId: 'cust-demo-1',
-    customerName: 'أمين بلحاج',
-    customerPhone: '+213 555 12 34 56',
-    wilaya: '16', // Alger
-    pickupAddress: 'ديدوش مراد، وسط الجزائر العاصمة',
-    pickupCoords: { lat: 36.7538, lng: 3.0588 },
-    dropoffAddress: 'باب الزوار، قرب المركز التجاري',
-    dropoffCoords: { lat: 36.7167, lng: 3.1833 },
-    packagePhotoUrl: 'https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=800&auto=format&fit=crop&q=80',
-    packageDescription: 'علبة هدايا ومستندات رسمية مغلفة بعناية، وزن خفيف أقل من 1 كغ.',
-    packageCategory: 'documents',
-    distanceKm: 8.5,
-    suggestedBasePrice: 650,
-    customerOfferPrice: 600,
-    status: 'searching',
-    offers: [
-      {
-        id: 'off-1',
-        orderId: 'ord-alger-101',
-        driverId: 'drv-demo-1',
-        driverName: 'كريم الدراجي',
-        driverPhone: '+213 661 88 99 00',
-        driverRating: 4.9,
-        driverAvatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-        vehicleInfo: 'دراجة نارية Sym Orbit II',
-        vehiclePlate: '16-12345-121',
-        offeredPrice: 700,
-        etaMinutes: 12,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-      },
-    ],
-    createdAt: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-  },
-  {
-    id: 'ord-oran-102',
-    customerId: 'cust-demo-2',
-    customerName: 'فاطمة الزهراء',
-    customerPhone: '+213 770 44 55 66',
-    wilaya: '31', // Oran
-    pickupAddress: 'حي مرافال، وهران',
-    pickupCoords: { lat: 35.6971, lng: -0.6308 },
-    dropoffAddress: 'ميدان أول نوفمبر (ساحة السلاح)، وهران',
-    dropoffCoords: { lat: 35.7022, lng: -0.6433 },
-    packagePhotoUrl: 'https://images.unsplash.com/photo-1585336261026-63d76b1e6a6b?w=800&auto=format&fit=crop&q=80',
-    packageDescription: 'قطع غيار إلكترونية صغيرة في علبة محكمة الإغلاق.',
-    packageCategory: 'electronics',
-    distanceKm: 3.2,
-    suggestedBasePrice: 350,
-    customerOfferPrice: 400,
-    status: 'searching',
-    offers: [],
-    createdAt: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-  },
-];
+// No demo orders - pure real-time production orders
+export const INITIAL_ORDERS: DeliveryOrder[] = [];
 
 /**
  * Loads orders from Supabase with fallback to local storage
@@ -143,12 +86,7 @@ export async function getOrdersFromSupabase(wilayaFilter?: string): Promise<Deli
     }
   } catch (e) {}
 
-  // Initialize with demos
-  localStorage.setItem(LOCAL_STORAGE_ORDERS_KEY, JSON.stringify(INITIAL_DEMO_ORDERS));
-  if (wilayaFilter && wilayaFilter !== 'all') {
-    return INITIAL_DEMO_ORDERS.filter((o) => o.wilaya === wilayaFilter);
-  }
-  return INITIAL_DEMO_ORDERS;
+  return [];
 }
 
 /**
@@ -158,7 +96,7 @@ export async function saveNewOrderToSupabase(order: DeliveryOrder): Promise<void
   // Update local storage first for snappy UI
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
-    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
+    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = [order, ...existing.filter((o) => o.id !== order.id)];
     localStorage.setItem(LOCAL_STORAGE_ORDERS_KEY, JSON.stringify(updated));
   } catch (e) {}
@@ -196,7 +134,7 @@ export async function saveNewOrderToSupabase(order: DeliveryOrder): Promise<void
 export async function submitDriverOffer(offer: DriverOffer): Promise<void> {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
-    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
+    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = existing.map((order) => {
       if (order.id === offer.orderId) {
         const otherOffers = (order.offers || []).filter((o) => o.driverId !== offer.driverId);
@@ -241,7 +179,7 @@ export async function submitDriverOffer(offer: DriverOffer): Promise<void> {
 export async function acceptDriverOffer(orderId: string, offer: DriverOffer): Promise<void> {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
-    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
+    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = existing.map((order) => {
       if (order.id === orderId) {
         return {
@@ -295,7 +233,7 @@ export async function acceptDriverOffer(orderId: string, offer: DriverOffer): Pr
 export async function updateOrderStatus(orderId: string, newStatus: OrderStatus): Promise<void> {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
-    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : INITIAL_DEMO_ORDERS;
+    const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = existing.map((order) => {
       if (order.id === orderId) {
         return {
