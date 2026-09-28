@@ -22,13 +22,44 @@ declare global {
             client_id: string;
             scope: string;
             callback: (response: { access_token?: string; error?: any }) => void;
+            error_callback?: (error: any) => void;
           }) => {
-            requestAccessToken: () => void;
+            requestAccessToken: (overrideConfig?: { prompt?: string }) => void;
           };
         };
       };
     };
   }
+}
+
+/**
+ * Validates whether a given Google OAuth Client ID is legitimate
+ * and not a synthetic placeholder or dummy string.
+ */
+export function isValidGoogleClientId(id?: string): boolean {
+  if (!id || typeof id !== 'string') return false;
+  const trimmed = id.trim();
+  if (
+    trimmed === '' ||
+    trimmed.includes('google-signin') ||
+    trimmed.includes('MY_GOOGLE_CLIENT_ID') ||
+    trimmed.includes('placeholder')
+  ) {
+    return false;
+  }
+  // Standard Google OAuth Web Client ID: <project-number>-<hash>.apps.googleusercontent.com
+  return /^[0-9]+-[a-z0-9_]+\.apps\.googleusercontent\.com$/i.test(trimmed);
+}
+
+/**
+ * Returns the configured Google Client ID from Vite environment if valid
+ */
+export function getConfiguredGoogleClientId(): string | null {
+  const envId = import.meta.env?.VITE_GOOGLE_CLIENT_ID;
+  if (isValidGoogleClientId(envId)) {
+    return envId.trim();
+  }
+  return null;
 }
 
 /**
@@ -53,15 +84,13 @@ export function decodeGoogleJwt(token: string): any {
 
 /**
  * Initiates the manual Google Sign-In flow on user click:
+ * - Checks for a valid, non-placeholder Google Client ID.
  * - Google One-Tap (prompt()) is COMPLETELY DISABLED and removed.
- * - Uses Google Identity Services OAuth2 popup or Supabase OAuth.
- * - Never injects any automatic One-Tap dropdown or iframe overlay into the DOM.
+ * - Uses Google Identity Services OAuth2 popup if a valid Client ID is present.
+ * - Resolves safely without hanging or throwing unhandled 401 client errors.
  */
 export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUserProfile | null> {
-  const effectiveClientId =
-    clientId ||
-    import.meta.env?.VITE_GOOGLE_CLIENT_ID ||
-    '889315027566-google-signin.apps.googleusercontent.com';
+  const effectiveClientId = clientId || getConfiguredGoogleClientId();
 
   // 1. Explicitly cancel and disable any One-Tap auto-prompting or auto-select
   if (typeof window !== 'undefined' && window.google?.accounts?.id) {
@@ -73,14 +102,45 @@ export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUser
     }
   }
 
-  // 2. Manual click-to-sign-in via Google OAuth2 Token Client popup
+  // 2. If no valid Google Client ID is configured, do not open a broken GIS popup that triggers Error 401
+  if (!effectiveClientId) {
+    console.info(
+      '[GoogleAuth] No valid VITE_GOOGLE_CLIENT_ID configured in environment. Skipping GIS popup.'
+    );
+    return null;
+  }
+
+  // 3. Manual click-to-sign-in via Google OAuth2 Token Client popup
   return new Promise((resolve) => {
     if (typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
+      let isSettled = false;
+
+      // Safety timeout so user is never stuck in infinite pending state
+      const timeoutId = setTimeout(() => {
+        if (!isSettled) {
+          isSettled = true;
+          console.warn('[GoogleAuth] OAuth popup timeout');
+          resolve(null);
+        }
+      }, 60000);
+
       try {
         const client = window.google.accounts.oauth2.initTokenClient({
           client_id: effectiveClientId,
           scope: 'email profile openid',
+          error_callback: (err: any) => {
+            console.warn('[GoogleAuth] OAuth error callback:', err);
+            if (!isSettled) {
+              isSettled = true;
+              clearTimeout(timeoutId);
+              resolve(null);
+            }
+          },
           callback: async (tokenResponse) => {
+            if (isSettled) return;
+            isSettled = true;
+            clearTimeout(timeoutId);
+
             if (tokenResponse?.access_token) {
               try {
                 const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
@@ -89,7 +149,7 @@ export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUser
                 if (res.ok) {
                   const data = await res.json();
                   if (data?.email) {
-                    resolve({
+                    const profile: GoogleUserProfile = {
                       email: data.email,
                       name: data.name || data.given_name || 'مستخدم Google',
                       avatarUrl:
@@ -97,7 +157,16 @@ export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUser
                         'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
                       googleId: data.sub || String(Date.now()),
                       verifiedEmail: data.email_verified ?? true,
-                    });
+                    };
+
+                    // Synchronize to backend/database asynchronously
+                    fetch('/api/auth/google/sync', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(profile),
+                    }).catch((syncErr) => console.warn('[GoogleAuth] Sync notice:', syncErr));
+
+                    resolve(profile);
                     return;
                   }
                 }
@@ -110,10 +179,13 @@ export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUser
         });
 
         // Trigger manual popup (only on user click)
-        client.requestAccessToken();
+        client.requestAccessToken({ prompt: 'select_account' });
         return;
       } catch (err) {
-        console.warn('[GoogleAuth] OAuth2 client error:', err);
+        console.warn('[GoogleAuth] OAuth2 client init error:', err);
+        clearTimeout(timeoutId);
+        resolve(null);
+        return;
       }
     }
 
@@ -124,18 +196,28 @@ export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUser
 /**
  * Triggers Supabase Google OAuth popup/redirect flow
  */
-export async function signInWithSupabaseGoogle(): Promise<void> {
+export async function signInWithSupabaseGoogle(): Promise<{ success: boolean; error?: string }> {
   try {
-    const { error } = await supabase.auth.signInWithOAuth({
+    const redirectOrigin =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : (import.meta.env?.VITE_VERCEL_APP_URL || 'https://sari3.vercel.app');
+
+    const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: window.location.origin,
+        redirectTo: redirectOrigin,
       },
     });
+
     if (error) {
       console.warn('[GoogleAuth] Supabase Google OAuth error:', error);
+      return { success: false, error: error.message };
     }
-  } catch (err) {
+    return { success: true };
+  } catch (err: any) {
     console.warn('[GoogleAuth] Supabase OAuth exception:', err);
+    return { success: false, error: err.message || 'فشل الاتصال بمزود Google OAuth' };
   }
 }
+

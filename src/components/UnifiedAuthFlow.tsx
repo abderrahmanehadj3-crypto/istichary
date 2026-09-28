@@ -125,6 +125,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     setStatusNotice(lang === 'ar' ? 'جاري فتح نافذة حساب Google...' : 'Connecting to Google...');
 
     try {
+      // 1. Attempt Google Identity Services (GIS) Token Client Popup if valid client ID exists
       const googleUser = await triggerGoogleSignIn();
       if (googleUser && googleUser.email) {
         setEmailAddress(googleUser.email);
@@ -135,15 +136,38 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         setStep('google_phone_prompt');
         return;
       }
-    } catch (e) {
-      console.warn('Google Sign-In error:', e);
+    } catch (e: any) {
+      console.warn('Google Identity Services notice:', e);
     }
 
-    // Attempt Supabase Google OAuth
+    // 2. Fallback to Supabase Google OAuth Provider
     try {
-      await signInWithSupabaseGoogle();
-    } catch (e) {
+      setStatusNotice(
+        lang === 'ar'
+          ? 'جاري التحويل إلى مزود Google عبر Supabase...'
+          : 'Connecting via Supabase Google provider...'
+      );
+      const res = await signInWithSupabaseGoogle();
+      if (!res.success && res.error) {
+        setIsLoading(false);
+        setStatusNotice(null);
+        setErrorMsg(
+          lang === 'ar'
+            ? `يرجى ضبط VITE_GOOGLE_CLIENT_ID في متغيرات البيئة أو إدخال بريدك مباشرة أدناه (${res.error}).`
+            : `Please configure VITE_GOOGLE_CLIENT_ID in environment or enter your email directly below (${res.error}).`
+        );
+        return;
+      }
+    } catch (e: any) {
       console.warn('Supabase OAuth notice:', e);
+      setIsLoading(false);
+      setStatusNotice(null);
+      setErrorMsg(
+        lang === 'ar'
+          ? 'تعذر بدء تسجيل الدخول بحساب Google. يمكنك إدخال بريدك الإلكتروني مباشرة أدناه.'
+          : 'Unable to initiate Google Sign-In. You can enter your email directly below.'
+      );
+      return;
     }
 
     setIsLoading(false);
