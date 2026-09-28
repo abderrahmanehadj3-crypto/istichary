@@ -12,12 +12,19 @@ declare global {
   interface Window {
     google?: {
       accounts: {
-        id: {
+        id?: {
           initialize: (config: any) => void;
-          prompt: (notification?: (notification: any) => void) => void;
-          renderButton: (parent: HTMLElement, options: any) => void;
           disableAutoSelect: () => void;
           cancel: () => void;
+        };
+        oauth2?: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: { access_token?: string; error?: any }) => void;
+          }) => {
+            requestAccessToken: () => void;
+          };
         };
       };
     };
@@ -25,7 +32,7 @@ declare global {
 }
 
 /**
- * Safely decodes a JWT token returned by Google One-Tap or Google Identity Services
+ * Safely decodes a JWT token if needed
  */
 export function decodeGoogleJwt(token: string): any {
   try {
@@ -45,10 +52,10 @@ export function decodeGoogleJwt(token: string): any {
 }
 
 /**
- * Initiates the Google Sign-In flow:
- * 1. Checks for Google Identity Services SDK in window
- * 2. Attempts to prompt Google One-Tap account chooser on device
- * 3. Supports standard Google Sign-In popup / Supabase OAuth
+ * Initiates the manual Google Sign-In flow on user click:
+ * - Google One-Tap (prompt()) is COMPLETELY DISABLED and removed.
+ * - Uses Google Identity Services OAuth2 popup or Supabase OAuth.
+ * - Never injects any automatic One-Tap dropdown or iframe overlay into the DOM.
  */
 export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUserProfile | null> {
   const effectiveClientId =
@@ -56,53 +63,61 @@ export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUser
     import.meta.env?.VITE_GOOGLE_CLIENT_ID ||
     '889315027566-google-signin.apps.googleusercontent.com';
 
-  return new Promise((resolve, reject) => {
-    // Check if Google GSI is available
-    if (typeof window !== 'undefined' && window.google?.accounts?.id) {
+  // 1. Explicitly cancel and disable any One-Tap auto-prompting or auto-select
+  if (typeof window !== 'undefined' && window.google?.accounts?.id) {
+    try {
+      window.google.accounts.id.cancel();
+      window.google.accounts.id.disableAutoSelect();
+    } catch (e) {
+      console.warn('[GoogleAuth] disableAutoSelect notice:', e);
+    }
+  }
+
+  // 2. Manual click-to-sign-in via Google OAuth2 Token Client popup
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
       try {
-        window.google.accounts.id.initialize({
+        const client = window.google.accounts.oauth2.initTokenClient({
           client_id: effectiveClientId,
-          auto_select: false,
-          cancel_on_tap_outside: true,
-          callback: (response: { credential?: string }) => {
-            if (response.credential) {
-              const payload = decodeGoogleJwt(response.credential);
-              if (payload && payload.email) {
-                resolve({
-                  email: payload.email,
-                  name: payload.name || payload.given_name || 'مستخدم Google',
-                  avatarUrl:
-                    payload.picture ||
-                    'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-                  googleId: payload.sub || String(Date.now()),
-                  verifiedEmail: payload.email_verified ?? true,
+          scope: 'email profile openid',
+          callback: async (tokenResponse) => {
+            if (tokenResponse?.access_token) {
+              try {
+                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
                 });
-                return;
+                if (res.ok) {
+                  const data = await res.json();
+                  if (data?.email) {
+                    resolve({
+                      email: data.email,
+                      name: data.name || data.given_name || 'مستخدم Google',
+                      avatarUrl:
+                        data.picture ||
+                        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
+                      googleId: data.sub || String(Date.now()),
+                      verifiedEmail: data.email_verified ?? true,
+                    });
+                    return;
+                  }
+                }
+              } catch (fetchErr) {
+                console.warn('[GoogleAuth] Failed to fetch userinfo from Google API:', fetchErr);
               }
             }
             resolve(null);
           },
         });
 
-        // Trigger Google One-Tap account prompt
-        window.google.accounts.id.prompt((notification: any) => {
-          if (notification.isNotDisplayed()) {
-            console.info('[GoogleAuth] One-Tap prompt not displayed in current iframe/sandbox context:', notification.getNotDisplayedReason());
-            resolve(null);
-          } else if (notification.isSkippedMoment()) {
-            resolve(null);
-          } else if (notification.isDismissedMoment()) {
-            resolve(null);
-          }
-        });
+        // Trigger manual popup (only on user click)
+        client.requestAccessToken();
+        return;
       } catch (err) {
-        console.warn('[GoogleAuth] GSI initialization error:', err);
-        resolve(null);
+        console.warn('[GoogleAuth] OAuth2 client error:', err);
       }
-    } else {
-      // If GSI script not yet loaded or blocked, resolve null to allow fallback account chooser
-      resolve(null);
     }
+
+    resolve(null);
   });
 }
 

@@ -196,19 +196,6 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
       setTopUpSuccessMsg(`تم استلام وصل التحويل بمبلغ ${topUpAmount} دج وسيتم تفعيله فوراً`);
       setReceiptUploaded(false);
     }
-  };
-      const newTx: WalletTransaction = {
-        id: `tx-${Date.now()}`,
-        type: 'topup_baridimob',
-        amount: topUpAmount,
-        date: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        status: 'pending',
-        description: 'تحويل بريدي موب / CCP (بانتظار مراجعة الوصل)',
-        txRef: `BMOB-${Math.floor(100000 + Math.random() * 900000)}`,
-      };
-      setTransactions([newTx, ...transactions]);
-      setTopUpSuccessMsg('تم رفع الوصل بنجاح! سيتم التحقق وتأكيد الرصيد خلال 10 دقائق');
-    }
 
     setTimeout(() => {
       setTopUpSuccessMsg(null);

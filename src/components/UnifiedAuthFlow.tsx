@@ -105,14 +105,23 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     return () => clearInterval(timer);
   }, [step, resendCountdown]);
 
-  // 1. Official Google Sign-In Trigger
+  // Permanently disable Google One-Tap automatic popups on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.google?.accounts?.id) {
+      try {
+        window.google.accounts.id.cancel();
+        window.google.accounts.id.disableAutoSelect();
+      } catch (e) {}
+    }
+  }, []);
+
+  // 1. Official Google Sign-In Trigger (Manual Click Only)
   const handleGoogleSignInClick = async () => {
     setIsLoading(true);
     setErrorMsg(null);
-    setStatusNotice(lang === 'ar' ? 'جاري فتح محدد حسابات Google...' : 'Connecting to Google...');
+    setStatusNotice(lang === 'ar' ? 'جاري فتح نافذة حساب Google...' : 'Connecting to Google...');
 
     try {
-      // Attempt native One-Tap / Google Identity Services
       const googleUser = await triggerGoogleSignIn();
       if (googleUser && googleUser.email) {
         setEmailAddress(googleUser.email);
@@ -124,7 +133,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         return;
       }
     } catch (e) {
-      console.warn('Google GSI error:', e);
+      console.warn('Google Sign-In error:', e);
     }
 
     // Attempt Supabase Google OAuth
