@@ -31,7 +31,9 @@ import {
   Timer,
   ChevronRight,
   ChevronLeft,
+  Send,
 } from 'lucide-react';
+import { generateUuid, saveUserProfile } from '../utils/supabaseSync';
 
 interface UnifiedAuthFlowProps {
   t: AppTranslations;
@@ -63,6 +65,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
   // Input states
   const [phoneNumber, setPhoneNumber] = useState('');
   const [carrierInfo, setCarrierInfo] = useState<CarrierInfo>(() => detectAlgerianCarrier(''));
+  const [deliveryChannel, setDeliveryChannel] = useState<'sms' | 'whatsapp'>('sms');
   const [emailAddress, setEmailAddress] = useState('');
   const [googleEmailInput, setGoogleEmailInput] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -183,12 +186,12 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     setErrorMsg(null);
     setStatusNotice(
       lang === 'ar'
-        ? `جاري إرسال رمز التحقق SMS عبر شبكة ${carrierInfo.carrierNameAr}...`
-        : `Sending verification SMS via ${carrierInfo.carrier}...`
+        ? `جاري إرسال رمز التحقق عبر ${deliveryChannel === 'whatsapp' ? 'واتساب' : 'SMS'} (${carrierInfo.carrierNameAr})...`
+        : `Sending verification code via ${deliveryChannel.toUpperCase()} (${carrierInfo.carrier})...`
     );
 
     try {
-      const receipt = await sendAlgerianSmsOtp(carrierInfo.normalizedE164);
+      const receipt = await sendAlgerianSmsOtp(carrierInfo.normalizedE164, deliveryChannel);
       setSmsReceipt(receipt);
       setIsLoading(false);
       setStatusNotice(null);
@@ -199,17 +202,17 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     } catch (err: any) {
       setIsLoading(false);
       setStatusNotice(null);
-      setErrorMsg(err.message || 'فشل إرسال رمز SMS. يرجى التأكد من اتصال الشبكة.');
+      setErrorMsg(err.message || 'فشل إرسال رمز التحقق. يرجى التأكد من اتصال الشبكة.');
     }
   };
 
-  // 4. Resend Live SMS OTP
+  // 4. Resend Live SMS/WhatsApp OTP
   const handleResendOtp = async () => {
     if (!canResend) return;
     setIsLoading(true);
     setErrorMsg(null);
     try {
-      const receipt = await sendAlgerianSmsOtp(carrierInfo.normalizedE164);
+      const receipt = await sendAlgerianSmsOtp(carrierInfo.normalizedE164, deliveryChannel);
       setSmsReceipt(receipt);
       setIsLoading(false);
       setResendCountdown(60);
@@ -239,10 +242,20 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
 
     setIsLoading(true);
     setErrorMsg(null);
-    setStatusNotice(lang === 'ar' ? 'جاري التحقق من الرمز مع الخادم...' : 'Verifying code...');
+    setStatusNotice(lang === 'ar' ? 'جاري التحقق من الرمز مع الخادم وقاعدة البيانات...' : 'Verifying code with server...');
 
     try {
-      const result = await verifyAlgerianSmsOtp(smsReceipt.sessionToken, otpCode);
+      const calculatedName =
+        displayName.trim() ||
+        (emailAddress ? emailAddress.split('@')[0].replace(/[._]/g, ' ') : 'مستخدم سريع');
+
+      const result = await verifyAlgerianSmsOtp(
+        smsReceipt.sessionToken,
+        otpCode,
+        carrierInfo.normalizedE164,
+        calculatedName
+      );
+
       if (!result.success) {
         setIsLoading(false);
         setStatusNotice(null);
@@ -250,13 +263,11 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         return;
       }
 
-      // Verification Succeeded! Create Production UserProfile
-      const calculatedName =
-        displayName.trim() ||
-        (emailAddress ? emailAddress.split('@')[0].replace(/[._]/g, ' ') : 'مستخدم سريع');
+      // Verification Succeeded! Create Production UserProfile with guaranteed valid UUID
+      const userId = result.user?.id || generateUuid();
 
       const authenticatedUser: UserProfile = {
-        id: `usr-${Date.now()}`,
+        id: userId,
         email: emailAddress || undefined,
         phone: carrierInfo.formattedNational,
         phoneVerified: true,
@@ -270,6 +281,9 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         accountConfirmed: true,
         createdAt: new Date().toISOString(),
       };
+
+      // Persist to Supabase live database
+      await saveUserProfile(authenticatedUser);
 
       setIsLoading(false);
       setStatusNotice(null);
@@ -478,6 +492,41 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     </div>
                   </div>
 
+                  {/* Delivery Channel Selector (SMS / WhatsApp) */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-300 block">
+                      {lang === 'ar' ? 'طريقة استلام رمز التحقق:' : 'OTP Delivery Channel:'}
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-950 border border-slate-800 text-xs">
+                      <button
+                        type="button"
+                        id="btn-channel-sms"
+                        onClick={() => setDeliveryChannel('sms')}
+                        className={`py-2 px-3 rounded-xl font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          deliveryChannel === 'sms'
+                            ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Radio size={14} />
+                        <span>{lang === 'ar' ? 'رسالة SMS' : 'SMS'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-channel-whatsapp"
+                        onClick={() => setDeliveryChannel('whatsapp')}
+                        className={`py-2 px-3 rounded-xl font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                          deliveryChannel === 'whatsapp'
+                            ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        <Send size={14} />
+                        <span>{lang === 'ar' ? 'واتساب WhatsApp' : 'WhatsApp'}</span>
+                      </button>
+                    </div>
+                  </div>
+
                   <button
                     type="submit"
                     id="btn-auth-send-phone-otp"
@@ -487,11 +536,13 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     <span>
                       {isLoading
                         ? lang === 'ar'
-                          ? 'جاري إرسال SMS...'
-                          : 'Sending SMS...'
+                          ? 'جاري إرسال الرمز...'
+                          : 'Sending Code...'
                         : lang === 'ar'
-                        ? 'متابعة وإرسال رمز التحقق'
-                        : 'Continue & Send SMS Code'}
+                        ? deliveryChannel === 'whatsapp'
+                          ? 'إرسال الرمز عبر WhatsApp'
+                          : 'إرسال رمز التحقق SMS'
+                        : `Send Code via ${deliveryChannel.toUpperCase()}`}
                     </span>
                     <ArrowIcon size={16} />
                   </button>
@@ -682,19 +733,49 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
             <form onSubmit={handleVerifyOtp} className="space-y-4 animate-in fade-in duration-300">
               {/* Carrier Dispatch Receipt Pill */}
               {smsReceipt && (
-                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-1.5">
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-2">
                   <div className="flex items-center justify-between text-slate-300">
                     <span className="flex items-center gap-1.5 font-bold">
                       <Radio size={14} className="text-emerald-400" />
-                      <span>شبكة الإرسال:</span>
+                      <span>قناة الإرسال:</span>
                     </span>
-                    <span className="font-bold text-white">{smsReceipt.carrierName}</span>
+                    <span className="font-bold text-white">
+                      {smsReceipt.channel === 'whatsapp' ? 'واتساب WhatsApp' : 'رسالة قصيرة SMS'} ({smsReceipt.carrierName})
+                    </span>
                   </div>
 
                   <div className="flex items-center justify-between text-slate-400 text-[11px]">
                     <span>الوجهة:</span>
                     <span className="font-mono text-emerald-400 font-bold">{smsReceipt.destination}</span>
                   </div>
+
+                  {/* WhatsApp Quick Verification Link */}
+                  {smsReceipt.whatsappLink && (
+                    <a
+                      href={smsReceipt.whatsappLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full py-2 px-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer mt-1"
+                    >
+                      <Send size={13} />
+                      <span>{lang === 'ar' ? 'استلام الرمز عبر تطبيق WhatsApp الآن' : 'Get Code via WhatsApp App'}</span>
+                    </a>
+                  )}
+
+                  {/* Live Verification Indicator in Preview/Dev */}
+                  {smsReceipt.devCode && (
+                    <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
+                      <span>رمز التحقق المستلم:</span>
+                      <button
+                        type="button"
+                        onClick={() => setOtpCode(smsReceipt.devCode!)}
+                        className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold hover:bg-emerald-500/30 transition cursor-pointer"
+                        title="انقر لتعبئة الرمز تلقائياً"
+                      >
+                        {smsReceipt.devCode} (تعبئة تلقائية)
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

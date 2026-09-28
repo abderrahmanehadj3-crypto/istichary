@@ -8,7 +8,31 @@ const LOCAL_STORAGE_PROFILE_KEY = 'sari3_current_user_profile_v1';
 export const INITIAL_ORDERS: DeliveryOrder[] = [];
 
 /**
- * Loads orders from Supabase with fallback to local storage
+ * Standard RFC4122 v4 UUID Generator
+ */
+export function generateUuid(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/**
+ * Ensures any ID string is guaranteed to be a valid PostgreSQL UUID
+ */
+export function ensureUuid(id?: string): string {
+  if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return id;
+  }
+  return generateUuid();
+}
+
+/**
+ * Loads orders live from Supabase database
  */
 export async function getOrdersFromSupabase(wilayaFilter?: string): Promise<DeliveryOrder[]> {
   try {
@@ -18,8 +42,8 @@ export async function getOrdersFromSupabase(wilayaFilter?: string): Promise<Deli
     }
     const { data, error } = await query.order('created_at', { ascending: false });
 
-    if (!error && data && data.length > 0) {
-      return data.map((item: any) => ({
+    if (!error && data) {
+      const parsedOrders: DeliveryOrder[] = data.map((item: any) => ({
         id: item.id,
         customerId: item.customer_id,
         customerName: item.customer_name,
@@ -69,12 +93,19 @@ export async function getOrdersFromSupabase(wilayaFilter?: string): Promise<Deli
         acceptedAt: item.accepted_at,
         completedAt: item.completed_at,
       }));
+
+      // Cache locally for instantaneous rendering
+      try {
+        localStorage.setItem(LOCAL_STORAGE_ORDERS_KEY, JSON.stringify(parsedOrders));
+      } catch (e) {}
+
+      return parsedOrders;
     }
   } catch (err) {
     console.warn('[SupabaseSync] Orders fetch fallback to local storage:', err);
   }
 
-  // Local storage fallback
+  // Local storage fallback if offline
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
     if (raw) {
@@ -90,22 +121,29 @@ export async function getOrdersFromSupabase(wilayaFilter?: string): Promise<Deli
 }
 
 /**
- * Saves a new delivery order to Supabase & local cache
+ * Saves a new delivery order directly to Supabase production database
  */
 export async function saveNewOrderToSupabase(order: DeliveryOrder): Promise<void> {
-  // Update local storage first for snappy UI
+  const safeOrderId = ensureUuid(order.id);
+  const safeCustomerId = ensureUuid(order.customerId);
+
+  // Update order object with guaranteed UUIDs
+  order.id = safeOrderId;
+  order.customerId = safeCustomerId;
+
+  // Optimistic local update
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
     const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
-    const updated = [order, ...existing.filter((o) => o.id !== order.id)];
+    const updated = [order, ...existing.filter((o) => o.id !== safeOrderId)];
     localStorage.setItem(LOCAL_STORAGE_ORDERS_KEY, JSON.stringify(updated));
   } catch (e) {}
 
-  // Try Supabase insert
+  // 1. Direct Supabase Insert
   try {
-    await supabase.from('delivery_orders').insert({
-      id: order.id,
-      customer_id: order.customerId,
+    const { error } = await supabase.from('delivery_orders').insert({
+      id: safeOrderId,
+      customer_id: safeCustomerId,
       customer_name: order.customerName,
       customer_phone: order.customerPhone,
       wilaya: order.wilaya,
@@ -117,27 +155,45 @@ export async function saveNewOrderToSupabase(order: DeliveryOrder): Promise<void
       dropoff_lng: order.dropoffCoords.lng,
       package_photo_url: order.packagePhotoUrl,
       package_description: order.packageDescription,
-      package_category: order.packageCategory || 'general',
+      package_category: order.packageCategory || 'documents',
       distance_km: order.distanceKm,
       suggested_base_price: order.suggestedBasePrice,
       customer_offer_price: order.customerOfferPrice,
       status: order.status,
     });
+
+    if (error) {
+      console.warn('[SupabaseSync] Direct insert notice:', error.message);
+      // Fallback via server API
+      await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(order),
+      }).catch(() => {});
+    }
   } catch (err) {
     console.warn('[SupabaseSync] Order cloud insert skipped:', err);
   }
 }
 
 /**
- * Submits a driver counter-offer (Negotiation)
+ * Submits a driver counter-offer (Negotiation) live to Supabase
  */
 export async function submitDriverOffer(offer: DriverOffer): Promise<void> {
+  const safeOfferId = ensureUuid(offer.id);
+  const safeOrderId = ensureUuid(offer.orderId);
+  const safeDriverId = ensureUuid(offer.driverId);
+
+  offer.id = safeOfferId;
+  offer.orderId = safeOrderId;
+  offer.driverId = safeDriverId;
+
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
     const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = existing.map((order) => {
-      if (order.id === offer.orderId) {
-        const otherOffers = (order.offers || []).filter((o) => o.driverId !== offer.driverId);
+      if (order.id === safeOrderId) {
+        const otherOffers = (order.offers || []).filter((o) => o.driverId !== safeDriverId);
         return {
           ...order,
           status: 'negotiating' as OrderStatus,
@@ -151,9 +207,9 @@ export async function submitDriverOffer(offer: DriverOffer): Promise<void> {
 
   try {
     await supabase.from('order_offers').insert({
-      id: offer.id,
-      order_id: offer.orderId,
-      driver_id: offer.driverId,
+      id: safeOfferId,
+      order_id: safeOrderId,
+      driver_id: safeDriverId,
       driver_name: offer.driverName,
       driver_phone: offer.driverPhone,
       driver_rating: offer.driverRating,
@@ -164,30 +220,34 @@ export async function submitDriverOffer(offer: DriverOffer): Promise<void> {
       eta_minutes: offer.etaMinutes,
       status: 'pending',
     });
+
     await supabase
       .from('delivery_orders')
       .update({ status: 'negotiating' })
-      .eq('id', offer.orderId);
+      .eq('id', safeOrderId);
   } catch (err) {
     console.warn('[SupabaseSync] Offer cloud insert skipped:', err);
   }
 }
 
 /**
- * Accepts an offer and assigns the driver
+ * Accepts an offer and assigns the driver live in Supabase
  */
 export async function acceptDriverOffer(orderId: string, offer: DriverOffer): Promise<void> {
+  const safeOrderId = ensureUuid(orderId);
+  const safeDriverId = ensureUuid(offer.driverId);
+
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
     const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = existing.map((order) => {
-      if (order.id === orderId) {
+      if (order.id === safeOrderId) {
         return {
           ...order,
           status: 'accepted' as OrderStatus,
           agreedPrice: offer.offeredPrice,
           assignedDriver: {
-            id: offer.driverId,
+            id: safeDriverId,
             name: offer.driverName,
             phone: offer.driverPhone,
             rating: offer.driverRating,
@@ -212,30 +272,32 @@ export async function acceptDriverOffer(orderId: string, offer: DriverOffer): Pr
       .from('delivery_orders')
       .update({
         status: 'accepted',
-        assigned_driver_id: offer.driverId,
+        assigned_driver_id: safeDriverId,
         agreed_price: offer.offeredPrice,
         accepted_at: new Date().toISOString(),
       })
-      .eq('id', orderId);
+      .eq('id', safeOrderId);
 
     await supabase
       .from('order_offers')
       .update({ status: 'accepted' })
-      .eq('id', offer.id);
+      .eq('id', ensureUuid(offer.id));
   } catch (err) {
     console.warn('[SupabaseSync] Accept offer cloud update skipped:', err);
   }
 }
 
 /**
- * Updates order status (e.g., delivered or cancelled)
+ * Updates order status (e.g., delivered or cancelled) live in Supabase
  */
 export async function updateOrderStatus(orderId: string, newStatus: OrderStatus): Promise<void> {
+  const safeOrderId = ensureUuid(orderId);
+
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_ORDERS_KEY);
     const existing: DeliveryOrder[] = raw ? JSON.parse(raw) : [];
     const updated = existing.map((order) => {
-      if (order.id === orderId) {
+      if (order.id === safeOrderId) {
         return {
           ...order,
           status: newStatus,
@@ -254,28 +316,29 @@ export async function updateOrderStatus(orderId: string, newStatus: OrderStatus)
         status: newStatus,
         completed_at: newStatus === 'delivered' ? new Date().toISOString() : undefined,
       })
-      .eq('id', orderId);
+      .eq('id', safeOrderId);
   } catch (err) {
     console.warn('[SupabaseSync] Order status update skipped:', err);
   }
 }
 
 /**
- * User Profile Persistence
+ * User Profile Persistence live to Supabase profiles table
  */
 export async function saveUserProfile(profile: UserProfile): Promise<void> {
+  profile.id = ensureUuid(profile.id);
   localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(profile));
+
   try {
     await supabase.from('profiles').upsert({
       id: profile.id,
-      email: profile.email,
-      phone: profile.phone,
+      email: profile.email || null,
+      phone: profile.phone || null,
       phone_verified: profile.phoneVerified,
       display_name: profile.displayName,
-      avatar_url: profile.avatarUrl,
-      role: profile.role,
-      wilaya: profile.wilaya,
-      driver_details: profile.driverDetails,
+      avatar_url: profile.avatarUrl || null,
+      role: profile.role || 'customer',
+      wilaya: profile.wilaya || '16',
       camera_permission_granted: profile.cameraPermissionGranted,
       location_permission_granted: profile.locationPermissionGranted,
       account_confirmed: profile.accountConfirmed,

@@ -16,7 +16,9 @@ import {
   acceptDriverOffer,
   updateOrderStatus,
   saveUserProfile,
+  ensureUuid,
 } from './utils/supabaseSync';
+import { supabase } from './supabaseClient';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
 import { UnifiedAuthFlow } from './components/UnifiedAuthFlow';
@@ -76,15 +78,67 @@ export function App() {
   // Side Navigation Drawer State
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
-  // Load orders on startup and when Wilaya changes
+  // Load orders live from Supabase database
   const reloadOrders = async () => {
     const list = await getOrdersFromSupabase();
     setOrders(list);
   };
 
+  // Real-time live polling for delivery orders and negotiations (every 3 seconds)
   useEffect(() => {
     reloadOrders();
+    const interval = setInterval(() => {
+      reloadOrders();
+    }, 3000);
+    return () => clearInterval(interval);
   }, [selectedWilaya]);
+
+  // Handle Supabase OAuth redirect session (e.g. Google Sign-In callback)
+  useEffect(() => {
+    const syncOAuthUser = async (sbUser: any) => {
+      const email = sbUser.email || '';
+      const name =
+        sbUser.user_metadata?.full_name ||
+        sbUser.user_metadata?.name ||
+        email.split('@')[0] ||
+        'مستخدم Google';
+      const avatar = sbUser.user_metadata?.avatar_url || sbUser.user_metadata?.picture;
+
+      const userProfile: UserProfile = {
+        id: ensureUuid(sbUser.id),
+        email,
+        displayName: name,
+        avatarUrl: avatar,
+        phone: sbUser.phone || '',
+        phoneVerified: !!sbUser.phone,
+        wilaya: '16',
+        customerProfileCompleted: false,
+        cameraPermissionGranted: false,
+        locationPermissionGranted: false,
+        accountConfirmed: true,
+        createdAt: new Date().toISOString(),
+      };
+
+      setCurrentUser(userProfile);
+      await saveUserProfile(userProfile);
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user && !currentUser) {
+        syncOAuthUser(session.user);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user && !currentUser) {
+        syncOAuthUser(session.user);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [currentUser]);
 
   // Handle HTML document direction and theme class
   useEffect(() => {

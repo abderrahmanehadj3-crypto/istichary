@@ -9,6 +9,7 @@ import { reverseGeocode } from '../utils/reverseGeocoding';
 import { OsrmRouteResult } from '../utils/osrmRouting';
 import { NativeCameraModal } from './NativeCameraModal';
 import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
+import { generateUuid, ensureUuid } from '../utils/supabaseSync';
 import {
   MapPin,
   Camera,
@@ -366,8 +367,8 @@ export const CustomerHome: React.FC<CustomerHomeProps> = ({
     }
 
     const newOrder: DeliveryOrder = {
-      id: `ord-${Date.now()}`,
-      customerId: currentUser.id,
+      id: generateUuid(),
+      customerId: ensureUuid(currentUser.id),
       customerName: currentUser.displayName,
       customerPhone: currentUser.phone || '',
       wilaya: selectedWilaya,

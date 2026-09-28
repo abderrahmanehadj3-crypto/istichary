@@ -5,6 +5,7 @@ import { ALGERIA_WILAYAS, getWilayaByCode } from '../data/wilayas';
 import { Sari3Map } from './Sari3Map';
 import { useNativeGps } from '../hooks/useNativeGps';
 import { MandatoryGpsModal } from './MandatoryGpsModal';
+import { generateUuid, ensureUuid } from '../utils/supabaseSync';
 import {
   Bike,
   Package,
@@ -95,9 +96,9 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
     const finalBid = baseAmount + extraAmount;
 
     const offer: DriverOffer = {
-      id: `off-${Date.now()}`,
-      orderId: order.id,
-      driverId: currentUser.id,
+      id: generateUuid(),
+      orderId: ensureUuid(order.id),
+      driverId: ensureUuid(currentUser.id),
       driverName: currentUser.displayName,
       driverPhone: currentUser.phone || '',
       driverRating: currentUser.driverDetails?.rating || 5.0,
