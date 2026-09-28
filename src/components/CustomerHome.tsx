@@ -9,7 +9,7 @@ import { reverseGeocode } from '../utils/reverseGeocoding';
 import { OsrmRouteResult } from '../utils/osrmRouting';
 import { NativeCameraModal } from './NativeCameraModal';
 import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
-import { generateUuid, ensureUuid } from '../utils/supabaseSync';
+import { generateUuid, ensureUuid } from '../utils/firebaseSync';
 import {
   MapPin,
   Camera,

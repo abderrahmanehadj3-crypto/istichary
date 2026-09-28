@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public profile for Sari3 customers and drivers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "phoneVerified": { "type": "boolean" },
+        "displayName": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "role": { "type": "string", "enum": ["customer", "driver", "admin"] },
+        "wilaya": { "type": "string" },
+        "cameraPermissionGranted": { "type": "boolean" },
+        "locationPermissionGranted": { "type": "boolean" },
+        "accountConfirmed": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "displayName", "role"]
+    },
+    "DriverVerification": {
+      "title": "DriverVerification",
+      "description": "Private verification and biometric selfie record for drivers. Face photo is strictly private.",
+      "type": "object",
+      "properties": {
+        "driverId": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "birthDate": { "type": "string" },
+        "age": { "type": "number" },
+        "facePhotoUrl": { "type": "string" },
+        "publicAvatarUrl": { "type": "string" },
+        "licenseNumber": { "type": "string" },
+        "licenseExpirationDate": { "type": "string" },
+        "licenseFrontUrl": { "type": "string" },
+        "licenseBackUrl": { "type": "string" },
+        "vehicleType": { "type": "string", "enum": ["motorcycle", "car", "van"] },
+        "vehicleRegType": { "type": "string", "enum": ["permanent", "temporary"] },
+        "vehiclePlate": { "type": "string" },
+        "vehicleBrand": { "type": "string" },
+        "vehicleModel": { "type": "string" },
+        "verificationStatus": { "type": "string", "enum": ["pending", "verified", "rejected"] },
+        "isOnline": { "type": "boolean" },
+        "rating": { "type": "number" },
+        "totalDeliveries": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["driverId", "firstName", "lastName", "licenseNumber", "vehiclePlate", "verificationStatus"]
+    },
+    "DeliveryOrder": {
+      "title": "DeliveryOrder",
+      "description": "Real-time delivery orders with live fare negotiation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "wilaya": { "type": "string" },
+        "pickupAddress": { "type": "string" },
+        "pickupCoords": { "type": "object" },
+        "dropoffAddress": { "type": "string" },
+        "dropoffCoords": { "type": "object" },
+        "packagePhotoUrl": { "type": "string" },
+        "packageDescription": { "type": "string" },
+        "packageCategory": { "type": "string" },
+        "distanceKm": { "type": "number" },
+        "suggestedBasePrice": { "type": "number" },
+        "customerOfferPrice": { "type": "number" },
+        "agreedPrice": { "type": "number" },
+        "status": { "type": "string", "enum": ["searching", "negotiating", "accepted", "in_transit", "delivered", "cancelled"] },
+        "assignedDriverId": { "type": "string" },
+        "assignedDriver": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "acceptedAt": { "type": "string" },
+        "completedAt": { "type": "string" }
+      },
+      "required": ["id", "customerId", "customerName", "pickupAddress", "dropoffAddress", "customerOfferPrice", "status"]
+    },
+    "OrderOffer": {
+      "title": "OrderOffer",
+      "description": "Driver counter-offers on live orders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "orderId": { "type": "string" },
+        "driverId": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverPhone": { "type": "string" },
+        "driverRating": { "type": "number" },
+        "driverAvatar": { "type": "string" },
+        "vehicleInfo": { "type": "string" },
+        "vehiclePlate": { "type": "string" },
+        "offeredPrice": { "type": "number" },
+        "etaMinutes": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "rejected"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "orderId", "driverId", "driverName", "offeredPrice", "status"]
+    }
+  },
+  "firestore": {
+    "/profiles/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile documents keyed by user UUID or Firebase Auth UID"
+    },
+    "/driver_verifications/{driverId}": {
+      "schema": "DriverVerification",
+      "description": "Private verification records keyed by driver ID"
+    },
+    "/delivery_orders/{orderId}": {
+      "schema": "DeliveryOrder",
+      "description": "Active delivery order documents"
+    },
+    "/delivery_orders/{orderId}/offers/{offerId}": {
+      "schema": "OrderOffer",
+      "description": "Subcollection of driver counter-offers on a specific order"
+    }
+  }
+}

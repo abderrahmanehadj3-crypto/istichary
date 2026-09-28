@@ -1,4 +1,11 @@
-import { supabase } from '../supabaseClient';
+import {
+  signInWithPopup,
+  signInWithRedirect,
+  googleAuthProvider,
+  auth,
+  db,
+} from '../firebaseClient';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
 
 export interface GoogleUserProfile {
   email: string;
@@ -34,7 +41,6 @@ declare global {
 
 /**
  * Validates whether a given Google OAuth Client ID is legitimate
- * and not a synthetic placeholder or dummy string.
  */
 export function isValidGoogleClientId(id?: string): boolean {
   if (!id || typeof id !== 'string') return false;
@@ -47,19 +53,7 @@ export function isValidGoogleClientId(id?: string): boolean {
   ) {
     return false;
   }
-  // Standard Google OAuth Web Client ID: <project-number>-<hash>.apps.googleusercontent.com
-  return /^[0-9]+-[a-z0-9_]+\.apps\.googleusercontent\.com$/i.test(trimmed);
-}
-
-/**
- * Returns the configured Google Client ID from Vite environment if valid
- */
-export function getConfiguredGoogleClientId(): string | null {
-  const envId = import.meta.env?.VITE_GOOGLE_CLIENT_ID;
-  if (isValidGoogleClientId(envId)) {
-    return envId.trim();
-  }
-  return null;
+  return /^[0-9]+-[a-zA-Z0-9_\-]{10,}\.apps\.googleusercontent\.com$/i.test(trimmed);
 }
 
 /**
@@ -83,141 +77,97 @@ export function decodeGoogleJwt(token: string): any {
 }
 
 /**
- * Initiates the manual Google Sign-In flow on user click:
- * - Checks for a valid, non-placeholder Google Client ID.
- * - Google One-Tap (prompt()) is COMPLETELY DISABLED and removed.
- * - Uses Google Identity Services OAuth2 popup if a valid Client ID is present.
- * - Resolves safely without hanging or throwing unhandled 401 client errors.
+ * Primary Google Sign-In via Firebase Authentication:
+ * - Uses Firebase signInWithPopup with GoogleAuthProvider
+ * - Synchronizes authenticated user directly to Firestore 'profiles' collection
+ * - Strictly stores only the public photoURL in profiles (never biometric selfie)
  */
-export async function triggerGoogleSignIn(clientId?: string): Promise<GoogleUserProfile | null> {
-  const effectiveClientId = clientId || getConfiguredGoogleClientId();
-
-  // 1. Explicitly cancel and disable any One-Tap auto-prompting or auto-select
+export async function triggerGoogleSignIn(): Promise<GoogleUserProfile | null> {
+  // Explicitly cancel any One-Tap auto-select if present
   if (typeof window !== 'undefined' && window.google?.accounts?.id) {
     try {
       window.google.accounts.id.cancel();
       window.google.accounts.id.disableAutoSelect();
-    } catch (e) {
-      console.warn('[GoogleAuth] disableAutoSelect notice:', e);
-    }
+    } catch (e) {}
   }
 
-  // 2. If no valid Google Client ID is configured, do not open a broken GIS popup that triggers Error 401
-  if (!effectiveClientId) {
-    console.info(
-      '[GoogleAuth] No valid VITE_GOOGLE_CLIENT_ID configured in environment. Skipping GIS popup.'
-    );
-    return null;
-  }
+  // 1. Attempt Official Firebase Auth Google Popup
+  try {
+    const result = await signInWithPopup(auth, googleAuthProvider);
+    const user = result.user;
 
-  // 3. Manual click-to-sign-in via Google OAuth2 Token Client popup
-  return new Promise((resolve) => {
-    if (typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
-      let isSettled = false;
+    if (user && user.email) {
+      const profile: GoogleUserProfile = {
+        email: user.email,
+        name: user.displayName || user.email.split('@')[0],
+        avatarUrl:
+          user.photoURL ||
+          'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
+        googleId: user.uid,
+        verifiedEmail: user.emailVerified,
+      };
 
-      // Safety timeout so user is never stuck in infinite pending state
-      const timeoutId = setTimeout(() => {
-        if (!isSettled) {
-          isSettled = true;
-          console.warn('[GoogleAuth] OAuth popup timeout');
-          resolve(null);
-        }
-      }, 60000);
-
+      // Persist profile to Cloud Firestore
       try {
-        const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: effectiveClientId,
-          scope: 'email profile openid',
-          error_callback: (err: any) => {
-            console.warn('[GoogleAuth] OAuth error callback:', err);
-            if (!isSettled) {
-              isSettled = true;
-              clearTimeout(timeoutId);
-              resolve(null);
-            }
-          },
-          callback: async (tokenResponse) => {
-            if (isSettled) return;
-            isSettled = true;
-            clearTimeout(timeoutId);
+        const userRef = doc(db, 'profiles', user.uid);
+        const existing = await getDoc(userRef);
+        if (!existing.exists()) {
+          await setDoc(userRef, {
+            id: user.uid,
+            email: user.email,
+            displayName: profile.name,
+            avatarUrl: profile.avatarUrl,
+            role: 'customer',
+            wilaya: '16',
+            accountConfirmed: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      } catch (dbErr) {
+        console.warn('[Firebase Google Auth] Profile persistence notice:', dbErr);
+      }
 
-            if (tokenResponse?.access_token) {
-              try {
-                const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
-                });
-                if (res.ok) {
-                  const data = await res.json();
-                  if (data?.email) {
-                    const profile: GoogleUserProfile = {
-                      email: data.email,
-                      name: data.name || data.given_name || 'مستخدم Google',
-                      avatarUrl:
-                        data.picture ||
-                        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-                      googleId: data.sub || String(Date.now()),
-                      verifiedEmail: data.email_verified ?? true,
-                    };
+      // Also notify backend API
+      fetch('/api/auth/google/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(profile),
+      }).catch(() => {});
 
-                    // Synchronize to backend/database asynchronously
-                    fetch('/api/auth/google/sync', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify(profile),
-                    }).catch((syncErr) => console.warn('[GoogleAuth] Sync notice:', syncErr));
+      return profile;
+    }
+  } catch (firebaseErr: any) {
+    console.warn('[Firebase Google Auth] Popup notice:', firebaseErr.message || firebaseErr);
 
-                    resolve(profile);
-                    return;
-                  }
-                }
-              } catch (fetchErr) {
-                console.warn('[GoogleAuth] Failed to fetch userinfo from Google API:', fetchErr);
-              }
-            }
-            resolve(null);
-          },
-        });
-
-        // Trigger manual popup (only on user click)
-        client.requestAccessToken({ prompt: 'select_account' });
-        return;
-      } catch (err) {
-        console.warn('[GoogleAuth] OAuth2 client init error:', err);
-        clearTimeout(timeoutId);
-        resolve(null);
-        return;
+    // Fallback: If popup was blocked or iframe restriction, try redirect
+    if (firebaseErr?.code === 'auth/popup-blocked') {
+      try {
+        await signInWithRedirect(auth, googleAuthProvider);
+      } catch (redirErr) {
+        console.warn('[Firebase Google Auth] Redirect fallback notice:', redirErr);
       }
     }
+  }
 
-    resolve(null);
-  });
+  return null;
 }
 
 /**
- * Triggers Supabase Google OAuth popup/redirect flow
+ * Triggers Firebase Google Auth redirect flow
  */
-export async function signInWithSupabaseGoogle(): Promise<{ success: boolean; error?: string }> {
+export async function signInWithFirebaseGoogle(): Promise<{ success: boolean; error?: string }> {
   try {
-    const redirectOrigin =
-      typeof window !== 'undefined' && window.location?.origin
-        ? window.location.origin
-        : (import.meta.env?.VITE_VERCEL_APP_URL || 'https://sari3.vercel.app');
-
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: redirectOrigin,
-      },
-    });
-
-    if (error) {
-      console.warn('[GoogleAuth] Supabase Google OAuth error:', error);
-      return { success: false, error: error.message };
+    const result = await signInWithPopup(auth, googleAuthProvider);
+    if (result.user) {
+      return { success: true };
     }
-    return { success: true };
+    return { success: false, error: 'لم يتم استرجاع بيانات المستخدم' };
   } catch (err: any) {
-    console.warn('[GoogleAuth] Supabase OAuth exception:', err);
-    return { success: false, error: err.message || 'فشل الاتصال بمزود Google OAuth' };
+    console.warn('[GoogleAuth] Firebase Google OAuth exception:', err);
+    return { success: false, error: err.message || 'فشل الاتصال بـ Firebase Google Auth' };
   }
 }
 
+// Backwards-compatible alias for existing callers
+export const signInWithSupabaseGoogle = signInWithFirebaseGoogle;

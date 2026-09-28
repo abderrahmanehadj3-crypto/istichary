@@ -10,15 +10,16 @@ import {
 } from './types';
 import { ALGERIA_WILAYAS } from './data/wilayas';
 import {
-  getOrdersFromSupabase,
-  saveNewOrderToSupabase,
+  getOrdersFromFirestore,
+  saveNewOrderToFirestore,
   submitDriverOffer,
   acceptDriverOffer,
   updateOrderStatus,
   saveUserProfile,
   ensureUuid,
-} from './utils/supabaseSync';
-import { supabase } from './supabaseClient';
+} from './utils/firebaseSync';
+import { auth, onAuthStateChanged, signOut, db } from './firebaseClient';
+import { doc, getDoc } from 'firebase/firestore';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
 import { UnifiedAuthFlow } from './components/UnifiedAuthFlow';
@@ -78,9 +79,9 @@ export function App() {
   // Side Navigation Drawer State
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
-  // Load orders live from Supabase database
+  // Load orders live from Cloud Firestore database
   const reloadOrders = async () => {
-    const list = await getOrdersFromSupabase();
+    const list = await getOrdersFromFirestore();
     setOrders(list);
   };
 
@@ -93,52 +94,57 @@ export function App() {
     return () => clearInterval(interval);
   }, [selectedWilaya]);
 
-  // Handle Supabase OAuth redirect session (e.g. Google Sign-In callback)
+  // Handle Firebase Authentication state observer
   useEffect(() => {
-    const syncOAuthUser = async (sbUser: any) => {
-      const email = sbUser.email || '';
-      const name =
-        sbUser.user_metadata?.full_name ||
-        sbUser.user_metadata?.name ||
-        email.split('@')[0] ||
-        'مستخدم Google';
-      const avatar = sbUser.user_metadata?.avatar_url || sbUser.user_metadata?.picture;
-
-      const userProfile: UserProfile = {
-        id: ensureUuid(sbUser.id),
-        email,
-        displayName: name,
-        avatarUrl: avatar,
-        phone: sbUser.phone || '',
-        phoneVerified: !!sbUser.phone,
-        wilaya: '16',
-        customerProfileCompleted: false,
-        cameraPermissionGranted: false,
-        locationPermissionGranted: false,
-        accountConfirmed: true,
-        createdAt: new Date().toISOString(),
-      };
-
-      setCurrentUser(userProfile);
-      await saveUserProfile(userProfile);
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user && !currentUser) {
-        syncOAuthUser(session.user);
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const profileDoc = await getDoc(doc(db, 'profiles', firebaseUser.uid));
+          if (profileDoc.exists()) {
+            const data = profileDoc.data();
+            const userProfile: UserProfile = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || undefined,
+              phone: data.phone || firebaseUser.phoneNumber || '',
+              phoneVerified: !!(data.phoneVerified || firebaseUser.phoneNumber),
+              displayName: data.displayName || firebaseUser.displayName || 'مستخدم سريع',
+              avatarUrl: data.avatarUrl || firebaseUser.photoURL || undefined, // strictly public avatar
+              role: data.role || 'customer',
+              wilaya: data.wilaya || '16',
+              customerProfileCompleted: !!data.customerProfileCompleted,
+              cameraPermissionGranted: !!data.cameraPermissionGranted,
+              locationPermissionGranted: !!data.locationPermissionGranted,
+              accountConfirmed: true,
+              createdAt: data.createdAt || new Date().toISOString(),
+            };
+            setCurrentUser(userProfile);
+          } else {
+            // First-time Firebase user profile initialization
+            const userProfile: UserProfile = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email || undefined,
+              displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'مستخدم جديد',
+              avatarUrl: firebaseUser.photoURL || undefined,
+              phone: firebaseUser.phoneNumber || '',
+              phoneVerified: !!firebaseUser.phoneNumber,
+              wilaya: '16',
+              customerProfileCompleted: false,
+              cameraPermissionGranted: false,
+              locationPermissionGranted: false,
+              accountConfirmed: true,
+              createdAt: new Date().toISOString(),
+            };
+            setCurrentUser(userProfile);
+            await saveUserProfile(userProfile);
+          }
+        } catch (e) {
+          console.warn('[Firebase Auth] User profile sync notice:', e);
+        }
       }
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user && !currentUser) {
-        syncOAuthUser(session.user);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [currentUser]);
+    return () => unsubscribe();
+  }, []);
 
   // Handle HTML document direction and theme class
   useEffect(() => {
@@ -154,7 +160,10 @@ export function App() {
   }, [lang, theme]);
 
   // Logout / Reset to Entry Authentication Flow
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (e) {}
     setCurrentUser(null);
     setIsSidebarOpen(false);
     localStorage.removeItem('sari3_user_profile');

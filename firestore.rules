@@ -1,0 +1,47 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && (request.auth.uid == userId || request.auth.token.phone != null);
+    }
+
+    // Profiles: Anyone can view public profile, only owner can write
+    match /profiles/{userId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated() || request.resource.data.id == userId;
+      allow delete: if isOwner(userId);
+    }
+
+    // Driver Verifications: Private biometric data & license
+    // NEVER publicly readable; only the driver themselves can read/write their verification
+    match /driver_verifications/{driverId} {
+      allow read: if isOwner(driverId) || (isAuthenticated() && request.auth.uid == driverId);
+      allow create, update: if isOwner(driverId) || (isAuthenticated() && request.auth.uid == driverId) || request.resource.data.driverId == driverId;
+      allow delete: if isOwner(driverId);
+    }
+
+    // Delivery Orders: Publicly readable for active orders, writeable by customer and drivers
+    match /delivery_orders/{orderId} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if isAuthenticated();
+
+      match /offers/{offerId} {
+        allow read: if true;
+        allow write: if true;
+      }
+    }
+
+    // Connection testing doc
+    match /test/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

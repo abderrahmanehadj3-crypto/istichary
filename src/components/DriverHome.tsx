@@ -5,7 +5,7 @@ import { ALGERIA_WILAYAS, getWilayaByCode } from '../data/wilayas';
 import { Sari3Map } from './Sari3Map';
 import { useNativeGps } from '../hooks/useNativeGps';
 import { MandatoryGpsModal } from './MandatoryGpsModal';
-import { generateUuid, ensureUuid } from '../utils/supabaseSync';
+import { generateUuid, ensureUuid } from '../utils/firebaseSync';
 import {
   Bike,
   Package,

@@ -17,12 +17,15 @@ import {
   ScanLine,
   RefreshCw,
   Smartphone,
+  UploadCloud,
+  Trash2,
 } from 'lucide-react';
 import {
   startNativeCameraStream,
   captureFrameFromVideo,
   launchNativeDeviceCamera,
 } from '../utils/nativeCameraBridge';
+import { saveDriverVerificationToFirestore } from '../utils/firebaseSync';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -160,7 +163,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       try {
         const dataUrl = captureFrameFromVideo(faceVideoRef.current, 0.9, 'user');
         setFacePhoto(dataUrl);
-        setPublicAvatar(dataUrl);
+        // STRICT SEPARATION: Never assign biometric face selfie to public avatar
       } catch (e) {
         console.error('Capture face error:', e);
       }
@@ -183,7 +186,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       'user',
       (dataUrl) => {
         setFacePhoto(dataUrl);
-        setPublicAvatar(dataUrl);
+        // STRICT SEPARATION: Never assign biometric face selfie to public avatar
         setErrorMsg(null);
       },
       (errMsg) => {
@@ -330,6 +333,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         rating: 5.0,
         totalDeliveries: 0,
       };
+      saveDriverVerificationToFirestore(currentUser.id, finalDriverDetails).catch((err) =>
+        console.warn('[DriverWizard] Firestore save notice:', err)
+      );
       onComplete(finalDriverDetails);
     }
   };
@@ -374,7 +380,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           </div>
         )}
 
-        {/* STEP 1: Live Face Photo (Live Only, Confidential) + Public Avatar */}
+        {/* STEP 1: Live Face Photo (Confidential Biometric) & Public Avatar (Separate & Optional) */}
         {currentStep === 1 && (
           <div className="space-y-4">
             <div className="text-center">
@@ -382,97 +388,136 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               <p className="text-xs text-slate-400 mt-1">{t.step1Desc}</p>
             </div>
 
-            {/* Strict Confidentiality Banner */}
-            <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5 leading-relaxed">
-              <Lock size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
-              <span>{t.facePhotoConfidentialNotice}</span>
-            </div>
-
-            {/* Live Camera Feed or Captured Photo */}
-            <div className="flex flex-col items-center justify-center p-4 rounded-2xl bg-slate-950 border border-slate-800">
-              {isFaceCameraActive ? (
-                <div className="relative w-48 h-48 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg mb-3">
-                  <video
-                    ref={faceVideoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 border-2 border-dashed border-white/50 rounded-full pointer-events-none" />
-                </div>
-              ) : facePhoto ? (
-                <div className="relative w-36 h-36 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg mb-3">
-                  <img src={facePhoto} alt="Live face biometric" className="w-full h-full object-cover" />
-                  <span className="absolute bottom-1 right-2 bg-emerald-500 text-slate-950 text-[10px] font-bold px-1.5 py-0.5 rounded-full shadow">
-                    مباشر ✓
-                  </span>
-                </div>
-              ) : (
-                <div className="w-36 h-36 rounded-full bg-slate-900 border-2 border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 mb-3">
-                  <Camera size={32} />
-                  <span className="text-[10px] mt-1">بانتظار الكاميرا</span>
-                </div>
-              )}
-
-              {isFaceCameraActive ? (
-                <div className="flex flex-col gap-2 w-full max-w-xs items-center">
-                  <button
-                    type="button"
-                    onClick={captureFaceFromVideo}
-                    className="w-full py-2.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Camera size={16} />
-                    <span>{t.captureNow}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleLaunchNativeFaceCamera}
-                    className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer hover:bg-slate-700"
-                  >
-                    <Smartphone size={14} className="text-emerald-400" />
-                    <span>فتح كاميرا الهاتف الأصلية (Native)</span>
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <button
-                    type="button"
-                    onClick={startFaceCamera}
-                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold transition flex items-center gap-2 cursor-pointer border border-emerald-500/20"
-                  >
-                    <Camera size={14} />
-                    <span>{facePhoto ? t.retakeFacePhoto : t.takeFacePhoto}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleLaunchNativeFaceCamera}
-                    className="px-3.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-emerald-500/30"
-                  >
-                    <Smartphone size={14} />
-                    <span>كاميرا الهاتف (Native)</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Captured Biometric Confirmation & Public Avatar Preview */}
-            {facePhoto && (
-              <div className="pt-2 border-t border-slate-800/80 p-3 rounded-2xl bg-emerald-950/30 border border-emerald-500/20 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-emerald-500 flex-shrink-0 shadow-md">
-                    <img src={publicAvatar || facePhoto} alt="Verified Avatar" className="w-full h-full object-cover" />
+            {/* SECTION 1A: Private Biometric Face Verification (Mandatory & Confidential) */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <ShieldCheck size={16} />
                   </div>
                   <div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-xs font-bold text-white">صورة الملف الشخصي الموثقة</span>
-                      <ShieldCheck size={14} className="text-emerald-400" />
-                    </div>
-                    <p className="text-[10px] text-emerald-400/90 mt-0.5">تم التحقق منها عبر كاميرا الجهاز الحية</p>
+                    <h5 className="text-xs font-bold text-white">صورة الوجه الحية للتحقق الأمني (إلزامية)</h5>
+                    <p className="text-[10px] text-slate-400">خاصة وسرية 100% — لا يراها الزبائن مطلقاً</p>
+                  </div>
+                </div>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                  <Lock size={10} />
+                  مشفرة
+                </span>
+              </div>
+
+              {/* Strict Confidentiality Banner */}
+              <div className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-[11px] flex items-start gap-2 leading-relaxed">
+                <Lock size={14} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                <span>{t.facePhotoConfidentialNotice}</span>
+              </div>
+
+              {/* Live Camera Feed or Captured Photo */}
+              <div className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-900/60 border border-slate-800/80">
+                {isFaceCameraActive ? (
+                  <div className="relative w-40 h-40 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg mb-3">
+                    <video
+                      ref={faceVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 border-2 border-dashed border-white/50 rounded-full pointer-events-none" />
+                  </div>
+                ) : facePhoto ? (
+                  <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg mb-3">
+                    <img src={facePhoto} alt="Live face biometric" className="w-full h-full object-cover" />
+                    <span className="absolute bottom-1 right-1 bg-emerald-500 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded-full shadow">
+                      سري ✓
+                    </span>
+                  </div>
+                ) : (
+                  <div className="w-32 h-32 rounded-full bg-slate-900 border-2 border-dashed border-slate-700 flex flex-col items-center justify-center text-slate-500 mb-3">
+                    <Camera size={28} />
+                    <span className="text-[10px] mt-1">كاميرا التحقق الحية</span>
+                  </div>
+                )}
+
+                {isFaceCameraActive ? (
+                  <div className="flex flex-col gap-2 w-full max-w-xs items-center">
+                    <button
+                      type="button"
+                      onClick={captureFaceFromVideo}
+                      className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Camera size={16} />
+                      <span>{t.captureNow}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleLaunchNativeFaceCamera}
+                      className="w-full py-2 rounded-xl bg-slate-800 text-slate-300 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer hover:bg-slate-700"
+                    >
+                      <Smartphone size={14} className="text-emerald-400" />
+                      <span>فتح كاميرا الهاتف الأصلية (Native)</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={startFaceCamera}
+                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-emerald-500/20"
+                    >
+                      <Camera size={14} />
+                      <span>{facePhoto ? 'إعادة التقاط الصورة السرية' : 'التقاط صورة التحقق الحية'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleLaunchNativeFaceCamera}
+                      className="px-3 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-emerald-500/30"
+                    >
+                      <Smartphone size={14} />
+                      <span>كاميرا الهاتف (Native)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* SECTION 1B: Public Profile Picture for Customers (Completely Distinct & Optional) */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    <User size={16} />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-bold text-white">صورة الملف الشخصي العامة للزبائن</h5>
+                    <p className="text-[10px] text-slate-400">تظهر للزبائن في قائمة العروض وعلى الخريطة (اختيارية منفصلة)</p>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
+                  اختياري
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800/80">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-blue-500/60 flex-shrink-0 bg-slate-800 flex items-center justify-center">
+                    {publicAvatar ? (
+                      <img src={publicAvatar} alt="Public profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <User size={22} className="text-slate-400" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-slate-200">
+                      {publicAvatar ? 'تم اختيار صورة للملف الشخصي' : 'شارة الحساب الافتراضية'}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {publicAvatar ? 'هذه الصورة ستظهر لزبائنك فقط' : 'يمكنك تركها فارغة أو رفع صورتك المفضلة'}
+                    </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   <input
                     type="file"
                     id="driver-public-avatar-input"
@@ -493,13 +538,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   <button
                     type="button"
                     onClick={() => document.getElementById('driver-public-avatar-input')?.click()}
-                    className="px-2.5 py-1 rounded-xl bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 font-bold border border-slate-700 transition"
+                    className="px-3 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 font-bold text-xs border border-blue-500/30 transition flex items-center gap-1.5 cursor-pointer"
                   >
-                    تغيير من المعرض
+                    <UploadCloud size={14} />
+                    <span>{publicAvatar ? 'تغيير' : 'رفع صورة'}</span>
                   </button>
+                  {publicAvatar && (
+                    <button
+                      type="button"
+                      onClick={() => setPublicAvatar('')}
+                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700 transition cursor-pointer"
+                      title="حذف الصورة والرجوع للشارة الافتراضية"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
+            </div>
           </div>
         )}
 

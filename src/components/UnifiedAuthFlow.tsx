@@ -4,7 +4,7 @@ import { Language, ThemeMode, UserProfile } from '../types';
 import { Sari3Logo } from './Sari3Logo';
 import {
   triggerGoogleSignIn,
-  signInWithSupabaseGoogle,
+  signInWithFirebaseGoogle,
   GoogleUserProfile,
 } from '../utils/googleAuth';
 import {
@@ -33,7 +33,7 @@ import {
   ChevronLeft,
   Send,
 } from 'lucide-react';
-import { generateUuid, saveUserProfile } from '../utils/supabaseSync';
+import { generateUuid, saveUserProfileToFirestore } from '../utils/firebaseSync';
 
 interface UnifiedAuthFlowProps {
   t: AppTranslations;
@@ -122,10 +122,10 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
   const handleGoogleSignInClick = async () => {
     setIsLoading(true);
     setErrorMsg(null);
-    setStatusNotice(lang === 'ar' ? 'جاري فتح نافذة حساب Google...' : 'Connecting to Google...');
+    setStatusNotice(lang === 'ar' ? 'جاري فتح نافذة حساب Google عبر Firebase...' : 'Connecting to Google via Firebase...');
 
     try {
-      // 1. Attempt Google Identity Services (GIS) Token Client Popup if valid client ID exists
+      // 1. Attempt Official Firebase Auth Google Popup
       const googleUser = await triggerGoogleSignIn();
       if (googleUser && googleUser.email) {
         setEmailAddress(googleUser.email);
@@ -137,29 +137,29 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         return;
       }
     } catch (e: any) {
-      console.warn('Google Identity Services notice:', e);
+      console.warn('Firebase Google Auth notice:', e);
     }
 
-    // 2. Fallback to Supabase Google OAuth Provider
+    // 2. Direct Fallback to Firebase Google Provider
     try {
       setStatusNotice(
         lang === 'ar'
-          ? 'جاري التحويل إلى مزود Google عبر Supabase...'
-          : 'Connecting via Supabase Google provider...'
+          ? 'جاري التحويل إلى مزود Google عبر Firebase...'
+          : 'Connecting via Firebase Google provider...'
       );
-      const res = await signInWithSupabaseGoogle();
+      const res = await signInWithFirebaseGoogle();
       if (!res.success && res.error) {
         setIsLoading(false);
         setStatusNotice(null);
         setErrorMsg(
           lang === 'ar'
-            ? `يرجى ضبط VITE_GOOGLE_CLIENT_ID في متغيرات البيئة أو إدخال بريدك مباشرة أدناه (${res.error}).`
-            : `Please configure VITE_GOOGLE_CLIENT_ID in environment or enter your email directly below (${res.error}).`
+            ? `تعذر بدء تسجيل الدخول بحساب Google (${res.error}). يمكنك إدخال بريدك مباشرة أدناه.`
+            : `Google Sign-In notice (${res.error}). You can enter your email directly below.`
         );
         return;
       }
     } catch (e: any) {
-      console.warn('Supabase OAuth notice:', e);
+      console.warn('Firebase OAuth notice:', e);
       setIsLoading(false);
       setStatusNotice(null);
       setErrorMsg(
@@ -306,8 +306,8 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         createdAt: new Date().toISOString(),
       };
 
-      // Persist to Supabase live database
-      await saveUserProfile(authenticatedUser);
+      // Persist to Cloud Firestore live database
+      await saveUserProfileToFirestore(authenticatedUser);
 
       setIsLoading(false);
       setStatusNotice(null);

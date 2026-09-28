@@ -2,23 +2,47 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { createClient } from '@supabase/supabase-js';
+import { initializeApp, getApps } from 'firebase/app';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  collection,
+  query,
+  where,
+  orderBy,
+} from 'firebase/firestore';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Supabase credentials
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://oqdngfhupadfirmsfbfj.supabase.co';
-const SUPABASE_ANON_KEY =
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xZG5nZmh1cGFkZmlybXNmYmZqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODkxMTQ0MzgsImV4cCI6MjEwNDY5MDQzOH0.JPlKEtFJDoyUlkO2JSkx804o5JT1OyefFftfcqnMOMk';
+// Load Firebase configuration
+const firebaseConfigFile = path.resolve(__dirname, 'firebase-applet-config.json');
+let firebaseConfig: any = {
+  projectId: 'gen-lang-client-0768639647',
+  firestoreDatabaseId: 'ai-studio-sari3-ff33d176-e21f-4a36-966a-68b3a15308c3',
+  apiKey: '',
+  authDomain: 'gen-lang-client-0768639647.firebaseapp.com',
+};
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false },
-});
+if (fs.existsSync(firebaseConfigFile)) {
+  try {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigFile, 'utf-8'));
+  } catch (e) {
+    console.warn('[Server] Error reading firebase-applet-config.json:', e);
+  }
+}
+
+const fbApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const db = firebaseConfig.firestoreDatabaseId
+  ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
+  : getFirestore(fbApp);
 
 // In-Memory active OTP session store with TTL
 interface ActiveOtpSession {
@@ -101,6 +125,9 @@ function ensureUuid(id?: string): string {
   if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
     return id;
   }
+  if (id && id.length >= 8) {
+    return id;
+  }
   return generateUuid();
 }
 
@@ -164,7 +191,6 @@ async function startServer() {
         expiresInSeconds,
         channel,
         whatsappLink: channel === 'whatsapp' ? whatsappLink : undefined,
-        // Provided for live interactive verification in preview/dev environment
         devCode: otpCode,
       });
     } catch (err: any) {
@@ -174,11 +200,11 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 2. API: VERIFY PHONE OTP & SYNC DATABASE PROFILE
+  // 2. API: VERIFY PHONE OTP & SYNC CLOUD FIRESTORE PROFILE
   // -------------------------------------------------------------------------
   app.post('/api/auth/otp/verify', async (req: Request, res: Response) => {
     try {
-      const { sessionToken, code, phone, displayName, role = 'customer' } = req.body;
+      const { sessionToken, code, displayName, role = 'customer' } = req.body;
 
       if (!sessionToken || !code) {
         return res.status(400).json({ error: 'رمز التحقق ومعرف الجلسة مطلوبان' });
@@ -211,20 +237,17 @@ async function startServer() {
       const normalizedPhone = session.phone;
       const carrierInfo = detectCarrier(normalizedPhone);
 
-      // Check if user already exists in Supabase profiles
+      // Check or upsert into Cloud Firestore profiles collection
       let userId = generateUuid();
       let existingProfile: any = null;
 
       try {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('phone', carrierInfo.formattedNational)
-          .maybeSingle();
-
-        if (data) {
-          existingProfile = data;
-          userId = data.id;
+        const profilesCol = collection(db, 'profiles');
+        const q = query(profilesCol, where('phone', '==', carrierInfo.formattedNational));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          existingProfile = snap.docs[0].data();
+          userId = existingProfile.id || snap.docs[0].id;
         }
       } catch (dbErr) {
         console.warn('[DB check profiles notice]:', dbErr);
@@ -233,17 +256,17 @@ async function startServer() {
       const userProfile = {
         id: userId,
         phone: carrierInfo.formattedNational,
-        phone_verified: true,
-        display_name: displayName || existingProfile?.display_name || 'مستخدم سريع',
+        phoneVerified: true,
+        displayName: displayName || existingProfile?.displayName || 'مستخدم سريع',
         role: role || existingProfile?.role || 'customer',
         wilaya: existingProfile?.wilaya || '16',
-        account_confirmed: true,
-        updated_at: new Date().toISOString(),
+        accountConfirmed: true,
+        updatedAt: new Date().toISOString(),
       };
 
-      // Upsert into Supabase profiles
+      // Upsert into Cloud Firestore profiles
       try {
-        await supabase.from('profiles').upsert(userProfile);
+        await setDoc(doc(db, 'profiles', userId), userProfile, { merge: true });
       } catch (upsertErr) {
         console.warn('[DB upsert profiles notice]:', upsertErr);
       }
@@ -254,11 +277,11 @@ async function startServer() {
           id: userId,
           phone: carrierInfo.formattedNational,
           phoneVerified: true,
-          displayName: userProfile.display_name,
+          displayName: userProfile.displayName,
           role: userProfile.role,
           wilaya: userProfile.wilaya,
           accountConfirmed: true,
-          createdAt: existingProfile?.created_at || new Date().toISOString(),
+          createdAt: existingProfile?.createdAt || new Date().toISOString(),
         },
       });
     } catch (err: any) {
@@ -268,7 +291,7 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 3. API: GOOGLE AUTH PROFILE SYNC TO LIVE SUPABASE DATABASE
+  // 3. API: GOOGLE AUTH PROFILE SYNC TO LIVE FIRESTORE DATABASE
   // -------------------------------------------------------------------------
   app.post('/api/auth/google/sync', async (req: Request, res: Response) => {
     try {
@@ -277,19 +300,14 @@ async function startServer() {
         return res.status(400).json({ error: 'البريد الإلكتروني مطلوب' });
       }
 
-      let userId = generateUuid();
+      const userId = googleId || generateUuid();
       let existingProfile: any = null;
 
       try {
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('email', email.trim().toLowerCase())
-          .maybeSingle();
-
-        if (data) {
-          existingProfile = data;
-          userId = data.id;
+        const userRef = doc(db, 'profiles', userId);
+        const userSnap = await getDoc(userRef);
+        if (userSnap.exists()) {
+          existingProfile = userSnap.data();
         }
       } catch (dbErr) {
         console.warn('[Google Sync lookup notice]:', dbErr);
@@ -298,16 +316,16 @@ async function startServer() {
       const profilePayload = {
         id: userId,
         email: email.trim().toLowerCase(),
-        display_name: name || existingProfile?.display_name || email.split('@')[0],
-        avatar_url: avatarUrl || existingProfile?.avatar_url,
+        displayName: name || existingProfile?.displayName || email.split('@')[0],
+        avatarUrl: avatarUrl || existingProfile?.avatarUrl, // public avatar only
         role: existingProfile?.role || 'customer',
         wilaya: existingProfile?.wilaya || '16',
-        account_confirmed: true,
-        updated_at: new Date().toISOString(),
+        accountConfirmed: true,
+        updatedAt: new Date().toISOString(),
       };
 
       try {
-        await supabase.from('profiles').upsert(profilePayload);
+        await setDoc(doc(db, 'profiles', userId), profilePayload, { merge: true });
       } catch (upsertErr) {
         console.warn('[Google Sync upsert notice]:', upsertErr);
       }
@@ -318,13 +336,13 @@ async function startServer() {
           id: userId,
           email: profilePayload.email,
           phone: existingProfile?.phone || undefined,
-          phoneVerified: !!existingProfile?.phone_verified,
-          displayName: profilePayload.display_name,
-          avatarUrl: profilePayload.avatar_url,
+          phoneVerified: !!existingProfile?.phoneVerified,
+          displayName: profilePayload.displayName,
+          avatarUrl: profilePayload.avatarUrl,
           role: profilePayload.role,
           wilaya: profilePayload.wilaya,
           accountConfirmed: true,
-          createdAt: existingProfile?.created_at || new Date().toISOString(),
+          createdAt: existingProfile?.createdAt || new Date().toISOString(),
         },
       });
     } catch (err: any) {
@@ -334,25 +352,25 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 4. API: LIVE DELIVERY ORDERS (Fetch from Supabase)
+  // 4. API: LIVE DELIVERY ORDERS (Fetch from Cloud Firestore)
   // -------------------------------------------------------------------------
   app.get('/api/orders', async (req: Request, res: Response) => {
     try {
       const { wilaya } = req.query;
-      let query = supabase.from('delivery_orders').select('*, offers:order_offers(*)');
+      const ordersCol = collection(db, 'delivery_orders');
+      let q = query(ordersCol, orderBy('createdAt', 'desc'));
 
       if (wilaya && wilaya !== 'all') {
-        query = query.eq('wilaya', String(wilaya));
+        q = query(ordersCol, where('wilaya', '==', String(wilaya)), orderBy('createdAt', 'desc'));
       }
 
-      const { data, error } = await query.order('created_at', { ascending: false });
+      const snapshot = await getDocs(q);
+      const orders = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      }));
 
-      if (error) {
-        console.warn('[API /api/orders] Supabase query error:', error.message);
-        return res.json({ orders: [] });
-      }
-
-      return res.json({ orders: data || [] });
+      return res.json({ orders });
     } catch (err: any) {
       console.error('[API /api/orders] Error:', err);
       return res.json({ orders: [] });
@@ -360,7 +378,7 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 5. API: CREATE NEW ORDER (Persist to Supabase)
+  // 5. API: CREATE NEW ORDER (Persist to Cloud Firestore)
   // -------------------------------------------------------------------------
   app.post('/api/orders', async (req: Request, res: Response) => {
     try {
@@ -370,30 +388,26 @@ async function startServer() {
 
       const dbPayload = {
         id: orderId,
-        customer_id: customerId,
-        customer_name: order.customerName,
-        customer_phone: order.customerPhone,
+        customerId: customerId,
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
         wilaya: order.wilaya,
-        pickup_address: order.pickupAddress,
-        pickup_lat: order.pickupCoords?.lat || 36.75,
-        pickup_lng: order.pickupCoords?.lng || 3.05,
-        dropoff_address: order.dropoffAddress,
-        dropoff_lat: order.dropoffCoords?.lat || 36.75,
-        dropoff_lng: order.dropoffCoords?.lng || 3.05,
-        package_photo_url: order.packagePhotoUrl || '',
-        package_description: order.packageDescription || '',
-        package_category: order.packageCategory || 'documents',
-        distance_km: order.distanceKm || 5,
-        suggested_base_price: order.suggestedBasePrice || 500,
-        customer_offer_price: order.customerOfferPrice || 500,
+        pickupAddress: order.pickupAddress,
+        pickupCoords: order.pickupCoords || { lat: 36.75, lng: 3.05 },
+        dropoffAddress: order.dropoffAddress,
+        dropoffCoords: order.dropoffCoords || { lat: 36.75, lng: 3.05 },
+        packagePhotoUrl: order.packagePhotoUrl || '',
+        packageDescription: order.packageDescription || '',
+        packageCategory: order.packageCategory || 'documents',
+        distanceKm: order.distanceKm || 5,
+        suggestedBasePrice: order.suggestedBasePrice || 500,
+        customerOfferPrice: order.customerOfferPrice || 500,
         status: order.status || 'searching',
+        createdAt: order.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from('delivery_orders').insert(dbPayload);
-
-      if (error) {
-        console.warn('[API /api/orders POST] Supabase error:', error.message);
-      }
+      await setDoc(doc(db, 'delivery_orders', orderId), dbPayload);
 
       return res.json({ success: true, orderId });
     } catch (err: any) {
@@ -419,7 +433,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Sari3 Full-Stack Platform] Running live on port ${PORT}`);
+    console.log(`[Sari3 Firebase Full-Stack Platform] Running live on port ${PORT}`);
   });
 }
 
