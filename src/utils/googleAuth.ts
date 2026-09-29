@@ -1,6 +1,6 @@
 import {
-  signInWithPopup,
   signInWithRedirect,
+  getRedirectResult,
   googleAuthProvider,
   auth,
   db,
@@ -23,16 +23,6 @@ declare global {
           initialize: (config: any) => void;
           disableAutoSelect: () => void;
           cancel: () => void;
-        };
-        oauth2?: {
-          initTokenClient: (config: {
-            client_id: string;
-            scope: string;
-            callback: (response: { access_token?: string; error?: any }) => void;
-            error_callback?: (error: any) => void;
-          }) => {
-            requestAccessToken: (overrideConfig?: { prompt?: string }) => void;
-          };
         };
       };
     };
@@ -78,11 +68,10 @@ export function decodeGoogleJwt(token: string): any {
 
 /**
  * Primary Google Sign-In via Firebase Authentication:
- * - Uses Firebase signInWithPopup with GoogleAuthProvider
- * - Synchronizes authenticated user directly to Firestore 'profiles' collection
- * - Strictly stores only the public photoURL in profiles (never biometric selfie)
+ * - Uses Firebase signInWithRedirect (PREVENTS POPUP BLOCKED ERRORS on mobile browsers & WebViews).
+ * - Full-page redirect ensures smooth authentication on Chrome, Safari, Android, and iOS.
  */
-export async function triggerGoogleSignIn(): Promise<GoogleUserProfile | null> {
+export async function triggerGoogleSignIn(): Promise<void> {
   // Explicitly cancel any One-Tap auto-select if present
   if (typeof window !== 'undefined' && window.google?.accounts?.id) {
     try {
@@ -91,15 +80,22 @@ export async function triggerGoogleSignIn(): Promise<GoogleUserProfile | null> {
     } catch (e) {}
   }
 
-  // 1. Attempt Official Firebase Auth Google Popup
-  try {
-    const result = await signInWithPopup(auth, googleAuthProvider);
-    const user = result.user;
+  // Use signInWithRedirect as requested to prevent popup blocking on mobile/WebViews
+  console.info('[Firebase Google Auth] Initiating signInWithRedirect...');
+  await signInWithRedirect(auth, googleAuthProvider);
+}
 
-    if (user && user.email) {
+/**
+ * Processes the result of a Google signInWithRedirect upon page reload/return
+ */
+export async function checkGoogleRedirectResult(): Promise<GoogleUserProfile | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (result && result.user) {
+      const user = result.user;
       const profile: GoogleUserProfile = {
-        email: user.email,
-        name: user.displayName || user.email.split('@')[0],
+        email: user.email || '',
+        name: user.displayName || user.email?.split('@')[0] || 'مستخدم Google',
         avatarUrl:
           user.photoURL ||
           'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
@@ -125,10 +121,10 @@ export async function triggerGoogleSignIn(): Promise<GoogleUserProfile | null> {
           });
         }
       } catch (dbErr) {
-        console.warn('[Firebase Google Auth] Profile persistence notice:', dbErr);
+        console.warn('[Firebase Google Auth] Profile persistence notice on redirect:', dbErr);
       }
 
-      // Also notify backend API
+      // Sync with backend API
       fetch('/api/auth/google/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -137,17 +133,8 @@ export async function triggerGoogleSignIn(): Promise<GoogleUserProfile | null> {
 
       return profile;
     }
-  } catch (firebaseErr: any) {
-    console.warn('[Firebase Google Auth] Popup notice:', firebaseErr.message || firebaseErr);
-
-    // Fallback: If popup was blocked or iframe restriction, try redirect
-    if (firebaseErr?.code === 'auth/popup-blocked') {
-      try {
-        await signInWithRedirect(auth, googleAuthProvider);
-      } catch (redirErr) {
-        console.warn('[Firebase Google Auth] Redirect fallback notice:', redirErr);
-      }
-    }
+  } catch (err: any) {
+    console.warn('[Firebase Google Auth] getRedirectResult notice:', err.message || err);
   }
 
   return null;
@@ -158,11 +145,8 @@ export async function triggerGoogleSignIn(): Promise<GoogleUserProfile | null> {
  */
 export async function signInWithFirebaseGoogle(): Promise<{ success: boolean; error?: string }> {
   try {
-    const result = await signInWithPopup(auth, googleAuthProvider);
-    if (result.user) {
-      return { success: true };
-    }
-    return { success: false, error: 'لم يتم استرجاع بيانات المستخدم' };
+    await triggerGoogleSignIn();
+    return { success: true };
   } catch (err: any) {
     console.warn('[GoogleAuth] Firebase Google OAuth exception:', err);
     return { success: false, error: err.message || 'فشل الاتصال بـ Firebase Google Auth' };

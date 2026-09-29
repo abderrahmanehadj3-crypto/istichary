@@ -176,8 +176,56 @@ async function startServer() {
       );
       const whatsappLink = `https://wa.me/${carrierInfo.normalizedE164.replace('+', '')}?text=${whatsappMessage}`;
 
+      // Dispatch via Real SMS Gateway (Twilio or HTTP SMS Gateway API) if configured
+      if (channel === 'sms') {
+        const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+        const twilioToken = process.env.TWILIO_AUTH_TOKEN;
+        const twilioFrom = process.env.TWILIO_PHONE_NUMBER;
+        const smsGatewayUrl = process.env.SMS_GATEWAY_URL;
+        const smsApiKey = process.env.SMS_API_KEY;
+
+        if (twilioSid && twilioToken && twilioFrom) {
+          try {
+            const basicAuth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
+            const twilioBody = new URLSearchParams({
+              To: carrierInfo.normalizedE164,
+              From: twilioFrom,
+              Body: `رمز التحقق لمنصة سريع (Sari3): ${otpCode}. صالح لمدة 5 دقائق.`,
+            });
+            await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Basic ${basicAuth}`,
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: twilioBody.toString(),
+            });
+            console.info(`[Server SMS Gateway] Real SMS dispatched via Twilio to ${carrierInfo.normalizedE164}`);
+          } catch (twilioErr) {
+            console.error('[Server SMS Gateway] Twilio dispatch error:', twilioErr);
+          }
+        } else if (smsGatewayUrl && smsApiKey) {
+          try {
+            await fetch(smsGatewayUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${smsApiKey}`,
+              },
+              body: JSON.stringify({
+                to: carrierInfo.normalizedE164,
+                message: `رمز التحقق لمنصة سريع (Sari3): ${otpCode}. صالح لمدة 5 دقائق.`,
+              }),
+            });
+            console.info(`[Server SMS Gateway] Real SMS dispatched via custom gateway to ${carrierInfo.normalizedE164}`);
+          } catch (gatewayErr) {
+            console.error('[Server SMS Gateway] Custom gateway dispatch error:', gatewayErr);
+          }
+        }
+      }
+
       console.info(
-        `[Sari3 SMS/OTP Gateway] Dispatched ${channel.toUpperCase()} OTP to ${carrierInfo.carrier} (${carrierInfo.normalizedE164}): Code is [${otpCode}]`
+        `[Sari3 SMS/OTP Gateway] Dispatched ${channel.toUpperCase()} OTP to ${carrierInfo.carrier} (${carrierInfo.normalizedE164})`
       );
 
       return res.json({
@@ -191,7 +239,6 @@ async function startServer() {
         expiresInSeconds,
         channel,
         whatsappLink: channel === 'whatsapp' ? whatsappLink : undefined,
-        devCode: otpCode,
       });
     } catch (err: any) {
       console.error('[API /api/auth/otp/send] Error:', err);

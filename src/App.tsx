@@ -20,6 +20,7 @@ import {
 } from './utils/firebaseSync';
 import { auth, onAuthStateChanged, signOut, db } from './firebaseClient';
 import { doc, getDoc } from 'firebase/firestore';
+import { checkGoogleRedirectResult } from './utils/googleAuth';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
 import { UnifiedAuthFlow } from './components/UnifiedAuthFlow';
@@ -94,8 +95,13 @@ export function App() {
     return () => clearInterval(interval);
   }, [selectedWilaya]);
 
-  // Handle Firebase Authentication state observer
+  // Handle Firebase Authentication state observer and Google Redirect Result
   useEffect(() => {
+    // Process redirect result if browser is returning from Google signInWithRedirect
+    checkGoogleRedirectResult().catch((e) => {
+      console.warn('[Firebase Auth] Redirect check notice:', e);
+    });
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
@@ -188,7 +194,7 @@ export function App() {
 
   // Order Actions: Customer publishes new order
   const handlePublishOrder = async (newOrder: DeliveryOrder) => {
-    await saveNewOrderToSupabase(newOrder);
+    await saveNewOrderToFirestore(newOrder);
     setOrders((prev) => [newOrder, ...prev]);
 
     // Play Dispatch alert sound

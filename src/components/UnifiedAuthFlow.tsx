@@ -118,60 +118,29 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     }
   }, []);
 
-  // 1. Official Google Sign-In Trigger (Manual Click Only)
+  // 1. Official Google Sign-In Trigger (Manual Click Only) - Uses Redirect to prevent popup block on mobile/WebViews
   const handleGoogleSignInClick = async () => {
     setIsLoading(true);
     setErrorMsg(null);
-    setStatusNotice(lang === 'ar' ? 'جاري فتح نافذة حساب Google عبر Firebase...' : 'Connecting to Google via Firebase...');
+    setStatusNotice(
+      lang === 'ar'
+        ? 'جاري التحويل إلى صفحة تسجيل الدخول بحساب Google...'
+        : 'Redirecting to Google Sign-In...'
+    );
 
     try {
-      // 1. Attempt Official Firebase Auth Google Popup
-      const googleUser = await triggerGoogleSignIn();
-      if (googleUser && googleUser.email) {
-        setEmailAddress(googleUser.email);
-        setDisplayName(googleUser.name);
-        setSelectedAvatarUrl(googleUser.avatarUrl);
-        setIsLoading(false);
-        setStatusNotice(null);
-        setStep('google_phone_prompt');
-        return;
-      }
+      await triggerGoogleSignIn();
+      // Browser redirects to Google Authentication
     } catch (e: any) {
-      console.warn('Firebase Google Auth notice:', e);
-    }
-
-    // 2. Direct Fallback to Firebase Google Provider
-    try {
-      setStatusNotice(
-        lang === 'ar'
-          ? 'جاري التحويل إلى مزود Google عبر Firebase...'
-          : 'Connecting via Firebase Google provider...'
-      );
-      const res = await signInWithFirebaseGoogle();
-      if (!res.success && res.error) {
-        setIsLoading(false);
-        setStatusNotice(null);
-        setErrorMsg(
-          lang === 'ar'
-            ? `تعذر بدء تسجيل الدخول بحساب Google (${res.error}). يمكنك إدخال بريدك مباشرة أدناه.`
-            : `Google Sign-In notice (${res.error}). You can enter your email directly below.`
-        );
-        return;
-      }
-    } catch (e: any) {
-      console.warn('Firebase OAuth notice:', e);
+      console.warn('Firebase Google Auth redirect notice:', e);
       setIsLoading(false);
       setStatusNotice(null);
       setErrorMsg(
         lang === 'ar'
-          ? 'تعذر بدء تسجيل الدخول بحساب Google. يمكنك إدخال بريدك الإلكتروني مباشرة أدناه.'
-          : 'Unable to initiate Google Sign-In. You can enter your email directly below.'
+          ? `تعذر بدء تسجيل الدخول بحساب Google (${e.message || e}). يمكنك إدخال بريدك مباشرة أدناه.`
+          : `Google Sign-In notice (${e.message || e}). You can enter your email directly below.`
       );
-      return;
     }
-
-    setIsLoading(false);
-    setStatusNotice(null);
   };
 
   // 2. Direct Google Email Entry Handler
@@ -551,6 +520,9 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     </div>
                   </div>
 
+                  {/* Invisible Firebase Phone Auth reCAPTCHA container */}
+                  <div id="recaptcha-container" className="my-0.5"></div>
+
                   <button
                     type="submit"
                     id="btn-auth-send-phone-otp"
@@ -786,20 +758,15 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     </a>
                   )}
 
-                  {/* Live Verification Indicator in Preview/Dev */}
-                  {smsReceipt.devCode && (
-                    <div className="pt-1 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-400">
-                      <span>رمز التحقق المستلم:</span>
-                      <button
-                        type="button"
-                        onClick={() => setOtpCode(smsReceipt.devCode!)}
-                        className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-mono font-bold hover:bg-emerald-500/30 transition cursor-pointer"
-                        title="انقر لتعبئة الرمز تلقائياً"
-                      >
-                        {smsReceipt.devCode} (تعبئة تلقائية)
-                      </button>
-                    </div>
-                  )}
+                  {/* Real SMS Delivery Notice */}
+                  <div className="pt-2 border-t border-slate-800/80 flex items-center gap-2 text-[11px] text-slate-300">
+                    <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
+                    <span>
+                      {lang === 'ar'
+                        ? 'تم إرسال رمز التحقق في رسالة نصية SMS حقيقية إلى رقم هاتفك.'
+                        : 'A real SMS verification code has been dispatched to your phone.'}
+                    </span>
+                  </div>
                 </div>
               )}
 
