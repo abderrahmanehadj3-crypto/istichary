@@ -175,14 +175,14 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     }
   };
 
-  // 3. Switch to WhatsApp Channel & Resend if SMS is delayed
+  // 3. Automated Server-Side WhatsApp Delivery
   const handleRequestOtpViaWhatsApp = async () => {
     setIsLoading(true);
     setErrorMsg(null);
     setStatusNotice(
       lang === 'ar'
-        ? `جاري إعادة إرسال رمز التحقق عبر واتساب (${carrierInfo.carrierNameAr})...`
-        : `Resending verification code via WhatsApp...`
+        ? `جاري إرسال رمز التحقق تلقائياً عبر خدمة واتساب الرسمية (${carrierInfo.carrierNameAr})...`
+        : `Sending verification code automatically via WhatsApp Business API...`
     );
 
     try {
@@ -194,10 +194,6 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
       setResendCountdown(60);
       setCanResend(false);
       setOtpCode('');
-      // Open WhatsApp direct link if available
-      if (receipt.whatsappLink && typeof window !== 'undefined') {
-        window.open(receipt.whatsappLink, '_blank');
-      }
     } catch (err: any) {
       setIsLoading(false);
       setStatusNotice(null);

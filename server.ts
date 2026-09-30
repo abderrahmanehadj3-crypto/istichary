@@ -16,6 +16,7 @@ import {
   Firestore,
 } from 'firebase/firestore';
 import { sendRealSmsMessage } from './src/server/smsGateway';
+import { sendAutomatedWhatsAppOtp } from './src/server/whatsappGateway';
 
 dotenv.config();
 
@@ -199,16 +200,22 @@ async function startServer() {
       const expiresInSeconds = 300; // 5 minutes
       const expiresAt = Date.now() + expiresInSeconds * 1000;
 
-      // 1. Trigger Real SMS Gateway API Dispatch (Twilio, Vonage, Infobip, Custom)
-      let smsResult = {
+      // 1. Trigger Real Automated Delivery: SMS Gateway or Meta WhatsApp Cloud API
+      let dispatchResult = {
         success: true,
         provider: 'pending_configuration',
         messageId: `msg_${Date.now()}`,
         statusMessage: 'Dispatched',
       };
 
-      if (channel === 'sms') {
-        smsResult = await sendRealSmsMessage(
+      if (channel === 'whatsapp') {
+        dispatchResult = await sendAutomatedWhatsAppOtp(
+          carrierInfo.normalizedE164,
+          otpCode,
+          carrierInfo.carrierName
+        );
+      } else {
+        dispatchResult = await sendRealSmsMessage(
           carrierInfo.normalizedE164,
           otpCode,
           carrierInfo.carrierName
@@ -224,9 +231,9 @@ async function startServer() {
         carrier: carrierInfo.carrier,
         carrierName: carrierInfo.carrierName,
         channel,
-        smsProvider: smsResult.provider,
-        smsMessageId: smsResult.messageId,
-        smsStatus: smsResult.statusMessage,
+        deliveryProvider: dispatchResult.provider,
+        deliveryMessageId: dispatchResult.messageId,
+        deliveryStatus: dispatchResult.statusMessage,
         attempts: 0,
         status: 'pending',
         expiresAt,
@@ -257,20 +264,14 @@ async function startServer() {
       phoneSessions.set(carrierInfo.normalizedE164, newSession);
       phoneSessions.set(carrierInfo.formattedNational, newSession);
 
-      // Construct WhatsApp direct verification link for guaranteed delivery if requested
-      const whatsappMessage = encodeURIComponent(
-        `رمز التحقق لمنصة سريع (Sari3 Delivery): *${otpCode}*\nصالح لمدة 5 دقائق.`
-      );
-      const whatsappLink = `https://wa.me/${carrierInfo.normalizedE164.replace('+', '')}?text=${whatsappMessage}`;
-
       console.info(
-        `[Sari3 Real SMS/OTP Flow] Dispatched via ${smsResult.provider} to ${carrierInfo.carrier} (${carrierInfo.normalizedE164}) - Session: ${sessionToken}`
+        `[Sari3 Automated OTP Flow] Dispatched via ${dispatchResult.provider} (${channel.toUpperCase()}) to ${carrierInfo.carrier} (${carrierInfo.normalizedE164}) - Session: ${sessionToken}`
       );
 
       // Return session receipt (NEVER expose the code to client!)
       return res.json({
         success: true,
-        messageId: smsResult.messageId || `msg_${Date.now()}_${carrierInfo.carrier.toLowerCase()}`,
+        messageId: dispatchResult.messageId || `msg_${Date.now()}_${carrierInfo.carrier.toLowerCase()}`,
         sessionToken,
         carrier: carrierInfo.carrier,
         carrierName: carrierInfo.carrierName,
@@ -278,9 +279,8 @@ async function startServer() {
         normalizedE164: carrierInfo.normalizedE164,
         expiresInSeconds,
         channel,
-        smsProvider: smsResult.provider,
-        smsStatus: smsResult.statusMessage,
-        whatsappLink: channel === 'whatsapp' ? whatsappLink : undefined,
+        provider: dispatchResult.provider,
+        statusMessage: dispatchResult.statusMessage,
       });
     } catch (err: any) {
       console.error('[API /api/auth/otp/send] Error:', err);
