@@ -618,13 +618,27 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                   id="input-auth-otp-code"
                   maxLength={6}
                   value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                  onChange={(e) => {
+                    setOtpCode(e.target.value.replace(/[^0-9]/g, ''));
+                    if (errorMsg) setErrorMsg(null);
+                  }}
                   placeholder="• • • • • •"
                   dir="ltr"
                   autoFocus
                   required
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-2xl px-4 py-3.5 text-center text-2xl tracking-[0.5em] text-white font-mono placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                  className={`w-full bg-slate-950 border ${
+                    errorMsg
+                      ? 'border-red-500/80 focus:border-red-500 focus:ring-red-500/30'
+                      : 'border-slate-700/80 focus:border-emerald-500 focus:ring-emerald-500/30'
+                  } rounded-2xl px-4 py-3.5 text-center text-2xl tracking-[0.5em] text-white font-mono placeholder:text-slate-600 focus:outline-none focus:ring-2 transition`}
                 />
+
+                {errorMsg && (
+                  <div className="mt-2.5 p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-bold flex items-center justify-center gap-1.5 animate-pulse">
+                    <AlertCircle size={14} className="shrink-0" />
+                    <span>{errorMsg}</span>
+                  </div>
+                )}
               </div>
 
               <button
