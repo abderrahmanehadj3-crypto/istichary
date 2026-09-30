@@ -176,9 +176,8 @@ export async function sendAlgerianSmsOtp(
 
 /**
  * Validates the user-entered SMS verification code:
- * - Checks with Supabase Auth verifyOtp
- * - Checks with Backend OTP session
- * - Fallback verification
+ * - Strictly validates against Supabase Auth verifyOtp or Backend OTP store
+ * - The system must NEVER accept an incorrect OTP code!
  */
 export async function verifyAlgerianSmsOtp(
   sessionToken: string,
@@ -189,7 +188,15 @@ export async function verifyAlgerianSmsOtp(
 ): Promise<{ success: boolean; error?: string; user?: any }> {
   const cleanCode = enteredCode.trim();
 
-  // 1. Try Supabase Phone OTP verify
+  // 1. Strict format check: exactly 6 digits
+  if (!cleanCode || cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
+    return {
+      success: false,
+      error: 'يرجى إدخال رمز التحقق المكون من 6 أرقام بشكل صحيح (أرقام فقط).',
+    };
+  }
+
+  // 2. Try Supabase Phone OTP verify if configured
   if (phone && isSupabaseConfigured()) {
     try {
       const carrier = detectAlgerianCarrier(phone);
@@ -223,13 +230,15 @@ export async function verifyAlgerianSmsOtp(
             role,
           },
         };
+      } else if (error) {
+        console.warn('[Supabase VerifyOtp] Error notice:', error.message);
       }
     } catch (sbErr) {
-      console.warn('[Supabase VerifyOtp] Notice:', sbErr);
+      console.warn('[Supabase VerifyOtp] Exception:', sbErr);
     }
   }
 
-  // 2. Verify via Backend API
+  // 3. Strict verification via Backend API
   try {
     const res = await fetch('/api/auth/otp/verify', {
       method: 'POST',
@@ -243,63 +252,25 @@ export async function verifyAlgerianSmsOtp(
       }),
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.success) {
-        return { success: true, user: data.user };
-      }
-    } else {
-      const errorJson = await res.json().catch(() => null);
-      if (errorJson?.error) {
-        return { success: false, error: errorJson.error };
-      }
+    const data = await res.json().catch(() => null);
+
+    if (res.ok && data?.success) {
+      return { success: true, user: data.user };
+    }
+
+    if (data?.error) {
+      return { success: false, error: data.error };
     }
   } catch (backendErr) {
-    console.warn('[SmsGateway] Backend verify notice:', backendErr);
+    console.error('[SmsGateway] Backend verify network error:', backendErr);
+    return {
+      success: false,
+      error: 'تعذر الاتصال بخادم التحقق. يرجى التأكد من اتصالك بالإنترنت والمحاولة مجدداً.',
+    };
   }
 
   return {
     success: false,
-    error: 'رمز التحقق غير صحيح أو انتهت صلاحيته. يرجى التأكد من الرمز المستلم.',
-  };
-}
-
-/**
- * Reliable Network Fallback:
- * If an Algerian operator experiences SMS gateway latency or network filtering,
- * this fallback securely confirms the phone number so the user can continue smoothly.
- */
-export async function executePhoneVerificationFallback(
-  phone: string,
-  displayName?: string,
-  role: string = 'customer'
-): Promise<{ success: boolean; user?: any; error?: string }> {
-  const carrierInfo = detectAlgerianCarrier(phone);
-  if (!carrierInfo.valid) {
-    return {
-      success: false,
-      error: 'رقم الهاتف غير صالح للمتابعة.',
-    };
-  }
-
-  const userId = generateUuid();
-  const user = {
-    id: userId,
-    phone: carrierInfo.formattedNational,
-    phoneVerified: true,
-    displayName: displayName || 'مستخدم سريع',
-    role,
-    wilaya: '16',
-    accountConfirmed: true,
-    createdAt: new Date().toISOString(),
-  };
-
-  try {
-    await saveUserProfile(user as any);
-  } catch (e) {}
-
-  return {
-    success: true,
-    user,
+    error: 'رمز التحقق غير صحيح. يرجى التأكد من كتابة الأرقام الستة المستلمة.',
   };
 }

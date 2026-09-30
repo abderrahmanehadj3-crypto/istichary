@@ -10,7 +10,6 @@ import {
   detectAlgerianCarrier,
   sendAlgerianSmsOtp,
   verifyAlgerianSmsOtp,
-  executePhoneVerificationFallback,
   SmsDispatchReceipt,
   CarrierInfo,
 } from '../utils/algeriaSmsGateway';
@@ -36,7 +35,7 @@ import {
   Truck,
   Package,
   ExternalLink,
-  Zap,
+  RotateCw,
 } from 'lucide-react';
 import { generateUuid, saveUserProfile } from '../utils/supabaseSync';
 import { ALGERIA_WILAYAS } from '../data/wilayas';
@@ -176,67 +175,46 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     }
   };
 
-  // 3. Reliable Fallback Verification (Instant Network Confirmation)
-  const handleInstantFallbackVerification = async () => {
+  // 3. Switch to WhatsApp Channel & Resend if SMS is delayed
+  const handleRequestOtpViaWhatsApp = async () => {
     setIsLoading(true);
     setErrorMsg(null);
     setStatusNotice(
       lang === 'ar'
-        ? 'جاري تأكيد رقم الهاتف عبر قناة التحقق البديلة المباشرة...'
-        : 'Verifying phone number via instant network fallback...'
+        ? `جاري إعادة إرسال رمز التحقق عبر واتساب (${carrierInfo.carrierNameAr})...`
+        : `Resending verification code via WhatsApp...`
     );
 
     try {
-      const result = await executePhoneVerificationFallback(
-        carrierInfo.normalizedE164,
-        fullName.trim() || undefined,
-        selectedRole
-      );
-
-      if (result.success && result.user) {
-        setIsLoading(false);
-        setStatusNotice(null);
-        setVerifiedPhone(carrierInfo.formattedNational);
-        setCreatedUserId(result.user.id || generateUuid());
-
-        if (selectedRole === 'customer') {
-          // Immediately prompt for "الاسم واللقب" only!
-          setStep('customer_name_prompt');
-        } else {
-          // Driver directly moves to Driver Onboarding Wizard
-          const driverUser: UserProfile = {
-            id: result.user.id || generateUuid(),
-            phone: carrierInfo.formattedNational,
-            phoneVerified: true,
-            displayName: 'كابتن سريع',
-            role: 'driver',
-            wilaya: '16',
-            accountConfirmed: true,
-            createdAt: new Date().toISOString(),
-          };
-          await saveUserProfile(driverUser);
-          onAuthSuccess(driverUser);
-        }
-      } else {
-        setIsLoading(false);
-        setStatusNotice(null);
-        setErrorMsg(result.error || 'تعذر إجراء التحقق البديل.');
-      }
-    } catch (e: any) {
+      const receipt = await sendAlgerianSmsOtp(carrierInfo.normalizedE164, 'whatsapp');
+      setSmsReceipt(receipt);
+      setDeliveryChannel('whatsapp');
       setIsLoading(false);
       setStatusNotice(null);
-      setErrorMsg(e.message || 'فشل التحقق البديل.');
+      setResendCountdown(60);
+      setCanResend(false);
+      setOtpCode('');
+      // Open WhatsApp direct link if available
+      if (receipt.whatsappLink && typeof window !== 'undefined') {
+        window.open(receipt.whatsappLink, '_blank');
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setStatusNotice(null);
+      setErrorMsg(err.message || 'فشل إرسال الرمز عبر واتساب.');
     }
   };
 
-  // 4. Verify Entered OTP
+  // 4. Strictly Verify Entered OTP with Server
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!otpCode || otpCode.trim().length !== 6) {
+    const cleanCode = otpCode.trim();
+
+    if (!cleanCode || cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) {
       setErrorMsg(
         lang === 'ar'
-          ? 'يرجى إدخال رمز التحقق المكون من 6 أرقام'
-          : 'Please enter the 6-digit verification code'
+          ? 'يرجى إدخال رمز التحقق المكون من 6 أرقام بشكل صحيح (أرقام فقط)'
+          : 'Please enter a valid 6-digit verification code'
       );
       return;
     }
@@ -244,22 +222,23 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     setIsLoading(true);
     setErrorMsg(null);
     setStatusNotice(
-      lang === 'ar' ? 'جاري التحقق من الرمز مع قاعدة بيانات Supabase...' : 'Verifying code...'
+      lang === 'ar' ? 'جاري التحقق من صحة الرمز مع الخادم وقاعدة البيانات...' : 'Verifying code...'
     );
 
     try {
       const result = await verifyAlgerianSmsOtp(
-        smsReceipt?.sessionToken || 'direct_sess',
-        otpCode,
+        smsReceipt?.sessionToken || '',
+        cleanCode,
         carrierInfo.normalizedE164,
         fullName.trim() || undefined,
         selectedRole
       );
 
+      // STRICT CHECK: The system MUST NEVER accept an incorrect OTP code!
       if (!result.success) {
         setIsLoading(false);
         setStatusNotice(null);
-        setErrorMsg(result.error || 'رمز التحقق غير صحيح. يمكنك استخدام خيار التحقق المباشر أدناه.');
+        setErrorMsg(result.error || (lang === 'ar' ? 'رمز التحقق غير صحيح. يرجى التأكد من الرمز المدخل.' : 'Invalid verification code.'));
         return;
       }
 
@@ -679,43 +658,34 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                 </div>
               </div>
 
-              {/* RELIABLE FALLBACK MECHANISM: FOR ALGERIAN USERS */}
+              {/* SECURE DELIVERY FALLBACK: Resend via SMS or WhatsApp for Algerian Users */}
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold text-slate-300">
                     لم تستلم رسالة SMS في هاتفك؟
                   </span>
-                  <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
-                    حل فوري
+                  <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                    قناة بديلة
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  {/* WhatsApp Direct Delivery Link */}
-                  {smsReceipt?.whatsappLink && (
-                    <a
-                      href={smsReceipt.whatsappLink}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="py-2 px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[11px] font-bold border border-emerald-500/30 transition flex items-center justify-center gap-1.5"
-                    >
-                      <Send size={12} />
-                      <span>عبر واتساب</span>
-                      <ExternalLink size={10} />
-                    </a>
-                  )}
-
-                  {/* Instant Network Fallback Button */}
+                <div className="flex flex-col gap-2 pt-1">
+                  {/* WhatsApp Direct Delivery Trigger */}
                   <button
                     type="button"
-                    id="btn-auth-instant-fallback"
-                    onClick={handleInstantFallbackVerification}
+                    id="btn-auth-resend-whatsapp"
+                    onClick={handleRequestOtpViaWhatsApp}
                     disabled={isLoading}
-                    className="col-span-1 py-2 px-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 text-[11px] font-bold border border-blue-500/30 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="w-full py-2.5 px-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30 transition flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <Zap size={12} />
-                    <span>تحقق فوري مباشر</span>
+                    <Send size={13} className="text-emerald-400" />
+                    <span>إرسال رمز التحقق عبر واتساب (WhatsApp)</span>
+                    <ExternalLink size={12} />
                   </button>
+
+                  <p className="text-[10px] text-slate-400 leading-relaxed text-center">
+                    حماية أمنية مشددة: يجب إدخال الرمز المكون من 6 أرقام لتأكيد الملكية. لا يمكن الدخول بدون مطابقة الرمز.
+                  </p>
                 </div>
               </div>
 

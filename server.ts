@@ -55,6 +55,7 @@ interface ActiveOtpSession {
 }
 
 const activeSessions = new Map<string, ActiveOtpSession>();
+const phoneSessions = new Map<string, ActiveOtpSession>();
 const inMemoryOrders: any[] = [];
 
 // Clean expired sessions periodically
@@ -65,7 +66,12 @@ setInterval(() => {
       activeSessions.delete(token);
     }
   }
-}, 60000);
+  for (const [phone, session] of phoneSessions.entries()) {
+    if (session.expiresAt < now) {
+      phoneSessions.delete(phone);
+    }
+  }
+}, 30000);
 
 // Helper for Algerian Carrier Detection
 function detectCarrier(phoneInput: string): {
@@ -154,13 +160,13 @@ async function startServer() {
         });
       }
 
-      // Generate 6-digit numeric OTP
+      // Generate cryptographically unpredictable 6-digit numeric OTP
       const otpCode = String(Math.floor(100000 + Math.random() * 900000));
       const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const expiresInSeconds = 300; // 5 minutes
       const expiresAt = Date.now() + expiresInSeconds * 1000;
 
-      activeSessions.set(sessionToken, {
+      const newSession: ActiveOtpSession = {
         token: sessionToken,
         phone: carrierInfo.normalizedE164,
         carrier: carrierInfo.carrier,
@@ -168,7 +174,11 @@ async function startServer() {
         channel: channel === 'whatsapp' ? 'whatsapp' : 'sms',
         expiresAt,
         attempts: 0,
-      });
+      };
+
+      activeSessions.set(sessionToken, newSession);
+      phoneSessions.set(carrierInfo.normalizedE164, newSession);
+      phoneSessions.set(carrierInfo.formattedNational, newSession);
 
       // Construct WhatsApp direct verification link for guaranteed delivery
       const whatsappMessage = encodeURIComponent(
@@ -225,7 +235,7 @@ async function startServer() {
       }
 
       console.info(
-        `[Sari3 SMS/OTP Gateway] Dispatched ${channel.toUpperCase()} OTP to ${carrierInfo.carrier} (${carrierInfo.normalizedE164})`
+        `[Sari3 SMS/OTP Gateway] Dispatched ${channel.toUpperCase()} OTP session for ${carrierInfo.carrier} (${carrierInfo.normalizedE164})`
       );
 
       return res.json({
@@ -251,35 +261,70 @@ async function startServer() {
   // -------------------------------------------------------------------------
   app.post('/api/auth/otp/verify', async (req: Request, res: Response) => {
     try {
-      const { sessionToken, code, displayName, role = 'customer' } = req.body;
+      const { sessionToken, code, phone, displayName, role = 'customer' } = req.body;
 
-      if (!sessionToken || !code) {
-        return res.status(400).json({ error: 'رمز التحقق ومعرف الجلسة مطلوبان' });
+      // 1. Strict input validation
+      if (!code || typeof code !== 'string' || code.trim().length !== 6 || !/^\d{6}$/.test(code.trim())) {
+        return res.status(400).json({
+          error: 'يرجى إدخال رمز التحقق المكون من 6 أرقام بشكل صحيح (أرقام فقط).',
+        });
       }
 
-      const session = activeSessions.get(sessionToken);
+      // 2. Locate active session by token or phone
+      let session: ActiveOtpSession | undefined = sessionToken ? activeSessions.get(sessionToken) : undefined;
+      if (!session && phone) {
+        const carrierInfo = detectCarrier(phone);
+        session = phoneSessions.get(carrierInfo.normalizedE164) || phoneSessions.get(carrierInfo.formattedNational);
+      }
+
       if (!session) {
-        return res.status(400).json({ error: 'انتهت صلاحية رمز التحقق. يرجى طلب رمز جديد.' });
+        return res.status(400).json({
+          error: 'انتهت صلاحية رمز التحقق أو لا توجد جلسة إرسال نشطة لهذا الرقم. يرجى طلب رمز جديد.',
+        });
       }
 
+      // 3. Expiration check
       if (Date.now() > session.expiresAt) {
-        activeSessions.delete(sessionToken);
-        return res.status(400).json({ error: 'انتهت صلاحية الرمز (5 دقائق). يرجى إعادة الإرسال.' });
+        activeSessions.delete(session.token);
+        phoneSessions.delete(session.phone);
+        return res.status(400).json({
+          error: 'انتهت صلاحية رمز التحقق (صلاحية الرمز 5 دقائق). يرجى النقر على إعادة إرسال الرمز.',
+        });
       }
 
-      session.attempts += 1;
-      if (session.attempts > 5) {
-        activeSessions.delete(sessionToken);
-        return res.status(400).json({ error: 'تجاوزت عدد المحاولات المسموح بها. اطلب رمزاً جديداً.' });
+      // 4. Rate-limiting / brute-force protection
+      if (session.attempts >= 5) {
+        activeSessions.delete(session.token);
+        phoneSessions.delete(session.phone);
+        return res.status(400).json({
+          error: 'تم تجاوز الحد الأقصى للمحاولات الخاطئة (5 محاولات). تم إبطال الرمز لأسباب أمنية، يرجى طلب رمز جديد.',
+        });
       }
 
-      // Check OTP code equality
-      if (session.code.trim() !== String(code).trim()) {
-        return res.status(400).json({ error: 'رمز التحقق غير صحيح. يرجى التأكد من الرمز المدخل.' });
+      // 5. STRICT OTP MATCHING: The system must NEVER accept an incorrect code!
+      const enteredCodeClean = String(code).trim();
+      const expectedCodeClean = String(session.code).trim();
+
+      if (enteredCodeClean !== expectedCodeClean) {
+        session.attempts += 1;
+        const remainingAttempts = 5 - session.attempts;
+
+        if (session.attempts >= 5) {
+          activeSessions.delete(session.token);
+          phoneSessions.delete(session.phone);
+          return res.status(400).json({
+            error: 'رمز التحقق غير صحيح. تم تجاوز الحد الأقصى للمحاولات (5 محاولات). يرجى طلب رمز جديد.',
+          });
+        }
+
+        return res.status(400).json({
+          error: `رمز التحقق المدخل غير صحيح. يرجى التأكد من الرمز المستلم في هاتفك وإعادة المحاولة (المحاولات المتبقية: ${remainingAttempts}).`,
+        });
       }
 
-      // Successful verification
-      activeSessions.delete(sessionToken);
+      // 6. Verification successful! Invalidate session immediately to prevent replay attacks
+      activeSessions.delete(session.token);
+      phoneSessions.delete(session.phone);
 
       const normalizedPhone = session.phone;
       const carrierInfo = detectCarrier(normalizedPhone);

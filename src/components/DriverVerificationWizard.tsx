@@ -76,12 +76,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   );
   const [calculatedAge, setCalculatedAge] = useState<number>(0);
 
-  // STEP 3: Phone Verification via SMS OTP
+  // STEP 3: Phone Verification
   const [phone, setPhone] = useState(currentUser.phone || '');
   const [isPhoneVerified, setIsPhoneVerified] = useState(!!currentUser.phoneVerified);
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpCode, setOtpCode] = useState('');
-  const [otpTestCode, setOtpTestCode] = useState<string | null>(null);
 
   // STEP 4: Live License Camera Scanner (100% Live Camera Only - No Stock Images, No Gallery)
   const [licenseNumber, setLicenseNumber] = useState(
