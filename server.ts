@@ -2,47 +2,46 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { initializeApp, getApps } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  collection,
-  query,
-  where,
-  orderBy,
-} from 'firebase/firestore';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load Firebase configuration
-const firebaseConfigFile = path.resolve(__dirname, 'firebase-applet-config.json');
-let firebaseConfig: any = {
-  projectId: 'gen-lang-client-0768639647',
-  firestoreDatabaseId: 'ai-studio-sari3-ff33d176-e21f-4a36-966a-68b3a15308c3',
-  apiKey: '',
-  authDomain: 'gen-lang-client-0768639647.firebaseapp.com',
-};
-
-if (fs.existsSync(firebaseConfigFile)) {
+// Sanitize Supabase environment variables to prevent malformed URLs or DNS errors
+function sanitizeUrl(raw?: string): string {
+  if (!raw || typeof raw !== 'string') {
+    return 'https://oqdngfhupadfirmsfbfj.supabase.co';
+  }
+  let cleaned = raw.trim().replace(/^["']|["']$/g, '');
+  if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+    cleaned = `https://${cleaned}`;
+  }
   try {
-    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigFile, 'utf-8'));
-  } catch (e) {
-    console.warn('[Server] Error reading firebase-applet-config.json:', e);
+    return new URL(cleaned).origin;
+  } catch {
+    return 'https://oqdngfhupadfirmsfbfj.supabase.co';
   }
 }
 
-const fbApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(fbApp);
+function sanitizeKey(raw?: string): string {
+  if (!raw || typeof raw !== 'string') {
+    return 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.placeholder';
+  }
+  return raw.trim().replace(/^["']|["']$/g, '');
+}
+
+const supabaseUrl = sanitizeUrl(process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL);
+const supabaseAnonKey = sanitizeKey(process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY);
+
+const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+  },
+});
 
 // In-Memory active OTP session store with TTL
 interface ActiveOtpSession {
@@ -56,6 +55,7 @@ interface ActiveOtpSession {
 }
 
 const activeSessions = new Map<string, ActiveOtpSession>();
+const inMemoryOrders: any[] = [];
 
 // Clean expired sessions periodically
 setInterval(() => {
@@ -176,7 +176,7 @@ async function startServer() {
       );
       const whatsappLink = `https://wa.me/${carrierInfo.normalizedE164.replace('+', '')}?text=${whatsappMessage}`;
 
-      // Dispatch via Real SMS Gateway (Twilio or HTTP SMS Gateway API) if configured
+      // Dispatch via External SMS Gateway if configured
       if (channel === 'sms') {
         const twilioSid = process.env.TWILIO_ACCOUNT_SID;
         const twilioToken = process.env.TWILIO_AUTH_TOKEN;
@@ -247,7 +247,7 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 2. API: VERIFY PHONE OTP & SYNC CLOUD FIRESTORE PROFILE
+  // 2. API: VERIFY PHONE OTP & SYNC SUPABASE PROFILES TABLE
   // -------------------------------------------------------------------------
   app.post('/api/auth/otp/verify', async (req: Request, res: Response) => {
     try {
@@ -278,23 +278,25 @@ async function startServer() {
         return res.status(400).json({ error: 'رمز التحقق غير صحيح. يرجى التأكد من الرمز المدخل.' });
       }
 
-      // Successful verification -> invalidate session
+      // Successful verification
       activeSessions.delete(sessionToken);
 
       const normalizedPhone = session.phone;
       const carrierInfo = detectCarrier(normalizedPhone);
 
-      // Check or upsert into Cloud Firestore profiles collection
       let userId = generateUuid();
       let existingProfile: any = null;
 
       try {
-        const profilesCol = collection(db, 'profiles');
-        const q = query(profilesCol, where('phone', '==', carrierInfo.formattedNational));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          existingProfile = snap.docs[0].data();
-          userId = existingProfile.id || snap.docs[0].id;
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('phone', carrierInfo.formattedNational)
+          .maybeSingle();
+
+        if (data) {
+          existingProfile = data;
+          userId = data.id;
         }
       } catch (dbErr) {
         console.warn('[DB check profiles notice]:', dbErr);
@@ -303,17 +305,16 @@ async function startServer() {
       const userProfile = {
         id: userId,
         phone: carrierInfo.formattedNational,
-        phoneVerified: true,
-        displayName: displayName || existingProfile?.displayName || 'مستخدم سريع',
+        phone_verified: true,
+        display_name: displayName || existingProfile?.display_name || 'مستخدم سريع',
         role: role || existingProfile?.role || 'customer',
         wilaya: existingProfile?.wilaya || '16',
-        accountConfirmed: true,
-        updatedAt: new Date().toISOString(),
+        account_confirmed: true,
+        updated_at: new Date().toISOString(),
       };
 
-      // Upsert into Cloud Firestore profiles
       try {
-        await setDoc(doc(db, 'profiles', userId), userProfile, { merge: true });
+        await supabase.from('profiles').upsert(userProfile);
       } catch (upsertErr) {
         console.warn('[DB upsert profiles notice]:', upsertErr);
       }
@@ -324,11 +325,11 @@ async function startServer() {
           id: userId,
           phone: carrierInfo.formattedNational,
           phoneVerified: true,
-          displayName: userProfile.displayName,
+          displayName: userProfile.display_name,
           role: userProfile.role,
           wilaya: userProfile.wilaya,
           accountConfirmed: true,
-          createdAt: existingProfile?.createdAt || new Date().toISOString(),
+          createdAt: existingProfile?.created_at || new Date().toISOString(),
         },
       });
     } catch (err: any) {
@@ -338,7 +339,7 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 3. API: GOOGLE AUTH PROFILE SYNC TO LIVE FIRESTORE DATABASE
+  // 3. API: GOOGLE AUTH PROFILE SYNC TO SUPABASE PROFILES TABLE
   // -------------------------------------------------------------------------
   app.post('/api/auth/google/sync', async (req: Request, res: Response) => {
     try {
@@ -351,10 +352,13 @@ async function startServer() {
       let existingProfile: any = null;
 
       try {
-        const userRef = doc(db, 'profiles', userId);
-        const userSnap = await getDoc(userRef);
-        if (userSnap.exists()) {
-          existingProfile = userSnap.data();
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        if (data) {
+          existingProfile = data;
         }
       } catch (dbErr) {
         console.warn('[Google Sync lookup notice]:', dbErr);
@@ -363,16 +367,16 @@ async function startServer() {
       const profilePayload = {
         id: userId,
         email: email.trim().toLowerCase(),
-        displayName: name || existingProfile?.displayName || email.split('@')[0],
-        avatarUrl: avatarUrl || existingProfile?.avatarUrl, // public avatar only
+        display_name: name || existingProfile?.display_name || email.split('@')[0],
+        avatar_url: avatarUrl || existingProfile?.avatar_url,
         role: existingProfile?.role || 'customer',
         wilaya: existingProfile?.wilaya || '16',
-        accountConfirmed: true,
-        updatedAt: new Date().toISOString(),
+        account_confirmed: true,
+        updated_at: new Date().toISOString(),
       };
 
       try {
-        await setDoc(doc(db, 'profiles', userId), profilePayload, { merge: true });
+        await supabase.from('profiles').upsert(profilePayload);
       } catch (upsertErr) {
         console.warn('[Google Sync upsert notice]:', upsertErr);
       }
@@ -383,13 +387,13 @@ async function startServer() {
           id: userId,
           email: profilePayload.email,
           phone: existingProfile?.phone || undefined,
-          phoneVerified: !!existingProfile?.phoneVerified,
-          displayName: profilePayload.displayName,
-          avatarUrl: profilePayload.avatarUrl,
+          phoneVerified: !!existingProfile?.phone_verified,
+          displayName: profilePayload.display_name,
+          avatarUrl: profilePayload.avatar_url,
           role: profilePayload.role,
           wilaya: profilePayload.wilaya,
           accountConfirmed: true,
-          createdAt: existingProfile?.createdAt || new Date().toISOString(),
+          createdAt: existingProfile?.created_at || new Date().toISOString(),
         },
       });
     } catch (err: any) {
@@ -399,33 +403,41 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 4. API: LIVE DELIVERY ORDERS (Fetch from Cloud Firestore)
+  // 4. API: LIVE DELIVERY ORDERS (Fetch from Supabase)
   // -------------------------------------------------------------------------
   app.get('/api/orders', async (req: Request, res: Response) => {
     try {
       const { wilaya } = req.query;
-      const ordersCol = collection(db, 'delivery_orders');
-      let q = query(ordersCol, orderBy('createdAt', 'desc'));
+
+      let query = supabase
+        .from('delivery_orders')
+        .select('*, driver_offers(*)')
+        .order('created_at', { ascending: false });
 
       if (wilaya && wilaya !== 'all') {
-        q = query(ordersCol, where('wilaya', '==', String(wilaya)), orderBy('createdAt', 'desc'));
+        query = query.eq('wilaya', String(wilaya));
       }
 
-      const snapshot = await getDocs(q);
-      const orders = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      }));
+      const { data, error } = await query;
 
-      return res.json({ orders });
+      if (!error && Array.isArray(data)) {
+        return res.json({ orders: data });
+      }
+
+      // In-Memory fallback if Supabase table is empty or offline
+      let fallback = inMemoryOrders;
+      if (wilaya && wilaya !== 'all') {
+        fallback = fallback.filter((o) => o.wilaya === String(wilaya));
+      }
+      return res.json({ orders: fallback });
     } catch (err: any) {
       console.error('[API /api/orders] Error:', err);
-      return res.json({ orders: [] });
+      return res.json({ orders: inMemoryOrders });
     }
   });
 
   // -------------------------------------------------------------------------
-  // 5. API: CREATE NEW ORDER (Persist to Cloud Firestore)
+  // 5. API: CREATE NEW ORDER (Persist to Supabase)
   // -------------------------------------------------------------------------
   app.post('/api/orders', async (req: Request, res: Response) => {
     try {
@@ -435,26 +447,33 @@ async function startServer() {
 
       const dbPayload = {
         id: orderId,
-        customerId: customerId,
-        customerName: order.customerName,
-        customerPhone: order.customerPhone,
+        customer_id: customerId,
+        customer_name: order.customerName,
+        customer_phone: order.customerPhone,
         wilaya: order.wilaya,
-        pickupAddress: order.pickupAddress,
-        pickupCoords: order.pickupCoords || { lat: 36.75, lng: 3.05 },
-        dropoffAddress: order.dropoffAddress,
-        dropoffCoords: order.dropoffCoords || { lat: 36.75, lng: 3.05 },
-        packagePhotoUrl: order.packagePhotoUrl || '',
-        packageDescription: order.packageDescription || '',
-        packageCategory: order.packageCategory || 'documents',
-        distanceKm: order.distanceKm || 5,
-        suggestedBasePrice: order.suggestedBasePrice || 500,
-        customerOfferPrice: order.customerOfferPrice || 500,
+        pickup_address: order.pickupAddress,
+        pickup_lat: order.pickupCoords?.lat || 36.75,
+        pickup_lng: order.pickupCoords?.lng || 3.05,
+        dropoff_address: order.dropoffAddress,
+        dropoff_lat: order.dropoffCoords?.lat || 36.75,
+        dropoff_lng: order.dropoffCoords?.lng || 3.05,
+        package_photo_url: order.packagePhotoUrl || '',
+        package_description: order.packageDescription || '',
+        package_category: order.packageCategory || 'documents',
+        distance_km: order.distanceKm || 5,
+        suggested_base_price: order.suggestedBasePrice || 500,
+        customer_offer_price: order.customerOfferPrice || 500,
         status: order.status || 'searching',
-        createdAt: order.createdAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        created_at: order.createdAt || new Date().toISOString(),
       };
 
-      await setDoc(doc(db, 'delivery_orders', orderId), dbPayload);
+      inMemoryOrders.unshift(dbPayload);
+
+      try {
+        await supabase.from('delivery_orders').upsert(dbPayload);
+      } catch (dbErr) {
+        console.warn('[Supabase insert order notice]:', dbErr);
+      }
 
       return res.json({ success: true, orderId });
     } catch (err: any) {
@@ -480,7 +499,7 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Sari3 Firebase Full-Stack Platform] Running live on port ${PORT}`);
+    console.log(`[Sari3 Supabase Full-Stack Platform] Running live on port ${PORT}`);
   });
 }
 

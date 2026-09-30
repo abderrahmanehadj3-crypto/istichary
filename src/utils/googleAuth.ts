@@ -1,11 +1,5 @@
-import {
-  signInWithRedirect,
-  getRedirectResult,
-  googleAuthProvider,
-  auth,
-  db,
-} from '../firebaseClient';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { supabase, isSupabaseConfigured } from '../supabaseClient';
+import { saveUserProfile } from './supabaseSync';
 
 export interface GoogleUserProfile {
   email: string;
@@ -47,32 +41,12 @@ export function isValidGoogleClientId(id?: string): boolean {
 }
 
 /**
- * Safely decodes a JWT token if needed
+ * Triggers Google Sign-In via Supabase OAuth Provider:
+ * - Uses supabase.auth.signInWithOAuth({ provider: 'google' })
+ * - Redirects to origin for smooth authentication across mobile browsers and WebViews.
  */
-export function decodeGoogleJwt(token: string): any {
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    return JSON.parse(jsonPayload);
-  } catch (e) {
-    console.warn('[GoogleAuth] Failed to decode Google JWT token:', e);
-    return null;
-  }
-}
-
-/**
- * Primary Google Sign-In via Firebase Authentication:
- * - Uses Firebase signInWithRedirect (PREVENTS POPUP BLOCKED ERRORS on mobile browsers & WebViews).
- * - Full-page redirect ensures smooth authentication on Chrome, Safari, Android, and iOS.
- */
-export async function triggerGoogleSignIn(): Promise<void> {
-  // Explicitly cancel any One-Tap auto-select if present
+export async function triggerGoogleSignIn(): Promise<{ success: boolean; error?: string }> {
+  // Cancel any automatic One-Tap auto-select if present
   if (typeof window !== 'undefined' && window.google?.accounts?.id) {
     try {
       window.google.accounts.id.cancel();
@@ -80,48 +54,84 @@ export async function triggerGoogleSignIn(): Promise<void> {
     } catch (e) {}
   }
 
-  // Use signInWithRedirect as requested to prevent popup blocking on mobile/WebViews
-  console.info('[Firebase Google Auth] Initiating signInWithRedirect...');
-  await signInWithRedirect(auth, googleAuthProvider);
+  try {
+    const redirectTo = typeof window !== 'undefined' ? window.location.origin : undefined;
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'select_account',
+        },
+      },
+    });
+
+    if (error) {
+      console.warn('[Supabase Google Auth] signInWithOAuth notice:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    if (data?.url && typeof window !== 'undefined') {
+      window.location.href = data.url;
+      return { success: true };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.warn('[Supabase Google Auth] Exception:', err);
+    return { success: false, error: err.message || 'فشل الاتصال بمزود Google' };
+  }
 }
 
 /**
- * Processes the result of a Google signInWithRedirect upon page reload/return
+ * Checks for returned Supabase user session after Google OAuth redirect
  */
 export async function checkGoogleRedirectResult(): Promise<GoogleUserProfile | null> {
   try {
-    const result = await getRedirectResult(auth);
-    if (result && result.user) {
-      const user = result.user;
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error) {
+      console.warn('[Supabase Auth] getSession notice:', error.message);
+      return null;
+    }
+
+    if (session?.user) {
+      const sbUser = session.user;
+      const email = sbUser.email || '';
+      const name =
+        sbUser.user_metadata?.full_name ||
+        sbUser.user_metadata?.name ||
+        email.split('@')[0] ||
+        'مستخدم Google';
+      const avatarUrl =
+        sbUser.user_metadata?.avatar_url ||
+        sbUser.user_metadata?.picture ||
+        'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80';
+
       const profile: GoogleUserProfile = {
-        email: user.email || '',
-        name: user.displayName || user.email?.split('@')[0] || 'مستخدم Google',
-        avatarUrl:
-          user.photoURL ||
-          'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-        googleId: user.uid,
-        verifiedEmail: user.emailVerified,
+        email,
+        name,
+        avatarUrl,
+        googleId: sbUser.id,
+        verifiedEmail: !!sbUser.email_confirmed_at,
       };
 
-      // Persist profile to Cloud Firestore
+      // Sync with Supabase profiles table
       try {
-        const userRef = doc(db, 'profiles', user.uid);
-        const existing = await getDoc(userRef);
-        if (!existing.exists()) {
-          await setDoc(userRef, {
-            id: user.uid,
-            email: user.email,
-            displayName: profile.name,
-            avatarUrl: profile.avatarUrl,
-            role: 'customer',
-            wilaya: '16',
-            accountConfirmed: true,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        }
+        await saveUserProfile({
+          id: sbUser.id,
+          email,
+          displayName: name,
+          avatarUrl,
+          phone: sbUser.phone || '',
+          phoneVerified: !!sbUser.phone,
+          wilaya: '16',
+          customerProfileCompleted: false,
+          accountConfirmed: true,
+          createdAt: new Date().toISOString(),
+        });
       } catch (dbErr) {
-        console.warn('[Firebase Google Auth] Profile persistence notice on redirect:', dbErr);
+        console.warn('[Supabase Auth] Profile persistence notice:', dbErr);
       }
 
       // Sync with backend API
@@ -134,24 +144,12 @@ export async function checkGoogleRedirectResult(): Promise<GoogleUserProfile | n
       return profile;
     }
   } catch (err: any) {
-    console.warn('[Firebase Google Auth] getRedirectResult notice:', err.message || err);
+    console.warn('[Supabase Auth] checkGoogleRedirectResult exception:', err);
   }
 
   return null;
 }
 
-/**
- * Triggers Firebase Google Auth redirect flow
- */
-export async function signInWithFirebaseGoogle(): Promise<{ success: boolean; error?: string }> {
-  try {
-    await triggerGoogleSignIn();
-    return { success: true };
-  } catch (err: any) {
-    console.warn('[GoogleAuth] Firebase Google OAuth exception:', err);
-    return { success: false, error: err.message || 'فشل الاتصال بـ Firebase Google Auth' };
-  }
-}
-
-// Backwards-compatible alias for existing callers
-export const signInWithSupabaseGoogle = signInWithFirebaseGoogle;
+// Backwards-compatible aliases
+export const signInWithFirebaseGoogle = triggerGoogleSignIn;
+export const signInWithSupabaseGoogle = triggerGoogleSignIn;

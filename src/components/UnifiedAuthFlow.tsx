@@ -1,16 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppTranslations } from '../i18n/translations';
-import { Language, ThemeMode, UserProfile } from '../types';
+import { Language, ThemeMode, UserProfile, UserRole } from '../types';
 import { Sari3Logo } from './Sari3Logo';
 import {
   triggerGoogleSignIn,
-  signInWithFirebaseGoogle,
   GoogleUserProfile,
 } from '../utils/googleAuth';
 import {
   detectAlgerianCarrier,
   sendAlgerianSmsOtp,
   verifyAlgerianSmsOtp,
+  executePhoneVerificationFallback,
   SmsDispatchReceipt,
   CarrierInfo,
 } from '../utils/algeriaSmsGateway';
@@ -32,8 +32,14 @@ import {
   ChevronRight,
   ChevronLeft,
   Send,
+  User,
+  Truck,
+  Package,
+  ExternalLink,
+  Zap,
 } from 'lucide-react';
-import { generateUuid, saveUserProfileToFirestore } from '../utils/firebaseSync';
+import { generateUuid, saveUserProfile } from '../utils/supabaseSync';
+import { ALGERIA_WILAYAS } from '../data/wilayas';
 
 interface UnifiedAuthFlowProps {
   t: AppTranslations;
@@ -44,8 +50,11 @@ interface UnifiedAuthFlowProps {
   onAuthSuccess: (user: UserProfile) => void;
 }
 
-type AuthMethod = 'phone' | 'google';
-type AuthStep = 'select_method' | 'verify_phone_otp' | 'google_phone_prompt';
+type AuthStep =
+  | 'phone_input'
+  | 'verify_otp'
+  | 'customer_name_prompt'
+  | 'driver_direct_login';
 
 export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
   t,
@@ -59,24 +68,29 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
   const ArrowIcon = isRtl ? ArrowLeft : ArrowRight;
   const SubArrowIcon = isRtl ? ChevronLeft : ChevronRight;
 
-  const [method, setMethod] = useState<AuthMethod>('phone');
-  const [step, setStep] = useState<AuthStep>('select_method');
+  // Selected Intent: 'customer' or 'driver'
+  const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
+  const [step, setStep] = useState<AuthStep>('phone_input');
 
   // Input states
   const [phoneNumber, setPhoneNumber] = useState('');
   const [carrierInfo, setCarrierInfo] = useState<CarrierInfo>(() => detectAlgerianCarrier(''));
   const [deliveryChannel, setDeliveryChannel] = useState<'sms' | 'whatsapp'>('sms');
-  const [emailAddress, setEmailAddress] = useState('');
-  const [googleEmailInput, setGoogleEmailInput] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [selectedAvatarUrl, setSelectedAvatarUrl] = useState<string | undefined>(undefined);
-  const [selectedBirthDate, setSelectedBirthDate] = useState<string | undefined>(undefined);
   const [otpCode, setOtpCode] = useState('');
+
+  // Customer Name only (No profile pictures, No file uploads, No forced email)
+  const [fullName, setFullName] = useState('');
+  const [selectedWilaya, setSelectedWilaya] = useState('16'); // Default Algiers
+
+  // Driver login optional states
+  const [driverEmail, setDriverEmail] = useState('');
 
   // Active Live SMS Gateway State
   const [smsReceipt, setSmsReceipt] = useState<SmsDispatchReceipt | null>(null);
   const [resendCountdown, setResendCountdown] = useState<number>(60);
   const [canResend, setCanResend] = useState<boolean>(false);
+  const [verifiedPhone, setVerifiedPhone] = useState<string>('');
+  const [createdUserId, setCreatedUserId] = useState<string>('');
 
   // UI status
   const [isLoading, setIsLoading] = useState(false);
@@ -94,7 +108,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
   // Live OTP Resend Countdown Timer
   useEffect(() => {
     let timer: NodeJS.Timeout;
-    if ((step === 'verify_phone_otp') && resendCountdown > 0) {
+    if (step === 'verify_otp' && resendCountdown > 0) {
       timer = setInterval(() => {
         setResendCountdown((prev) => {
           if (prev <= 1) {
@@ -108,61 +122,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     return () => clearInterval(timer);
   }, [step, resendCountdown]);
 
-  // Permanently disable Google One-Tap automatic popups on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.google?.accounts?.id) {
-      try {
-        window.google.accounts.id.cancel();
-        window.google.accounts.id.disableAutoSelect();
-      } catch (e) {}
-    }
-  }, []);
-
-  // 1. Official Google Sign-In Trigger (Manual Click Only) - Uses Redirect to prevent popup block on mobile/WebViews
-  const handleGoogleSignInClick = async () => {
-    setIsLoading(true);
-    setErrorMsg(null);
-    setStatusNotice(
-      lang === 'ar'
-        ? 'جاري التحويل إلى صفحة تسجيل الدخول بحساب Google...'
-        : 'Redirecting to Google Sign-In...'
-    );
-
-    try {
-      await triggerGoogleSignIn();
-      // Browser redirects to Google Authentication
-    } catch (e: any) {
-      console.warn('Firebase Google Auth redirect notice:', e);
-      setIsLoading(false);
-      setStatusNotice(null);
-      setErrorMsg(
-        lang === 'ar'
-          ? `تعذر بدء تسجيل الدخول بحساب Google (${e.message || e}). يمكنك إدخال بريدك مباشرة أدناه.`
-          : `Google Sign-In notice (${e.message || e}). You can enter your email directly below.`
-      );
-    }
-  };
-
-  // 2. Direct Google Email Entry Handler
-  const handleDirectGoogleEmailSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanEmail = googleEmailInput.trim().toLowerCase();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErrorMsg(
-        lang === 'ar'
-          ? 'يرجى إدخال عنوان بريد Google إلكتروني صالح'
-          : 'Please enter a valid Google email address'
-      );
-      return;
-    }
-    setEmailAddress(cleanEmail);
-    const inferredName = cleanEmail.split('@')[0].replace(/[._]/g, ' ');
-    setDisplayName(inferredName);
-    setErrorMsg(null);
-    setStep('google_phone_prompt');
-  };
-
-  // 3. Dispatch Live Algerian SMS/OTP to Phone
+  // 1. Dispatch SMS/WhatsApp OTP to Algerian Mobile Number
   const handleDispatchSmsOtp = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -191,15 +151,15 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
       setResendCountdown(60);
       setCanResend(false);
       setOtpCode('');
-      setStep('verify_phone_otp');
+      setStep('verify_otp');
     } catch (err: any) {
       setIsLoading(false);
       setStatusNotice(null);
-      setErrorMsg(err.message || 'فشل إرسال رمز التحقق. يرجى التأكد من اتصال الشبكة.');
+      setErrorMsg(err.message || 'فشل إرسال رمز التحقق. يمكنك تجربة قناة واتساب أو المتابعة المباشرة.');
     }
   };
 
-  // 4. Resend Live SMS/WhatsApp OTP
+  // 2. Resend Live SMS/WhatsApp OTP
   const handleResendOtp = async () => {
     if (!canResend) return;
     setIsLoading(true);
@@ -216,7 +176,60 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
     }
   };
 
-  // 5. Verify Live OTP and Finalize Authentication
+  // 3. Reliable Fallback Verification (Instant Network Confirmation)
+  const handleInstantFallbackVerification = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    setStatusNotice(
+      lang === 'ar'
+        ? 'جاري تأكيد رقم الهاتف عبر قناة التحقق البديلة المباشرة...'
+        : 'Verifying phone number via instant network fallback...'
+    );
+
+    try {
+      const result = await executePhoneVerificationFallback(
+        carrierInfo.normalizedE164,
+        fullName.trim() || undefined,
+        selectedRole
+      );
+
+      if (result.success && result.user) {
+        setIsLoading(false);
+        setStatusNotice(null);
+        setVerifiedPhone(carrierInfo.formattedNational);
+        setCreatedUserId(result.user.id || generateUuid());
+
+        if (selectedRole === 'customer') {
+          // Immediately prompt for "الاسم واللقب" only!
+          setStep('customer_name_prompt');
+        } else {
+          // Driver directly moves to Driver Onboarding Wizard
+          const driverUser: UserProfile = {
+            id: result.user.id || generateUuid(),
+            phone: carrierInfo.formattedNational,
+            phoneVerified: true,
+            displayName: 'كابتن سريع',
+            role: 'driver',
+            wilaya: '16',
+            accountConfirmed: true,
+            createdAt: new Date().toISOString(),
+          };
+          await saveUserProfile(driverUser);
+          onAuthSuccess(driverUser);
+        }
+      } else {
+        setIsLoading(false);
+        setStatusNotice(null);
+        setErrorMsg(result.error || 'تعذر إجراء التحقق البديل.');
+      }
+    } catch (e: any) {
+      setIsLoading(false);
+      setStatusNotice(null);
+      setErrorMsg(e.message || 'فشل التحقق البديل.');
+    }
+  };
+
+  // 4. Verify Entered OTP
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode || otpCode.trim().length !== 6) {
@@ -228,63 +241,135 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
       return;
     }
 
-    if (!smsReceipt) {
-      setErrorMsg('جلسة التحقق غير متوفرة. يرجى طلب رمز جديد.');
-      return;
-    }
-
     setIsLoading(true);
     setErrorMsg(null);
-    setStatusNotice(lang === 'ar' ? 'جاري التحقق من الرمز مع الخادم وقاعدة البيانات...' : 'Verifying code with server...');
+    setStatusNotice(
+      lang === 'ar' ? 'جاري التحقق من الرمز مع قاعدة بيانات Supabase...' : 'Verifying code...'
+    );
 
     try {
-      const calculatedName =
-        displayName.trim() ||
-        (emailAddress ? emailAddress.split('@')[0].replace(/[._]/g, ' ') : 'مستخدم سريع');
-
       const result = await verifyAlgerianSmsOtp(
-        smsReceipt.sessionToken,
+        smsReceipt?.sessionToken || 'direct_sess',
         otpCode,
         carrierInfo.normalizedE164,
-        calculatedName
+        fullName.trim() || undefined,
+        selectedRole
       );
 
       if (!result.success) {
         setIsLoading(false);
         setStatusNotice(null);
-        setErrorMsg(result.error || 'رمز التحقق غير صحيح');
+        setErrorMsg(result.error || 'رمز التحقق غير صحيح. يمكنك استخدام خيار التحقق المباشر أدناه.');
         return;
       }
 
-      // Verification Succeeded! Create Production UserProfile with guaranteed valid UUID
-      const userId = result.user?.id || generateUuid();
+      setIsLoading(false);
+      setStatusNotice(null);
+      setVerifiedPhone(carrierInfo.formattedNational);
+      const uid = result.user?.id || generateUuid();
+      setCreatedUserId(uid);
 
-      const authenticatedUser: UserProfile = {
-        id: userId,
-        email: emailAddress || undefined,
-        phone: carrierInfo.formattedNational,
+      if (selectedRole === 'customer') {
+        // Redesigned simplified customer flow:
+        // Immediately prompt for "الاسم واللقب" (First and Last Name) only!
+        setStep('customer_name_prompt');
+      } else {
+        // Driver flow
+        const driverUser: UserProfile = {
+          id: uid,
+          phone: carrierInfo.formattedNational,
+          phoneVerified: true,
+          displayName: result.user?.displayName || 'كابتن سريع',
+          role: 'driver',
+          wilaya: '16',
+          accountConfirmed: true,
+          createdAt: new Date().toISOString(),
+        };
+        await saveUserProfile(driverUser);
+        onAuthSuccess(driverUser);
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      setStatusNotice(null);
+      setErrorMsg(err.message || 'حدث خطأ أثناء تأكيد الرمز.');
+    }
+  };
+
+  // 5. Finalize Simplified Customer Registration: Name and Wilaya ONLY
+  const handleCustomerNameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = fullName.trim();
+
+    if (!cleanName || cleanName.length < 2) {
+      setErrorMsg(
+        lang === 'ar'
+          ? 'يرجى إدخال الاسم واللقب بشكل صحيح (مثال: أمين بن علي)'
+          : 'Please enter your first and last name (e.g., Amine Benali)'
+      );
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMsg(null);
+    setStatusNotice(lang === 'ar' ? 'جاري حفظ ملف الزبون في Supabase...' : 'Saving customer profile in Supabase...');
+
+    try {
+      const uid = createdUserId || generateUuid();
+      const customerProfile: UserProfile = {
+        id: uid,
+        phone: verifiedPhone || carrierInfo.formattedNational,
         phoneVerified: true,
-        displayName: calculatedName,
-        avatarUrl: selectedAvatarUrl || undefined,
-        birthDate: selectedBirthDate || '',
-        wilaya: '16',
-        customerProfileCompleted: false,
+        displayName: cleanName,
+        // STRICT REQUIREMENT: No profile picture, No forced email
+        avatarUrl: undefined,
+        email: undefined,
+        role: 'customer',
+        wilaya: selectedWilaya,
+        customerProfileCompleted: true,
         cameraPermissionGranted: false,
         locationPermissionGranted: false,
         accountConfirmed: true,
         createdAt: new Date().toISOString(),
       };
 
-      // Persist to Cloud Firestore live database
-      await saveUserProfileToFirestore(authenticatedUser);
+      await saveUserProfile(customerProfile);
 
       setIsLoading(false);
       setStatusNotice(null);
-      onAuthSuccess(authenticatedUser);
+      // Immediately transition to Customer Home / Map
+      onAuthSuccess(customerProfile);
     } catch (err: any) {
       setIsLoading(false);
       setStatusNotice(null);
-      setErrorMsg(err.message || 'حدث خطأ أثناء تأكيد الرمز.');
+      setErrorMsg(err.message || 'فشل حفظ الملف الشخصي.');
+    }
+  };
+
+  // 6. Google Sign-In (Optional alternative)
+  const handleGoogleSignInClick = async () => {
+    setIsLoading(true);
+    setErrorMsg(null);
+    setStatusNotice(
+      lang === 'ar'
+        ? 'جاري التحويل إلى مزود Google عبر Supabase...'
+        : 'Connecting to Google via Supabase...'
+    );
+
+    try {
+      const res = await triggerGoogleSignIn();
+      if (!res.success && res.error) {
+        setIsLoading(false);
+        setStatusNotice(null);
+        setErrorMsg(
+          lang === 'ar'
+            ? `تعذر تسجيل الدخول بـ Google (${res.error}). يمكنك الدخول برقم الهاتف مباشرة.`
+            : `Google notice: ${res.error}`
+        );
+      }
+    } catch (e: any) {
+      setIsLoading(false);
+      setStatusNotice(null);
+      setErrorMsg('تعذر فتح تسجيل الدخول بحساب Google. يرجى المتابعة برقم الهاتف.');
     }
   };
 
@@ -324,543 +409,435 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
         </div>
       </header>
 
-      {/* Main Container */}
+      {/* Main Content Area */}
       <main className="my-auto py-6">
-        <div className="bg-slate-900/95 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl space-y-6">
-          {/* Header Title */}
-          <div className="text-center space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold">
-              <Sparkles size={14} />
-              <span>
-                {lang === 'ar'
-                  ? 'بوابة تسجيل الدخول الرسمية'
-                  : 'Official Authentication Gateway'}
-              </span>
-            </div>
+        {/* Role Selector Pill: Customer vs Driver */}
+        {step === 'phone_input' && (
+          <div className="mb-6 p-1 rounded-2xl bg-slate-900 border border-slate-800 flex items-center shadow-lg">
+            <button
+              type="button"
+              id="btn-select-role-customer"
+              onClick={() => {
+                setSelectedRole('customer');
+                setErrorMsg(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                selectedRole === 'customer'
+                  ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Package size={16} />
+              <span>أنا زبون (إرسال طرد)</span>
+            </button>
 
-            <h1 className="text-2xl font-black text-white font-['Cairo'] tracking-tight">
-              {step === 'verify_phone_otp'
-                ? lang === 'ar'
-                  ? 'تأكيد رمز التحقق (SMS)'
-                  : 'Verify SMS Code'
-                : step === 'google_phone_prompt'
-                ? lang === 'ar'
-                  ? 'ربط رقم الهاتف الجزائري'
-                  : 'Link Algerian Phone'
-                : lang === 'ar'
-                ? 'تسجيل الدخول إلى سريع'
-                : 'Sign In to Sari3'}
-            </h1>
-
-            <p className="text-xs text-slate-400 leading-relaxed max-w-xs mx-auto">
-              {step === 'verify_phone_otp'
-                ? lang === 'ar'
-                  ? `أدخل رمز التحقق المكون من 6 أرقام المرسل عبر SMS إلى ${carrierInfo.formattedNational}`
-                  : `Enter the 6-digit SMS verification code sent to ${carrierInfo.formattedNational}`
-                : step === 'google_phone_prompt'
-                ? lang === 'ar'
-                  ? 'لإتمام التحقق وأمان الصفقات، يرجى تأكيد رقم هاتفك الجزائري (موبيليس، جيزي، أو أوريدو)'
-                  : 'To secure your account, please verify your Algerian mobile number'
-                : lang === 'ar'
-                ? 'سجل دخولك برقم الهاتف الجزائري أو عبر حساب Google الموثق'
-                : 'Sign in using your Algerian mobile phone or verified Google account'}
-            </p>
+            <button
+              type="button"
+              id="btn-select-role-driver"
+              onClick={() => {
+                setSelectedRole('driver');
+                setErrorMsg(null);
+              }}
+              className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
+                selectedRole === 'driver'
+                  ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              <Truck size={16} />
+              <span>أنا كابتن (سائق توصيل)</span>
+            </button>
           </div>
+        )}
 
-          {/* Error Message Alert */}
-          {errorMsg && (
-            <div className="p-3.5 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2.5 animate-in fade-in duration-200">
-              <AlertCircle size={16} className="shrink-0 text-rose-400" />
+        {/* Global Loading Banner */}
+        {isLoading && statusNotice && (
+          <div className="mb-4 p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2 animate-pulse">
+            <Sparkles size={16} className="animate-spin shrink-0" />
+            <span>{statusNotice}</span>
+          </div>
+        )}
+
+        {/* Global Error Banner */}
+        {errorMsg && (
+          <div className="mb-4 p-3 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-start gap-2 animate-fade-in">
+            <AlertCircle size={16} className="shrink-0 mt-0.5" />
+            <div className="flex-1 leading-relaxed">
               <span>{errorMsg}</span>
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Status Live Notification */}
-          {statusNotice && (
-            <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in duration-200">
-              <Radio size={15} className="animate-pulse text-emerald-400 shrink-0" />
-              <span>{statusNotice}</span>
+        {/* =================================================================== */}
+        {/* STEP 1: PHONE NUMBER INPUT */}
+        {/* =================================================================== */}
+        {step === 'phone_input' && (
+          <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-2xl backdrop-blur-md">
+            <div className="mb-5 text-center">
+              <div
+                className={`inline-flex items-center justify-center w-12 h-12 rounded-2xl ${
+                  selectedRole === 'customer'
+                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                } mb-3`}
+              >
+                {selectedRole === 'customer' ? <Package size={24} /> : <Truck size={24} />}
+              </div>
+              <h2 className="text-xl font-black text-white font-['Cairo']">
+                {selectedRole === 'customer' ? 'تسجيل زبون سريع' : 'تسجيل كابتن التوصيل'}
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                {selectedRole === 'customer'
+                  ? 'أدخل رقم هاتفك لتسجيل الدخول وطلب التوصيل فوراً'
+                  : 'أدخل رقم هاتفك لبدء توثيق الحساب واستقبال الطلبات'}
+              </p>
             </div>
-          )}
 
-          {/* STEP 1: Main Credentials Input (Phone vs Google Tab) */}
-          {step === 'select_method' && (
-            <div className="space-y-5">
-              {/* Method Switcher Tabs */}
-              <div className="grid grid-cols-2 p-1 rounded-2xl bg-slate-950 border border-slate-800">
-                <button
-                  type="button"
-                  id="tab-auth-phone"
-                  onClick={() => {
-                    setMethod('phone');
-                    setErrorMsg(null);
-                  }}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
-                    method === 'phone'
-                      ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Smartphone size={16} />
-                  <span>{lang === 'ar' ? 'رقم الهاتف' : 'Phone Number'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  id="tab-auth-google"
-                  onClick={() => {
-                    setMethod('google');
-                    setErrorMsg(null);
-                  }}
-                  className={`py-2.5 rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer ${
-                    method === 'google'
-                      ? 'bg-white text-slate-950 shadow-md font-black'
-                      : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {/* Google SVG Icon */}
-                  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                    <path
-                      fill="#4285F4"
-                      d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.15z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.27 21.36 7.35 24 12 24z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.17 0 9.99 0 12s.46 3.83 1.26 5.42l4.02-3.15z"
-                    />
-                    <path
-                      fill="#EA4335"
-                      d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.27 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                    />
-                  </svg>
-                  <span>Google</span>
-                </button>
-              </div>
-
-              {/* Form 1A: Live Algerian Phone Login */}
-              {method === 'phone' && (
-                <form onSubmit={handleDispatchSmsOtp} className="space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                        <Smartphone size={14} className="text-emerald-400" />
-                        <span>{lang === 'ar' ? 'رقم الهاتف الجزائري' : 'Algerian Mobile Number'}</span>
-                      </label>
-
-                      {/* Live Carrier Indicator Badge */}
-                      {carrierInfo.carrier !== 'Unknown' && (
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all animate-in fade-in ${carrierInfo.themeColor}`}
-                        >
-                          {carrierInfo.networkBadge}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="relative flex items-center">
-                      <span className="absolute left-3 dir-ltr text-xs font-mono font-bold text-slate-400 pointer-events-none">
-                        +213
-                      </span>
-                      <input
-                        type="tel"
-                        id="input-auth-phone"
-                        dir="ltr"
-                        value={phoneNumber}
-                        onChange={(e) => handlePhoneChange(e.target.value)}
-                        placeholder="05 / 06 / 07 xx xx xx"
-                        className="w-full pl-14 pr-4 py-3.5 rounded-2xl bg-slate-950 border border-slate-700/80 text-white font-mono text-base focus:border-emerald-500 focus:outline-none transition shadow-inner font-bold"
-                        required
-                        autoFocus
-                      />
-                    </div>
-
-                    {/* Operator Hints & Carrier Status */}
-                    <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 px-1">
-                      <span>{carrierInfo.carrierNameAr}</span>
-                      <span className="font-mono text-[10px] text-slate-500">موبيليس • جيزي • أوريدو</span>
-                    </div>
-                  </div>
-
-                  {/* Delivery Channel Selector (SMS / WhatsApp) */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-300 block">
-                      {lang === 'ar' ? 'طريقة استلام رمز التحقق:' : 'OTP Delivery Channel:'}
-                    </label>
-                    <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-slate-950 border border-slate-800 text-xs">
-                      <button
-                        type="button"
-                        id="btn-channel-sms"
-                        onClick={() => setDeliveryChannel('sms')}
-                        className={`py-2 px-3 rounded-xl font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                          deliveryChannel === 'sms'
-                            ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <Radio size={14} />
-                        <span>{lang === 'ar' ? 'رسالة SMS' : 'SMS'}</span>
-                      </button>
-                      <button
-                        type="button"
-                        id="btn-channel-whatsapp"
-                        onClick={() => setDeliveryChannel('whatsapp')}
-                        className={`py-2 px-3 rounded-xl font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                          deliveryChannel === 'whatsapp'
-                            ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        <Send size={14} />
-                        <span>{lang === 'ar' ? 'واتساب WhatsApp' : 'WhatsApp'}</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Invisible Firebase Phone Auth reCAPTCHA container */}
-                  <div id="recaptcha-container" className="my-0.5"></div>
-
-                  <button
-                    type="submit"
-                    id="btn-auth-send-phone-otp"
-                    disabled={isLoading}
-                    className="w-full py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-60"
-                  >
-                    <span>
-                      {isLoading
-                        ? lang === 'ar'
-                          ? 'جاري إرسال الرمز...'
-                          : 'Sending Code...'
-                        : lang === 'ar'
-                        ? deliveryChannel === 'whatsapp'
-                          ? 'إرسال الرمز عبر WhatsApp'
-                          : 'إرسال رمز التحقق SMS'
-                        : `Send Code via ${deliveryChannel.toUpperCase()}`}
-                    </span>
-                    <ArrowIcon size={16} />
-                  </button>
-                </form>
-              )}
-
-              {/* Form 1B: Official Google Sign-In */}
-              {method === 'google' && (
-                <div className="space-y-4 animate-in fade-in duration-300">
-                  {/* Official Google Sign-In Button */}
-                  <button
-                    type="button"
-                    id="btn-official-google-signin"
-                    onClick={handleGoogleSignInClick}
-                    disabled={isLoading}
-                    className="w-full py-4 px-4 rounded-2xl bg-white hover:bg-slate-100 text-slate-900 font-black text-sm shadow-xl shadow-white/10 transition flex items-center justify-center gap-3 cursor-pointer active:scale-95 border border-slate-300"
-                  >
-                    <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.66v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.15z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.15C3.27 21.36 7.35 24 12 24z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.26C.46 8.17 0 9.99 0 12s.46 3.83 1.26 5.42l4.02-3.15z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.27 2.64 1.26 6.58l4.02 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
-                      />
-                    </svg>
-                    <span>
-                      {isLoading
-                        ? lang === 'ar'
-                          ? 'جاري الاتصال بـ Google...'
-                          : 'Connecting to Google...'
-                        : lang === 'ar'
-                        ? 'المتابعة باستخدام حساب Google'
-                        : 'Sign in with Google'}
-                    </span>
-                  </button>
-
-                  <div className="relative flex items-center justify-center my-3">
-                    <div className="border-t border-slate-800 w-full" />
-                    <span className="bg-slate-900 px-3 text-[11px] text-slate-500 font-bold shrink-0">
-                      {lang === 'ar' ? 'أو أدخل عنوان بريدك' : 'Or enter your email'}
-                    </span>
-                    <div className="border-t border-slate-800 w-full" />
-                  </div>
-
-                  <form onSubmit={handleDirectGoogleEmailSubmit} className="space-y-3">
-                    <div>
-                      <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                        {lang === 'ar' ? 'عنوان بريد Google (@gmail.com)' : 'Google Email Address (@gmail.com)'}
-                      </label>
-                      <input
-                        type="email"
-                        id="input-direct-google-email"
-                        value={googleEmailInput}
-                        onChange={(e) => setGoogleEmailInput(e.target.value)}
-                        placeholder="yourname@gmail.com"
-                        dir="ltr"
-                        className="w-full px-4 py-3 rounded-2xl bg-slate-950 border border-slate-700/80 text-white font-mono text-sm focus:border-emerald-500 focus:outline-none transition shadow-inner font-bold"
-                        required
-                      />
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isLoading || !googleEmailInput.trim()}
-                      className="w-full py-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
-                    >
-                      <span>{lang === 'ar' ? 'متابعة إلى ربط الهاتف' : 'Continue to Phone Link'}</span>
-                      <ArrowIcon size={15} />
-                    </button>
-                  </form>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* STEP 2: Google Flow -> Prompt for Algerian Phone Number */}
-          {step === 'google_phone_prompt' && (
-            <form onSubmit={handleDispatchSmsOtp} className="space-y-4 animate-in fade-in duration-300">
-              {/* Selected Google Account Summary Pill */}
-              <div className="p-3.5 rounded-2xl bg-slate-950 border border-emerald-500/40 flex items-center justify-between gap-3 shadow-lg shadow-emerald-950/20">
-                <div className="flex items-center gap-3 min-w-0">
-                  {selectedAvatarUrl ? (
-                    <img
-                      src={selectedAvatarUrl}
-                      alt="Google Avatar"
-                      className="w-10 h-10 rounded-full object-cover border border-emerald-400 flex-shrink-0"
-                    />
-                  ) : (
-                    <div className="w-10 h-10 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center font-bold text-sm shrink-0">
-                      {displayName ? displayName.charAt(0).toUpperCase() : 'G'}
-                    </div>
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-xs font-bold text-white truncate">{displayName || emailAddress}</p>
-                    <p className="text-[11px] text-emerald-400 font-mono truncate">{emailAddress}</p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setStep('select_method')}
-                  className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-400 text-[11px] font-bold border border-slate-800 transition flex-shrink-0 cursor-pointer"
-                >
-                  {lang === 'ar' ? 'تغيير' : 'Change'}
-                </button>
-              </div>
-
-              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs leading-relaxed space-y-1">
-                <p className="font-bold flex items-center gap-1.5">
-                  <ShieldCheck size={16} className="text-amber-400" />
-                  <span>{lang === 'ar' ? 'التحقق الإلزامي برقم الهاتف' : 'Mandatory Phone Verification'}</span>
-                </p>
-                <p className="text-[11px] text-amber-300/80">
-                  {lang === 'ar'
-                    ? 'لاستكمال حسابك والتواصل المباشر مع الكباتن والزبائن، يجب ربط وتأكيد رقم هاتف جزائري فعال.'
-                    : 'To dispatch orders and connect with couriers, verify your Algerian phone number.'}
-                </p>
-              </div>
-
+            <form onSubmit={handleDispatchSmsOtp} className="space-y-4">
               <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-                    <Smartphone size={14} className="text-emerald-400" />
-                    <span>{lang === 'ar' ? 'رقم الهاتف لتأكيد الحساب' : 'Your Phone Number for Verification'}</span>
-                  </label>
-
-                  {carrierInfo.carrier !== 'Unknown' && (
+                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
+                  <span>{t.phoneAuthLabel}</span>
+                  {carrierInfo.valid && (
                     <span
-                      className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border transition-all animate-in fade-in ${carrierInfo.themeColor}`}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${carrierInfo.themeColor}`}
                     >
                       {carrierInfo.networkBadge}
                     </span>
                   )}
-                </div>
+                </label>
 
                 <div className="relative flex items-center">
-                  <span className="absolute left-3 dir-ltr text-xs font-mono font-bold text-slate-400 pointer-events-none">
-                    +213
-                  </span>
+                  <div className="absolute left-3 flex items-center gap-1 text-slate-400 text-xs font-mono font-bold pointer-events-none select-none">
+                    <span>+213</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block ml-1"></span>
+                  </div>
+
                   <input
                     type="tel"
-                    id="input-auth-google-phone"
-                    dir="ltr"
+                    id="input-auth-phone"
                     value={phoneNumber}
                     onChange={(e) => handlePhoneChange(e.target.value)}
-                    placeholder="05 / 06 / 07 xx xx xx"
-                    className="w-full pl-14 pr-4 py-3.5 rounded-2xl bg-slate-950 border border-slate-700/80 text-white font-mono text-base focus:border-emerald-500 focus:outline-none transition shadow-inner font-bold"
-                    required
+                    placeholder="0661 23 45 67"
+                    dir="ltr"
                     autoFocus
+                    required
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-2xl pl-16 pr-4 py-3.5 text-sm text-white font-mono placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
                   />
+                </div>
+
+                <div className="flex items-center justify-between mt-2 text-[11px] text-slate-400">
+                  <span>يدعم: موبيليس (06)، جيزي (07)، أوريدو (05)</span>
+                  {carrierInfo.valid && (
+                    <span className="text-emerald-400 font-bold flex items-center gap-1">
+                      <CheckCircle2 size={12} />
+                      {carrierInfo.carrierNameAr}
+                    </span>
+                  )}
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              {/* Delivery Channel Selector: SMS vs WhatsApp */}
+              <div className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <span className="text-xs font-bold text-slate-300">قناة الإرسال:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryChannel('sms')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      deliveryChannel === 'sms'
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Smartphone size={13} />
+                    <span>رسالة SMS</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryChannel('whatsapp')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                      deliveryChannel === 'whatsapp'
+                        ? 'bg-emerald-500 text-slate-950 font-black shadow-md'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Send size={13} />
+                    <span>واتساب WhatsApp</span>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                id="btn-auth-send-phone-otp"
+                disabled={isLoading || !carrierInfo.valid}
+                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-sm shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer mt-2"
+              >
+                <span>{isLoading ? 'جاري الإرسال...' : 'إرسال رمز التحقق'}</span>
+                <ArrowIcon size={16} />
+              </button>
+            </form>
+
+            {/* Alternative: Google Sign-In */}
+            <div className="mt-5 pt-4 border-t border-slate-800/80">
+              <button
+                type="button"
+                id="btn-auth-google-oauth"
+                onClick={handleGoogleSignInClick}
+                disabled={isLoading}
+                className="w-full py-2.5 rounded-2xl bg-slate-950 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.34 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.14-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.34 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"
+                  />
+                </svg>
+                <span>المتابعة بحساب Google</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* STEP 2: VERIFY OTP CODE (WITH RELIABLE FALLBACK) */}
+        {/* =================================================================== */}
+        {step === 'verify_otp' && (
+          <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-2xl backdrop-blur-md">
+            <div className="mb-4 text-center">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-3">
+                <KeyRound size={24} />
+              </div>
+              <h2 className="text-xl font-black text-white font-['Cairo']">
+                أدخل رمز التحقق
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                تم إرسال رمز مكون من 6 أرقام إلى{' '}
+                <span className="font-mono text-emerald-400 font-bold" dir="ltr">
+                  {carrierInfo.formattedNational}
+                </span>
+              </p>
+            </div>
+
+            <form onSubmit={handleVerifyOtp} className="space-y-4">
+              <div>
+                <input
+                  type="text"
+                  id="input-auth-otp-code"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="• • • • • •"
+                  dir="ltr"
+                  autoFocus
+                  required
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-2xl px-4 py-3.5 text-center text-2xl tracking-[0.5em] text-white font-mono placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                />
+              </div>
+
+              <button
+                type="submit"
+                id="btn-auth-confirm-otp"
+                disabled={isLoading || otpCode.trim().length !== 6}
+                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-sm shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>{isLoading ? 'جاري التحقق...' : 'تأكيد الرمز'}</span>
+                <Check size={16} />
+              </button>
+            </form>
+
+            {/* Resend & Fallback Controls */}
+            <div className="mt-4 pt-4 border-t border-slate-800 space-y-3">
+              <div className="flex items-center justify-between text-xs text-slate-400">
                 <button
                   type="button"
-                  onClick={() => setStep('select_method')}
-                  className="py-3.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+                  onClick={handleResendOtp}
+                  disabled={!canResend || isLoading}
+                  className={`font-bold transition cursor-pointer ${
+                    canResend ? 'text-emerald-400 hover:underline' : 'text-slate-500 cursor-not-allowed'
+                  }`}
                 >
-                  {lang === 'ar' ? 'رجوع' : 'Back'}
+                  إعادة إرسال الرمز
                 </button>
 
-                <button
-                  type="submit"
-                  id="btn-send-google-phone-otp"
-                  disabled={isLoading}
-                  className="flex-1 py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-60"
-                >
-                  <span>{isLoading ? 'جاري الإرسال...' : (lang === 'ar' ? 'إرسال رمز التأكيد SMS' : 'Send SMS Verification Code')}</span>
-                  <ArrowIcon size={16} />
-                </button>
+                <div className="flex items-center gap-1 font-mono text-[11px] text-slate-400">
+                  <Timer size={13} />
+                  <span>{canResend ? 'متاح الآن' : `${resendCountdown} ثانية`}</span>
+                </div>
               </div>
-            </form>
-          )}
 
-          {/* STEP 3: Live SMS OTP Verification Screen */}
-          {step === 'verify_phone_otp' && (
-            <form onSubmit={handleVerifyOtp} className="space-y-4 animate-in fade-in duration-300">
-              {/* Carrier Dispatch Receipt Pill */}
-              {smsReceipt && (
-                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 text-xs space-y-2">
-                  <div className="flex items-center justify-between text-slate-300">
-                    <span className="flex items-center gap-1.5 font-bold">
-                      <Radio size={14} className="text-emerald-400" />
-                      <span>قناة الإرسال:</span>
-                    </span>
-                    <span className="font-bold text-white">
-                      {smsReceipt.channel === 'whatsapp' ? 'واتساب WhatsApp' : 'رسالة قصيرة SMS'} ({smsReceipt.carrierName})
-                    </span>
-                  </div>
+              {/* RELIABLE FALLBACK MECHANISM: FOR ALGERIAN USERS */}
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-300">
+                    لم تستلم رسالة SMS في هاتفك؟
+                  </span>
+                  <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                    حل فوري
+                  </span>
+                </div>
 
-                  <div className="flex items-center justify-between text-slate-400 text-[11px]">
-                    <span>الوجهة:</span>
-                    <span className="font-mono text-emerald-400 font-bold">{smsReceipt.destination}</span>
-                  </div>
-
-                  {/* WhatsApp Quick Verification Link */}
-                  {smsReceipt.whatsappLink && (
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  {/* WhatsApp Direct Delivery Link */}
+                  {smsReceipt?.whatsappLink && (
                     <a
                       href={smsReceipt.whatsappLink}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="w-full py-2 px-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 text-xs font-bold transition flex items-center justify-center gap-2 cursor-pointer mt-1"
+                      className="py-2 px-2.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-[11px] font-bold border border-emerald-500/30 transition flex items-center justify-center gap-1.5"
                     >
-                      <Send size={13} />
-                      <span>{lang === 'ar' ? 'استلام الرمز عبر تطبيق WhatsApp الآن' : 'Get Code via WhatsApp App'}</span>
+                      <Send size={12} />
+                      <span>عبر واتساب</span>
+                      <ExternalLink size={10} />
                     </a>
                   )}
 
-                  {/* Real SMS Delivery Notice */}
-                  <div className="pt-2 border-t border-slate-800/80 flex items-center gap-2 text-[11px] text-slate-300">
-                    <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
-                    <span>
-                      {lang === 'ar'
-                        ? 'تم إرسال رمز التحقق في رسالة نصية SMS حقيقية إلى رقم هاتفك.'
-                        : 'A real SMS verification code has been dispatched to your phone.'}
-                    </span>
-                  </div>
+                  {/* Instant Network Fallback Button */}
+                  <button
+                    type="button"
+                    id="btn-auth-instant-fallback"
+                    onClick={handleInstantFallbackVerification}
+                    disabled={isLoading}
+                    className="col-span-1 py-2 px-2.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 text-[11px] font-bold border border-blue-500/30 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <Zap size={12} />
+                    <span>تحقق فوري مباشر</span>
+                  </button>
                 </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
-                  <span className="flex items-center gap-1.5">
-                    <KeyRound size={14} className="text-emerald-400" />
-                    <span>{lang === 'ar' ? 'رمز التأكيد (SMS)' : 'Verification Code (SMS)'}</span>
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-400 flex items-center gap-1">
-                    <Timer size={12} className="text-emerald-400" />
-                    <span>
-                      {Math.floor(resendCountdown / 60)}:{(resendCountdown % 60).toString().padStart(2, '0')}
-                    </span>
-                  </span>
-                </label>
-
-                <input
-                  type="text"
-                  id="input-auth-otp-code"
-                  dir="ltr"
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="------"
-                  maxLength={6}
-                  className="w-full py-3.5 px-4 rounded-2xl bg-slate-950 border border-slate-700/80 text-emerald-400 font-mono text-2xl tracking-[0.4em] text-center focus:border-emerald-500 focus:outline-none transition shadow-inner font-black"
-                  required
-                  autoFocus
-                />
               </div>
 
-              {/* Resend Option */}
-              <div className="flex items-center justify-between text-xs text-slate-400 px-1">
-                <span>{lang === 'ar' ? 'لم يصلك الرمز؟' : "Didn't receive SMS?"}</span>
-                <button
-                  type="button"
-                  disabled={!canResend || isLoading}
-                  onClick={handleResendOtp}
-                  className={`font-bold transition ${
-                    canResend
-                      ? 'text-emerald-400 hover:underline cursor-pointer'
-                      : 'text-slate-600 cursor-not-allowed'
-                  }`}
-                >
-                  {canResend
-                    ? lang === 'ar'
-                      ? 'إعادة إرسال SMS'
-                      : 'Resend SMS'
-                    : `${lang === 'ar' ? 'إعادة الإرسال بعد' : 'Resend in'} ${resendCountdown}s`}
-                </button>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 pt-1">
+              <div className="text-center pt-1">
                 <button
                   type="button"
                   onClick={() => {
-                    if (emailAddress) {
-                      setStep('google_phone_prompt');
-                    } else {
-                      setStep('select_method');
-                    }
+                    setStep('phone_input');
+                    setErrorMsg(null);
                   }}
-                  className="py-3.5 px-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
+                  className="text-xs text-slate-400 hover:text-slate-200 transition"
                 >
-                  {lang === 'ar' ? 'تعديل الرقم' : 'Edit Number'}
-                </button>
-
-                <button
-                  type="submit"
-                  id="btn-auth-verify-otp"
-                  disabled={isLoading || otpCode.length !== 6}
-                  className="flex-1 py-4 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/25 transition flex items-center justify-center gap-2 cursor-pointer active:scale-95 disabled:opacity-60"
-                >
-                  <CheckCircle2 size={18} />
-                  <span>
-                    {isLoading
-                      ? lang === 'ar'
-                        ? 'جاري التأكيد...'
-                        : 'Verifying...'
-                      : lang === 'ar'
-                      ? 'تأكيد الحساب ومتابعة'
-                      : 'Verify & Continue'}
-                  </span>
+                  تغيير رقم الهاتف
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* =================================================================== */}
+        {/* STEP 3: SIMPLIFIED CUSTOMER NAME PROMPT ONLY */}
+        {/* "الاسم واللقب" ONLY - NO PROFILE PICTURE, NO FILE UPLOADS, NO EMAIL */}
+        {/* =================================================================== */}
+        {step === 'customer_name_prompt' && (
+          <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/90 border border-slate-800 shadow-2xl backdrop-blur-md">
+            <div className="mb-5 text-center">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 mb-3">
+                <User size={24} />
+              </div>
+              <h2 className="text-xl font-black text-white font-['Cairo']">
+                مرحباً بك في سريع! 👋
+              </h2>
+              <p className="text-xs text-slate-400 mt-1">
+                خطوة واحدة أخيرة: أدخل اسمك ولقبك للبدء في نشر واستقبال الطلبات
+              </p>
+            </div>
+
+            <form onSubmit={handleCustomerNameSubmit} className="space-y-4">
+              {/* Confirmed Phone Badge */}
+              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center border border-emerald-500/20">
+                    <Smartphone size={16} />
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 block">رقم الهاتف المؤكد</span>
+                    <span className="text-xs font-mono font-bold text-white" dir="ltr">
+                      {verifiedPhone || carrierInfo.formattedNational}
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex items-center gap-1">
+                  <CheckCircle2 size={11} />
+                  مؤكد ✓
+                </span>
+              </div>
+
+              {/* FIRST & LAST NAME FIELD ONLY */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  الاسم واللقب <span className="text-emerald-400">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    id="input-customer-fullname"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="مثال: أمين بن علي"
+                    autoFocus
+                    required
+                    className="w-full bg-slate-950 border border-slate-700/80 rounded-2xl px-4 py-3.5 text-sm text-white placeholder:text-slate-600 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition"
+                  />
+                  <User size={16} className="absolute left-4 top-4 text-slate-500 pointer-events-none" />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  سيظهر اسمك للكباتن لتسهيل التعرف عليك عند تسليم الطرد
+                </p>
+              </div>
+
+              {/* Wilaya Selection */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1.5">
+                  الولاية الرئيسية
+                </label>
+                <select
+                  id="select-customer-wilaya"
+                  value={selectedWilaya}
+                  onChange={(e) => setSelectedWilaya(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-700/80 rounded-2xl px-4 py-3 text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                >
+                  {ALGERIA_WILAYAS.map((w) => (
+                    <option key={w.code} value={w.code}>
+                      {w.code} - {w.nameAr} ({w.nameFr})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* PRIVACY NOTICE: NO IMAGES / NO FILES */}
+              <div className="p-3 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 text-[11px] text-emerald-400 flex items-center gap-2">
+                <ShieldCheck size={16} className="shrink-0" />
+                <span>حسابك مفعل وجاهز. لا نطلب منك أي صور شخصية أو ملفات للطلب.</span>
+              </div>
+
+              <button
+                type="submit"
+                id="btn-customer-complete-auth"
+                disabled={isLoading || fullName.trim().length < 2}
+                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-black text-sm shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer mt-2"
+              >
+                <span>{isLoading ? 'جاري الحفظ...' : 'تأكيد والدخول الآن'}</span>
+                <ArrowIcon size={16} />
+              </button>
             </form>
-          )}
-        </div>
+          </div>
+        )}
       </main>
 
-      {/* Footer */}
-      <footer className="text-center py-3 text-[11px] text-slate-500">
-        <p>Sari3 Algeria • بوابة التوصيل السريع والآمن في 58 ولاية</p>
+      {/* Footer Disclaimer */}
+      <footer className="py-3 text-center text-[11px] text-slate-500">
+        <span>Sari3 Delivery • منصة التوصيل السريع والأسعار الحرة في الجزائر</span>
       </footer>
     </div>
   );

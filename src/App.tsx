@@ -10,16 +10,16 @@ import {
 } from './types';
 import { ALGERIA_WILAYAS } from './data/wilayas';
 import {
-  getOrdersFromFirestore,
-  saveNewOrderToFirestore,
+  getOrdersFromSupabase,
+  saveNewOrderToSupabase,
   submitDriverOffer,
   acceptDriverOffer,
   updateOrderStatus,
   saveUserProfile,
   ensureUuid,
-} from './utils/firebaseSync';
-import { auth, onAuthStateChanged, signOut, db } from './firebaseClient';
-import { doc, getDoc } from 'firebase/firestore';
+  loadCachedUserProfile,
+} from './utils/supabaseSync';
+import { supabase } from './supabaseClient';
 import { checkGoogleRedirectResult } from './utils/googleAuth';
 import { soundNotifier } from './utils/audioNotification';
 import { Sari3Logo } from './components/Sari3Logo';
@@ -80,9 +80,9 @@ export function App() {
   // Side Navigation Drawer State
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(false);
 
-  // Load orders live from Cloud Firestore database
+  // Load orders live from Supabase database
   const reloadOrders = async () => {
-    const list = await getOrdersFromFirestore();
+    const list = await getOrdersFromSupabase();
     setOrders(list);
   };
 
@@ -95,61 +95,79 @@ export function App() {
     return () => clearInterval(interval);
   }, [selectedWilaya]);
 
-  // Handle Firebase Authentication state observer and Google Redirect Result
+  // Handle Supabase Authentication state observer
   useEffect(() => {
-    // Process redirect result if browser is returning from Google signInWithRedirect
     checkGoogleRedirectResult().catch((e) => {
-      console.warn('[Firebase Auth] Redirect check notice:', e);
+      console.warn('[Supabase Auth] Redirect check notice:', e);
     });
 
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        try {
-          const profileDoc = await getDoc(doc(db, 'profiles', firebaseUser.uid));
-          if (profileDoc.exists()) {
-            const data = profileDoc.data();
-            const userProfile: UserProfile = {
-              id: firebaseUser.uid,
-              email: firebaseUser.email || undefined,
-              phone: data.phone || firebaseUser.phoneNumber || '',
-              phoneVerified: !!(data.phoneVerified || firebaseUser.phoneNumber),
-              displayName: data.displayName || firebaseUser.displayName || 'مستخدم سريع',
-              avatarUrl: data.avatarUrl || firebaseUser.photoURL || undefined, // strictly public avatar
-              role: data.role || 'customer',
-              wilaya: data.wilaya || '16',
-              customerProfileCompleted: !!data.customerProfileCompleted,
-              cameraPermissionGranted: !!data.cameraPermissionGranted,
-              locationPermissionGranted: !!data.locationPermissionGranted,
-              accountConfirmed: true,
-              createdAt: data.createdAt || new Date().toISOString(),
-            };
-            setCurrentUser(userProfile);
-          } else {
-            // First-time Firebase user profile initialization
-            const userProfile: UserProfile = {
-              id: firebaseUser.uid,
-              email: firebaseUser.email || undefined,
-              displayName: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'مستخدم جديد',
-              avatarUrl: firebaseUser.photoURL || undefined,
-              phone: firebaseUser.phoneNumber || '',
-              phoneVerified: !!firebaseUser.phoneNumber,
-              wilaya: '16',
-              customerProfileCompleted: false,
-              cameraPermissionGranted: false,
-              locationPermissionGranted: false,
-              accountConfirmed: true,
-              createdAt: new Date().toISOString(),
-            };
-            setCurrentUser(userProfile);
-            await saveUserProfile(userProfile);
-          }
-        } catch (e) {
-          console.warn('[Firebase Auth] User profile sync notice:', e);
+    const syncSupabaseUser = async (sbUser: any) => {
+      try {
+        const { data: profileRow } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', sbUser.id)
+          .maybeSingle();
+
+        if (profileRow) {
+          const userProfile: UserProfile = {
+            id: sbUser.id,
+            email: profileRow.email || sbUser.email,
+            phone: profileRow.phone || sbUser.phone || '',
+            phoneVerified: !!profileRow.phone_verified,
+            displayName: profileRow.display_name || sbUser.email?.split('@')[0] || 'مستخدم سريع',
+            avatarUrl: profileRow.avatar_url || undefined,
+            role: profileRow.role || 'customer',
+            wilaya: profileRow.wilaya || '16',
+            customerProfileCompleted: !!(profileRow.display_name && profileRow.display_name !== 'مستخدم سريع'),
+            accountConfirmed: true,
+            createdAt: profileRow.created_at || new Date().toISOString(),
+          };
+          setCurrentUser(userProfile);
+        } else {
+          const email = sbUser.email || '';
+          const name =
+            sbUser.user_metadata?.full_name ||
+            sbUser.user_metadata?.name ||
+            email.split('@')[0] ||
+            'مستخدم سريع';
+
+          const newProfile: UserProfile = {
+            id: sbUser.id,
+            email,
+            phone: sbUser.phone || '',
+            phoneVerified: !!sbUser.phone,
+            displayName: name,
+            avatarUrl: sbUser.user_metadata?.avatar_url,
+            role: 'customer',
+            wilaya: '16',
+            customerProfileCompleted: false,
+            accountConfirmed: true,
+            createdAt: new Date().toISOString(),
+          };
+          setCurrentUser(newProfile);
+          await saveUserProfile(newProfile);
         }
+      } catch (err) {
+        console.warn('[Supabase Auth] User sync notice:', err);
+      }
+    };
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user && !currentUser) {
+        syncSupabaseUser(session.user);
       }
     });
 
-    return () => unsubscribe();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user && !currentUser) {
+        syncSupabaseUser(session.user);
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   // Handle HTML document direction and theme class
@@ -168,10 +186,11 @@ export function App() {
   // Logout / Reset to Entry Authentication Flow
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      await supabase.auth.signOut();
     } catch (e) {}
     setCurrentUser(null);
     setIsSidebarOpen(false);
+    localStorage.removeItem('sari3_current_user_profile_v2');
     localStorage.removeItem('sari3_user_profile');
   };
 
@@ -194,7 +213,7 @@ export function App() {
 
   // Order Actions: Customer publishes new order
   const handlePublishOrder = async (newOrder: DeliveryOrder) => {
-    await saveNewOrderToFirestore(newOrder);
+    await saveNewOrderToSupabase(newOrder);
     setOrders((prev) => [newOrder, ...prev]);
 
     // Play Dispatch alert sound

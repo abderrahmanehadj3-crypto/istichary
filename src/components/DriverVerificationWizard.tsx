@@ -25,7 +25,7 @@ import {
   captureFrameFromVideo,
   launchNativeDeviceCamera,
 } from '../utils/nativeCameraBridge';
-import { saveDriverVerificationToFirestore } from '../utils/firebaseSync';
+import { saveDriverVerification } from '../utils/supabaseSync';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -333,8 +333,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         rating: 5.0,
         totalDeliveries: 0,
       };
-      saveDriverVerificationToFirestore(currentUser.id, finalDriverDetails).catch((err) =>
-        console.warn('[DriverWizard] Firestore save notice:', err)
+      saveDriverVerification(currentUser.id, finalDriverDetails).catch((err) =>
+        console.warn('[DriverWizard] Supabase save notice:', err)
       );
       onComplete(finalDriverDetails);
     }
