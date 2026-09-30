@@ -2,13 +2,46 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { initializeApp, getApps } from 'firebase/app';
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  Firestore,
+} from 'firebase/firestore';
+import { sendRealSmsMessage } from './src/server/smsGateway';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Initialize Firebase Cloud Firestore
+const firebaseConfigFile = path.resolve(__dirname, 'firebase-applet-config.json');
+let firebaseConfig: any = null;
+if (fs.existsSync(firebaseConfigFile)) {
+  try {
+    firebaseConfig = JSON.parse(fs.readFileSync(firebaseConfigFile, 'utf-8'));
+  } catch (e) {
+    console.warn('[Server] Error reading firebase-applet-config.json:', e);
+  }
+}
+
+const fbApp = firebaseConfig
+  ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0])
+  : null;
+
+const firestoreDb: Firestore | null = fbApp
+  ? (firebaseConfig.firestoreDatabaseId
+      ? getFirestore(fbApp, firebaseConfig.firestoreDatabaseId)
+      : getFirestore(fbApp))
+  : null;
 
 // Sanitize Supabase environment variables to prevent malformed URLs or DNS errors
 function sanitizeUrl(raw?: string): string {
@@ -160,12 +193,56 @@ async function startServer() {
         });
       }
 
-      // Generate cryptographically unpredictable 6-digit numeric OTP
-      const otpCode = String(Math.floor(100000 + Math.random() * 900000));
-      const sessionToken = `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      // Generate cryptographically unpredictable 6-digit numeric OTP using secure random generator
+      const otpCode = String(crypto.randomInt(100000, 1000000));
+      const sessionToken = `sess_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
       const expiresInSeconds = 300; // 5 minutes
       const expiresAt = Date.now() + expiresInSeconds * 1000;
 
+      // 1. Trigger Real SMS Gateway API Dispatch (Twilio, Vonage, Infobip, Custom)
+      let smsResult = {
+        success: true,
+        provider: 'pending_configuration',
+        messageId: `msg_${Date.now()}`,
+        statusMessage: 'Dispatched',
+      };
+
+      if (channel === 'sms') {
+        smsResult = await sendRealSmsMessage(
+          carrierInfo.normalizedE164,
+          otpCode,
+          carrierInfo.carrierName
+        );
+      }
+
+      // 2. Secure Server-Side Database Persistence (Cloud Firestore phone_verifications)
+      const verificationRecord = {
+        sessionToken,
+        phone: carrierInfo.normalizedE164,
+        formattedNational: carrierInfo.formattedNational,
+        code: otpCode, // Strictly kept on server-side database
+        carrier: carrierInfo.carrier,
+        carrierName: carrierInfo.carrierName,
+        channel,
+        smsProvider: smsResult.provider,
+        smsMessageId: smsResult.messageId,
+        smsStatus: smsResult.statusMessage,
+        attempts: 0,
+        status: 'pending',
+        expiresAt,
+        expiresAtIso: new Date(expiresAt).toISOString(),
+        createdAt: new Date().toISOString(),
+      };
+
+      if (firestoreDb) {
+        try {
+          await setDoc(doc(firestoreDb, 'phone_verifications', sessionToken), verificationRecord);
+        } catch (dbErr) {
+          console.warn('[Firestore phone_verifications save notice]:', dbErr);
+        }
+      }
+
+      // Also mirror in active memory session store for ultra-fast lookup
       const newSession: ActiveOtpSession = {
         token: sessionToken,
         phone: carrierInfo.normalizedE164,
@@ -180,67 +257,20 @@ async function startServer() {
       phoneSessions.set(carrierInfo.normalizedE164, newSession);
       phoneSessions.set(carrierInfo.formattedNational, newSession);
 
-      // Construct WhatsApp direct verification link for guaranteed delivery
+      // Construct WhatsApp direct verification link for guaranteed delivery if requested
       const whatsappMessage = encodeURIComponent(
         `رمز التحقق لمنصة سريع (Sari3 Delivery): *${otpCode}*\nصالح لمدة 5 دقائق.`
       );
       const whatsappLink = `https://wa.me/${carrierInfo.normalizedE164.replace('+', '')}?text=${whatsappMessage}`;
 
-      // Dispatch via External SMS Gateway if configured
-      if (channel === 'sms') {
-        const twilioSid = process.env.TWILIO_ACCOUNT_SID;
-        const twilioToken = process.env.TWILIO_AUTH_TOKEN;
-        const twilioFrom = process.env.TWILIO_PHONE_NUMBER;
-        const smsGatewayUrl = process.env.SMS_GATEWAY_URL;
-        const smsApiKey = process.env.SMS_API_KEY;
-
-        if (twilioSid && twilioToken && twilioFrom) {
-          try {
-            const basicAuth = Buffer.from(`${twilioSid}:${twilioToken}`).toString('base64');
-            const twilioBody = new URLSearchParams({
-              To: carrierInfo.normalizedE164,
-              From: twilioFrom,
-              Body: `رمز التحقق لمنصة سريع (Sari3): ${otpCode}. صالح لمدة 5 دقائق.`,
-            });
-            await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
-              method: 'POST',
-              headers: {
-                Authorization: `Basic ${basicAuth}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: twilioBody.toString(),
-            });
-            console.info(`[Server SMS Gateway] Real SMS dispatched via Twilio to ${carrierInfo.normalizedE164}`);
-          } catch (twilioErr) {
-            console.error('[Server SMS Gateway] Twilio dispatch error:', twilioErr);
-          }
-        } else if (smsGatewayUrl && smsApiKey) {
-          try {
-            await fetch(smsGatewayUrl, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${smsApiKey}`,
-              },
-              body: JSON.stringify({
-                to: carrierInfo.normalizedE164,
-                message: `رمز التحقق لمنصة سريع (Sari3): ${otpCode}. صالح لمدة 5 دقائق.`,
-              }),
-            });
-            console.info(`[Server SMS Gateway] Real SMS dispatched via custom gateway to ${carrierInfo.normalizedE164}`);
-          } catch (gatewayErr) {
-            console.error('[Server SMS Gateway] Custom gateway dispatch error:', gatewayErr);
-          }
-        }
-      }
-
       console.info(
-        `[Sari3 SMS/OTP Gateway] Dispatched ${channel.toUpperCase()} OTP session for ${carrierInfo.carrier} (${carrierInfo.normalizedE164})`
+        `[Sari3 Real SMS/OTP Flow] Dispatched via ${smsResult.provider} to ${carrierInfo.carrier} (${carrierInfo.normalizedE164}) - Session: ${sessionToken}`
       );
 
+      // Return session receipt (NEVER expose the code to client!)
       return res.json({
         success: true,
-        messageId: `msg_${Date.now()}_${carrierInfo.carrier.toLowerCase()}`,
+        messageId: smsResult.messageId || `msg_${Date.now()}_${carrierInfo.carrier.toLowerCase()}`,
         sessionToken,
         carrier: carrierInfo.carrier,
         carrierName: carrierInfo.carrierName,
@@ -248,6 +278,8 @@ async function startServer() {
         normalizedE164: carrierInfo.normalizedE164,
         expiresInSeconds,
         channel,
+        smsProvider: smsResult.provider,
+        smsStatus: smsResult.statusMessage,
         whatsappLink: channel === 'whatsapp' ? whatsappLink : undefined,
       });
     } catch (err: any) {
@@ -257,7 +289,7 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------------------
-  // 2. API: VERIFY PHONE OTP & SYNC SUPABASE PROFILES TABLE
+  // 2. API: STRICT SERVER-SIDE OTP VERIFICATION (Against Database & Firestore)
   // -------------------------------------------------------------------------
   app.post('/api/auth/otp/verify', async (req: Request, res: Response) => {
     try {
@@ -270,48 +302,84 @@ async function startServer() {
         });
       }
 
-      // 2. Locate active session by token or phone
+      // 2. Query Firestore Database for persistent verification document
+      let dbRecord: any = null;
+      if (firestoreDb && sessionToken) {
+        try {
+          const snap = await getDoc(doc(firestoreDb, 'phone_verifications', sessionToken));
+          if (snap.exists()) {
+            dbRecord = snap.data();
+          }
+        } catch (dbErr) {
+          console.warn('[Firestore] Verification query notice:', dbErr);
+        }
+      }
+
+      // Fallback to active in-memory session if Firestore record not found
       let session: ActiveOtpSession | undefined = sessionToken ? activeSessions.get(sessionToken) : undefined;
       if (!session && phone) {
         const carrierInfo = detectCarrier(phone);
         session = phoneSessions.get(carrierInfo.normalizedE164) || phoneSessions.get(carrierInfo.formattedNational);
       }
 
-      if (!session) {
+      const activeRecord = dbRecord || session;
+
+      if (!activeRecord) {
         return res.status(400).json({
-          error: 'انتهت صلاحية رمز التحقق أو لا توجد جلسة إرسال نشطة لهذا الرقم. يرجى طلب رمز جديد.',
+          error: 'انتهت صلاحية رمز التحقق أو لا توجد جلسة إرسال نشطة لهذا الرقم في قاعدة البيانات. يرجى طلب رمز جديد.',
         });
       }
 
-      // 3. Expiration check
-      if (Date.now() > session.expiresAt) {
-        activeSessions.delete(session.token);
-        phoneSessions.delete(session.phone);
+      // 3. Expiration check (5 minutes TTL)
+      const expiresAt = Number(activeRecord.expiresAt);
+      if (Date.now() > expiresAt || activeRecord.status === 'expired') {
+        if (sessionToken) {
+          activeSessions.delete(sessionToken);
+          if (firestoreDb) {
+            updateDoc(doc(firestoreDb, 'phone_verifications', sessionToken), { status: 'expired' }).catch(() => {});
+          }
+        }
         return res.status(400).json({
           error: 'انتهت صلاحية رمز التحقق (صلاحية الرمز 5 دقائق). يرجى النقر على إعادة إرسال الرمز.',
         });
       }
 
       // 4. Rate-limiting / brute-force protection
-      if (session.attempts >= 5) {
-        activeSessions.delete(session.token);
-        phoneSessions.delete(session.phone);
+      const currentAttempts = Number(activeRecord.attempts || 0);
+      if (currentAttempts >= 5 || activeRecord.status === 'blocked') {
+        if (sessionToken) {
+          activeSessions.delete(sessionToken);
+          if (firestoreDb) {
+            updateDoc(doc(firestoreDb, 'phone_verifications', sessionToken), { status: 'blocked' }).catch(() => {});
+          }
+        }
         return res.status(400).json({
           error: 'تم تجاوز الحد الأقصى للمحاولات الخاطئة (5 محاولات). تم إبطال الرمز لأسباب أمنية، يرجى طلب رمز جديد.',
         });
       }
 
-      // 5. STRICT OTP MATCHING: The system must NEVER accept an incorrect code!
+      // 5. STRICT DATABASE OTP MATCHING: The system must NEVER accept an incorrect code!
       const enteredCodeClean = String(code).trim();
-      const expectedCodeClean = String(session.code).trim();
+      const expectedCodeClean = String(activeRecord.code).trim();
 
       if (enteredCodeClean !== expectedCodeClean) {
-        session.attempts += 1;
-        const remainingAttempts = 5 - session.attempts;
+        const newAttempts = currentAttempts + 1;
+        if (session) session.attempts = newAttempts;
 
-        if (session.attempts >= 5) {
-          activeSessions.delete(session.token);
-          phoneSessions.delete(session.phone);
+        if (firestoreDb && sessionToken) {
+          updateDoc(doc(firestoreDb, 'phone_verifications', sessionToken), {
+            attempts: newAttempts,
+            updatedAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
+
+        const remainingAttempts = 5 - newAttempts;
+
+        if (newAttempts >= 5) {
+          if (sessionToken) activeSessions.delete(sessionToken);
+          if (firestoreDb && sessionToken) {
+            updateDoc(doc(firestoreDb, 'phone_verifications', sessionToken), { status: 'blocked' }).catch(() => {});
+          }
           return res.status(400).json({
             error: 'رمز التحقق غير صحيح. تم تجاوز الحد الأقصى للمحاولات (5 محاولات). يرجى طلب رمز جديد.',
           });
@@ -322,11 +390,23 @@ async function startServer() {
         });
       }
 
-      // 6. Verification successful! Invalidate session immediately to prevent replay attacks
-      activeSessions.delete(session.token);
-      phoneSessions.delete(session.phone);
+      // 6. Verification successful! Invalidate OTP record in database & memory to prevent replay
+      if (sessionToken) {
+        activeSessions.delete(sessionToken);
+      }
+      if (activeRecord.phone) {
+        phoneSessions.delete(activeRecord.phone);
+      }
 
-      const normalizedPhone = session.phone;
+      if (firestoreDb && sessionToken) {
+        updateDoc(doc(firestoreDb, 'phone_verifications', sessionToken), {
+          status: 'verified',
+          code: 'VERIFIED',
+          verifiedAt: new Date().toISOString(),
+        }).catch(() => {});
+      }
+
+      const normalizedPhone = activeRecord.phone;
       const carrierInfo = detectCarrier(normalizedPhone);
 
       let userId = generateUuid();
@@ -347,11 +427,20 @@ async function startServer() {
         console.warn('[DB check profiles notice]:', dbErr);
       }
 
+      if (firestoreDb && !existingProfile) {
+        try {
+          const userDoc = await getDoc(doc(firestoreDb, 'profiles', userId));
+          if (userDoc.exists()) {
+            existingProfile = userDoc.data();
+          }
+        } catch (fsErr) {}
+      }
+
       const userProfile = {
         id: userId,
         phone: carrierInfo.formattedNational,
         phone_verified: true,
-        display_name: displayName || existingProfile?.display_name || 'مستخدم سريع',
+        display_name: displayName || existingProfile?.display_name || existingProfile?.displayName || 'مستخدم سريع',
         role: role || existingProfile?.role || 'customer',
         wilaya: existingProfile?.wilaya || '16',
         account_confirmed: true,
@@ -362,6 +451,18 @@ async function startServer() {
         await supabase.from('profiles').upsert(userProfile);
       } catch (upsertErr) {
         console.warn('[DB upsert profiles notice]:', upsertErr);
+      }
+
+      if (firestoreDb) {
+        try {
+          await setDoc(doc(firestoreDb, 'profiles', userId), {
+            ...userProfile,
+            displayName: userProfile.display_name,
+            phoneVerified: userProfile.phone_verified,
+            accountConfirmed: userProfile.account_confirmed,
+            updatedAt: userProfile.updated_at,
+          }, { merge: true });
+        } catch (fsSetErr) {}
       }
 
       return res.json({

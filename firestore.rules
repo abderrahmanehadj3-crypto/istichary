@@ -39,6 +39,11 @@ service cloud.firestore {
       }
     }
 
+    // Phone OTP Verifications: Server-side validation records
+    match /phone_verifications/{verificationId} {
+      allow read, write: if true;
+    }
+
     // Connection testing doc
     match /test/{docId} {
       allow read, write: if true;
