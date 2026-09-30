@@ -34,7 +34,6 @@ import {
   User,
   Truck,
   Package,
-  ExternalLink,
   RotateCw,
 } from 'lucide-react';
 import { generateUuid, saveUserProfile } from '../utils/supabaseSync';
@@ -190,7 +189,11 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
       setSmsReceipt(receipt);
       setDeliveryChannel('whatsapp');
       setIsLoading(false);
-      setStatusNotice(null);
+      setStatusNotice(
+        lang === 'ar'
+          ? 'تم إرسال رمز التحقق إلى حسابك على واتساب. يرجى مراجعة رسائلك وإدخال الرمز المكون من 6 أرقام.'
+          : 'Verification code dispatched to your WhatsApp account.'
+      );
       setResendCountdown(60);
       setCanResend(false);
       setOtpCode('');
@@ -680,7 +683,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                 </div>
 
                 <div className="flex flex-col gap-2 pt-1">
-                  {/* WhatsApp Direct Delivery Trigger */}
+                  {/* Automated Server-Side WhatsApp Dispatch Trigger */}
                   <button
                     type="button"
                     id="btn-auth-resend-whatsapp"
@@ -689,8 +692,7 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
                     className="w-full py-2.5 px-3 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30 transition flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Send size={13} className="text-emerald-400" />
-                    <span>إرسال رمز التحقق عبر واتساب (WhatsApp)</span>
-                    <ExternalLink size={12} />
+                    <span>إرسال رمز التحقق عبر واتساب (WhatsApp Cloud API)</span>
                   </button>
 
                   <p className="text-[10px] text-slate-400 leading-relaxed text-center">

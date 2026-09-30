@@ -34,8 +34,6 @@ export interface SmsDispatchReceipt {
   sessionToken: string;
   expiresInSeconds: number;
   channel: 'sms' | 'whatsapp';
-  whatsappLink?: string;
-  hasFallbackReady: boolean;
 }
 
 /**
@@ -101,10 +99,8 @@ export function detectAlgerianCarrier(phoneInput: string): CarrierInfo {
 }
 
 /**
- * Dispatches a real SMS verification code to an Algerian mobile number:
- * 1. Attempts Supabase Phone Auth OTP if available
- * 2. Uses backend SMS delivery gateway
- * 3. Prepares WhatsApp fallback link if network experiences delays
+ * Dispatches a real verification code to an Algerian mobile number (+213)
+ * Handles delivery via real SMS Gateway or Meta WhatsApp Cloud API via backend.
  */
 export async function sendAlgerianSmsOtp(
   phoneInput: string,
@@ -115,62 +111,29 @@ export async function sendAlgerianSmsOtp(
     throw new Error('رقم الهاتف الجزائري غير صالح. يجب أن يبدأ بـ 05 أو 06 أو 07 ويتكون من 10 أرقام.');
   }
 
-  const sessionToken = `sms-sess-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const expiresInSeconds = 300;
+  // 1. Dispatch via Server-Side API (Real SMS Gateway or Meta WhatsApp Business Cloud API)
+  const res = await fetch('/api/auth/otp/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: carrierInfo.normalizedE164, channel }),
+  });
 
-  // 1. If Supabase is configured, trigger Supabase signInWithOtp
-  if (isSupabaseConfigured() && channel === 'sms') {
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        phone: carrierInfo.normalizedE164,
-      });
-      if (!error) {
-        console.info(`[Supabase Phone Auth] OTP dispatched to ${carrierInfo.normalizedE164}`);
-      }
-    } catch (sbErr) {
-      console.warn('[Supabase Phone Auth] Notice:', sbErr);
-    }
-  }
+  const data = await res.json().catch(() => null);
 
-  // 2. Dispatch via Backend API / SMS Gateway
-  let apiSuccess = false;
-  let whatsappLink: string | undefined;
-
-  try {
-    const res = await fetch('/api/auth/otp/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: carrierInfo.normalizedE164, channel }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      apiSuccess = true;
-      whatsappLink = data.whatsappLink;
-    }
-  } catch (backendErr) {
-    console.warn('[SmsGateway] Backend API dispatch notice:', backendErr);
-  }
-
-  // Guaranteed WhatsApp fallback link if requested or needed
-  if (!whatsappLink) {
-    whatsappLink = `https://wa.me/${carrierInfo.normalizedE164.replace('+', '')}?text=${encodeURIComponent(
-      'طلب رمز التحقق لمنصة سريع Sari3'
-    )}`;
+  if (!res.ok || !data?.success) {
+    throw new Error(data?.error || 'فشل إرسال رمز التحقق عبر الخادم. يرجى المحاولة مجدداً.');
   }
 
   return {
     success: true,
-    messageId: `msg-${Date.now()}-${carrierInfo.carrier.toLowerCase()}`,
+    messageId: data.messageId || `msg-${Date.now()}-${carrierInfo.carrier.toLowerCase()}`,
     carrier: carrierInfo.carrier,
     carrierName: carrierInfo.carrierNameAr,
     destination: carrierInfo.formattedNational,
     dispatchedAt: new Date().toLocaleTimeString('fr-DZ'),
-    sessionToken,
-    expiresInSeconds,
+    sessionToken: data.sessionToken,
+    expiresInSeconds: data.expiresInSeconds || 300,
     channel,
-    whatsappLink: channel === 'whatsapp' ? whatsappLink : undefined,
-    hasFallbackReady: true,
   };
 }
 
