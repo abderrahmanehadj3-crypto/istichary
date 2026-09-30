@@ -22,6 +22,7 @@ export interface DriverDetails {
   age: number; // Strictly >= 20
   phone: string;
   phoneVerified: boolean;
+  email?: string; // Driver bound email for security notices
   licenseFrontUrl?: string;
   licenseBackUrl?: string;
   licenseNumber: string;

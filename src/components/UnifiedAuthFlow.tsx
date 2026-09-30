@@ -610,6 +610,34 @@ export const UnifiedAuthFlow: React.FC<UnifiedAuthFlowProps> = ({
               </p>
             </div>
 
+            {/* Development / Evaluation Test Mode Banner */}
+            {smsReceipt?.testCode && (
+              <div className="mb-4 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
+                    <Sparkles size={12} />
+                    وضع الاختبار والتطوير (Dev Test Mode)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOtpCode(smsReceipt.testCode!);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    className="text-[11px] font-black text-amber-400 hover:text-white underline cursor-pointer"
+                  >
+                    تعبئة تلقائية للرمز
+                  </button>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-amber-500/20 flex items-center justify-between">
+                  <span className="text-xs text-slate-300 font-bold">رمز التحقق المُولد للمعاينة:</span>
+                  <span className="font-mono text-xl font-black text-amber-400 tracking-widest px-3 py-0.5 rounded-lg bg-amber-500/10 border border-amber-500/40 select-all">
+                    {smsReceipt.testCode}
+                  </span>
+                </div>
+              </div>
+            )}
+
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
                 <input

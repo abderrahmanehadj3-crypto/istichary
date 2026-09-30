@@ -76,9 +76,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   );
   const [calculatedAge, setCalculatedAge] = useState<number>(0);
 
-  // STEP 3: Phone Verification
+  // STEP 3: Phone Verification & Official Email Binding
   const [phone, setPhone] = useState(currentUser.phone || '');
   const [isPhoneVerified, setIsPhoneVerified] = useState(!!currentUser.phoneVerified);
+  const [driverEmail, setDriverEmail] = useState(currentUser.email || '');
 
   // STEP 4: Live License Camera Scanner (100% Live Camera Only - No Stock Images, No Gallery)
   const [licenseNumber, setLicenseNumber] = useState(
@@ -265,10 +266,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
     }
 
-    // Step 3 Check: Phone OTP
+    // Step 3 Check: Phone & Driver Email Binding
     if (currentStep === 3) {
       if (!phone || phone.trim().length < 9) {
         setErrorMsg(lang === 'ar' ? 'رقم الهاتف مطلوب' : 'Valid phone number is required');
+        return;
+      }
+      if (driverEmail.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(driverEmail.trim())) {
+        setErrorMsg(lang === 'ar' ? 'صيغة البريد الإلكتروني غير صحيحة' : 'Invalid email format');
         return;
       }
     }
@@ -316,6 +321,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         age: calculatedAge,
         phone: phone.trim(),
         phoneVerified: isPhoneVerified,
+        email: driverEmail.trim() || undefined,
         licenseNumber: licenseNumber.trim(),
         licenseExpirationDate: licenseExpiration,
         licenseFrontUrl: licenseFront || '',
@@ -651,6 +657,21 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
+                  dir="ltr"
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm focus:border-emerald-500 transition"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>ربط البريد الإلكتروني (Email Binding)</span>
+                  <span className="text-[10px] text-emerald-400">لإشعارات الحساب والأمان</span>
+                </label>
+                <input
+                  type="email"
+                  value={driverEmail}
+                  onChange={(e) => setDriverEmail(e.target.value)}
+                  placeholder="driver@example.com"
                   dir="ltr"
                   className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-sm focus:border-emerald-500 transition"
                 />

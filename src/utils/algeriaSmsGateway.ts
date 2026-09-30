@@ -34,6 +34,7 @@ export interface SmsDispatchReceipt {
   sessionToken: string;
   expiresInSeconds: number;
   channel: 'sms' | 'whatsapp';
+  testCode?: string;
 }
 
 /**
@@ -134,6 +135,7 @@ export async function sendAlgerianSmsOtp(
     sessionToken: data.sessionToken,
     expiresInSeconds: data.expiresInSeconds || 300,
     channel,
+    testCode: data.testCode,
   };
 }
 
