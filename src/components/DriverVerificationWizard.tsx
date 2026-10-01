@@ -66,12 +66,20 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     currentUser.driverDetails?.facePhotoUrl ? true : null
   );
   const [facePoseWarning, setFacePoseWarning] = useState<string | null>(null);
+  const [livePoseWarning, setLivePoseWarning] = useState<string | null>(null);
   const [isCheckingPose, setIsCheckingPose] = useState<boolean>(false);
 
-  // License OCR & Expiration State
+  // License OCR Forensics & Cross-Check State
   const [isScanningLicense, setIsScanningLicense] = useState<boolean>(false);
   const [licenseExpired, setLicenseExpired] = useState<boolean>(false);
   const [licenseOcrMessage, setLicenseOcrMessage] = useState<string | null>(null);
+  const [ocrDocumentValid, setOcrDocumentValid] = useState<boolean | null>(
+    currentUser.driverDetails?.licenseFrontUrl ? true : null
+  );
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [ocrDetectedNumber, setOcrDetectedNumber] = useState<string | null>(null);
+  const [ocrDetectedExpiration, setOcrDetectedExpiration] = useState<string | null>(null);
+  const [ocrDetectedName, setOcrDetectedName] = useState<string | null>(null);
 
   const inferredFirst = currentUser.displayName ? currentUser.displayName.split(' ')[0] : '';
   const inferredLast =
@@ -166,6 +174,72 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsLicenseScannerOpen(false);
   };
 
+  // Real-time live video face orientation & symmetry monitor
+  useEffect(() => {
+    if (!isFaceCameraActive) {
+      setLivePoseWarning(null);
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const video = faceVideoRef.current;
+      if (!video || video.readyState < 2 || !video.videoWidth) return;
+
+      try {
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = 160;
+        offCanvas.height = 160;
+        const ctx = offCanvas.getContext('2d');
+        if (!ctx) return;
+
+        ctx.drawImage(video, 0, 0, 160, 160);
+        const imgData = ctx.getImageData(0, 0, 160, 160);
+        const data = imgData.data;
+
+        let leftLum = 0;
+        let rightLum = 0;
+        let leftCount = 0;
+        let rightCount = 0;
+        let totalLum = 0;
+
+        for (let y = 30; y < 130; y++) {
+          for (let x = 20; x < 140; x++) {
+            const idx = (y * 160 + x) * 4;
+            const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+            totalLum += lum;
+
+            if (x < 70) {
+              leftLum += lum;
+              leftCount++;
+            } else if (x > 90) {
+              rightLum += lum;
+              rightCount++;
+            }
+          }
+        }
+
+        const avgLum = totalLum / (100 * 120);
+        if (avgLum < 28) {
+          setLivePoseWarning('الإضاءة ضعيفة جداً. يرجى الوقوف في مكان جيد الإضاءة.');
+          return;
+        }
+
+        const avgLeft = leftCount > 0 ? leftLum / leftCount : 0;
+        const avgRight = rightCount > 0 ? rightLum / rightCount : 0;
+        const asymmetry = Math.abs(avgLeft - avgRight) / Math.max(avgLeft, avgRight, 1);
+
+        // If face is turned sideways into a profile view or cast in strong lateral shadow:
+        if (asymmetry > 0.42) {
+          setLivePoseWarning('يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
+        } else {
+          setLivePoseWarning(null);
+        }
+      } catch (err) {}
+    }, 400);
+
+    return () => clearInterval(intervalId);
+  }, [isFaceCameraActive]);
+
   // AI Face Pose Verification (Ensures frontal centered pose, blocks sideways / tilted)
   const verifyFacePose = async (photoDataUrl: string) => {
     setIsCheckingPose(true);
@@ -177,32 +251,80 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         body: JSON.stringify({ image: photoDataUrl }),
       });
       const data = await res.json().catch(() => null);
-      if (data && data.success) {
-        if (data.isValidPose) {
-          setFacePoseValid(true);
-          setFacePoseWarning(null);
+      if (res.ok && data && data.isValidPose && data.success) {
+        setFacePoseValid(true);
+        setFacePoseWarning(null);
+        if (errorMsg && (errorMsg.includes('الوجه') || errorMsg.includes('وضعية'))) {
           setErrorMsg(null);
-        } else {
-          setFacePoseValid(false);
-          const warn = data.warning || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً';
-          setFacePoseWarning(warn);
-          setErrorMsg(warn);
         }
       } else {
-        setFacePoseValid(true);
+        setFacePoseValid(false);
+        const warn =
+          data?.warning ||
+          'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً';
+        setFacePoseWarning(warn);
+        setErrorMsg(warn);
       }
     } catch (e) {
       console.warn('[Face verify notice]:', e);
-      setFacePoseValid(true);
+      setFacePoseValid(false);
+      const warn = 'تعذر التحقق من وضعية الوجه. يرجى التأكد من وضوح الصورة ومواجهة الكاميرا مباشرة.';
+      setFacePoseWarning(warn);
+      setErrorMsg(warn);
     } finally {
       setIsCheckingPose(false);
     }
   };
 
-  // License OCR & Expiry Date Verification
+  // License OCR & Real Document Analysis (Zero Mock / No Fake Success)
   const scanLicenseOcr = async (photoDataUrl: string) => {
     setIsScanningLicense(true);
     setLicenseOcrMessage(null);
+    setOcrError(null);
+    setOcrDocumentValid(null);
+    setLicenseExpired(false);
+
+    // 1. Fast client-side image brightness/darkness pre-check!
+    // Reject pitch black, covered camera, or extremely dark photos immediately
+    try {
+      const img = new Image();
+      img.src = photoDataUrl;
+      await new Promise((resolve) => {
+        img.onload = resolve;
+        img.onerror = resolve;
+      });
+
+      if (img.width > 0 && img.height > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.min(img.width, 300);
+        canvas.height = Math.min(img.height, 200);
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const data = imageData.data;
+          let totalLuminance = 0;
+          for (let i = 0; i < data.length; i += 4) {
+            totalLuminance += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          }
+          const avgLuminance = totalLuminance / (data.length / 4);
+
+          // If avg luminance < 32, it is pitch black or very dark
+          if (avgLuminance < 32) {
+            setOcrDocumentValid(false);
+            const darkErr = 'الصورة الملتقطة مظلمة جداً أو غير مقروءة. يرجى التقاط صورة واضحة في مكان جيد الإضاءة.';
+            setOcrError(darkErr);
+            setErrorMsg(darkErr);
+            setIsScanningLicense(false);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Client pre-check notice]:', e);
+    }
+
+    // 2. Strict Server-side Document Forensic Verification
     try {
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
@@ -210,32 +332,43 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         body: JSON.stringify({ image: photoDataUrl }),
       });
       const data = await res.json().catch(() => null);
-      if (data) {
-        if (data.isExpired) {
+
+      if (!res.ok || !data?.success) {
+        setOcrDocumentValid(false);
+        const err = data?.error || 'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير بوضوح.';
+        setOcrError(err);
+        setErrorMsg(err);
+        if (data?.isExpired) {
           setLicenseExpired(true);
-          const err = 'رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل';
-          setErrorMsg(err);
-          setLicenseOcrMessage(err);
-          if (data.expirationDate) setLicenseExpiration(data.expirationDate);
-        } else {
-          setLicenseExpired(false);
-          if (data.licenseNumber) setLicenseNumber(data.licenseNumber);
-          if (data.expirationDate) setLicenseExpiration(data.expirationDate);
-          setLicenseOcrMessage('✅ تم فحص الرخصة بنجاح: سارية المفعول ومؤكدة');
-          if (errorMsg === 'رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل') {
-            setErrorMsg(null);
-          }
         }
+        return;
       }
-    } catch (e) {
-      console.warn('[License OCR notice]:', e);
-      if (licenseExpiration) {
-        const exp = new Date(licenseExpiration);
-        if (!isNaN(exp.getTime()) && exp < new Date('2026-10-01')) {
-          setLicenseExpired(true);
-          setErrorMsg('رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل');
-        }
+
+      // Valid genuine document
+      setOcrDocumentValid(true);
+      setOcrError(null);
+      setLicenseExpired(false);
+      setOcrDetectedNumber(data.licenseNumber || null);
+      setOcrDetectedExpiration(data.expirationDate || null);
+      setOcrDetectedName(data.fullName || null);
+      setLicenseOcrMessage('تم فحص وقراءة رخصة القيادة بنجاح (الوثيقة صالحة وسارية المفعول)');
+
+      // Auto-populate manual fields if not already filled so user can review and proceed immediately
+      if (data.licenseNumber && !licenseNumber.trim()) {
+        setLicenseNumber(data.licenseNumber);
       }
+      if (data.expirationDate && !licenseExpiration) {
+        setLicenseExpiration(data.expirationDate);
+      }
+
+      if (errorMsg && (errorMsg.includes('رخصة') || errorMsg.includes('الوثيقة'))) {
+        setErrorMsg(null);
+      }
+    } catch (e: any) {
+      setOcrDocumentValid(false);
+      const err = 'تعذر التحقق من رخصة القيادة. يرجى التأكد من وضوح الصورة والمحاولة مجدداً.';
+      setOcrError(err);
+      setErrorMsg(err);
     } finally {
       setIsScanningLicense(false);
     }
@@ -258,10 +391,26 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     }
   };
 
-  // Face Camera (Direct Native OS Camera Trigger)
+  // Face Camera (Live in-app stream with real-time pose detector, with fallback to Native OS Camera)
   const startFaceCamera = () => {
-    handleLaunchNativeFaceCamera();
+    setErrorMsg(null);
+    setFacePoseWarning(null);
+    setIsFaceCameraActive(true);
   };
+
+  useEffect(() => {
+    if (isFaceCameraActive && faceVideoRef.current && !faceStreamRef.current) {
+      startNativeCameraStream(faceVideoRef.current, 'user')
+        .then((stream) => {
+          faceStreamRef.current = stream;
+        })
+        .catch((err) => {
+          console.warn('[Face Camera] WebRTC live stream failed, using native device camera:', err);
+          setIsFaceCameraActive(false);
+          handleLaunchNativeFaceCamera();
+        });
+    }
+  }, [isFaceCameraActive]);
 
   const captureFaceFromVideo = () => {
     if (faceVideoRef.current) {
@@ -362,8 +511,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setErrorMsg(t.facePhotoRequired);
         return;
       }
-      if (facePoseValid === false) {
-        setErrorMsg('يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
+      if (facePoseValid !== true) {
+        setErrorMsg(facePoseWarning || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
         return;
       }
     }
@@ -392,25 +541,81 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
     }
 
-    // Step 4 Check: License front image & Expiration
+    // Step 4 Check: Strict Document Forensics & Mandatory Manual Input Cross-Check
     if (currentStep === 4) {
       if (!licenseFront) {
+        setErrorMsg('تصوير أو رفع رخصة السياقة إلزامي للمتابعة.');
+        return;
+      }
+      if (isScanningLicense) {
+        setErrorMsg('جاري فحص رخصة القيادة بالذكاء الاصطناعي، يرجى الانتظار ثوانٍ معدودة.');
+        return;
+      }
+      if (ocrDocumentValid === false || ocrError) {
         setErrorMsg(
-          lang === 'ar'
-            ? 'تصوير أو رفع رخصة السياقة إلزامي للمتابعة.'
-            : 'Driving license image is required to proceed.'
+          ocrError ||
+          'الصورة الملتقطة مظلمة أو غير مقروءة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير بوضوح في مكان جيد الإضاءة.'
         );
         return;
       }
-      if (licenseExpired) {
+
+      // Mandatory manual inputs by the driver (auto-populate from OCR if available and empty):
+      let activeNum = licenseNumber.trim();
+      if (!activeNum && ocrDetectedNumber) {
+        activeNum = ocrDetectedNumber.trim();
+        setLicenseNumber(activeNum);
+      }
+      let activeExp = licenseExpiration;
+      if (!activeExp && ocrDetectedExpiration) {
+        activeExp = ocrDetectedExpiration;
+        setLicenseExpiration(activeExp);
+      }
+
+      if (!activeNum) {
+        setErrorMsg('يرجى كتابة رقم رخصة القيادة يدوياً للمطابقة مع الوثيقة.');
+        return;
+      }
+      if (!activeExp) {
+        setErrorMsg('يرجى تحديد تاريخ انتهاء صلاحية رخصة القيادة يدوياً.');
+        return;
+      }
+
+      // 1. Expiry check on date
+      const expDate = new Date(activeExp);
+      const curDate = new Date('2026-10-01');
+      if (isNaN(expDate.getTime()) || expDate < curDate) {
+        setLicenseExpired(true);
         setErrorMsg('رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل');
         return;
       }
-      if (!licenseNumber.trim()) {
-        setLicenseNumber(`16/2026/${Math.floor(100000 + Math.random() * 900000)}`);
+
+      // 2. Cross-check driver's manual expiry date with document OCR
+      if (ocrDetectedExpiration) {
+        const ocrExp = new Date(ocrDetectedExpiration);
+        if (!isNaN(ocrExp.getTime())) {
+          if (Math.abs(expDate.getFullYear() - ocrExp.getFullYear()) > 1) {
+            setErrorMsg(
+              `تاريخ الانتهاء المدخل (${licenseExpiration}) لا يتطابق مع التاريخ المقروء من الوثيقة (${ocrDetectedExpiration}). يرجى التأكد من كتابة التاريخ المسجل على الرخصة بدقة.`
+            );
+            return;
+          }
+        }
       }
-      if (!licenseExpiration) {
-        setLicenseExpiration('2030-12-31');
+
+      // 3. Cross-check driver's manual license number with document OCR
+      if (ocrDetectedNumber) {
+        const cleanManual = licenseNumber.replace(/[\s\-\/\.]/g, '');
+        const cleanOcr = ocrDetectedNumber.replace(/[\s\-\/\.]/g, '');
+        const digitsManual = cleanManual.replace(/\D/g, '');
+        const digitsOcr = cleanOcr.replace(/\D/g, '');
+        if (digitsManual.length >= 4 && digitsOcr.length >= 4) {
+          if (!digitsManual.includes(digitsOcr) && !digitsOcr.includes(digitsManual)) {
+            setErrorMsg(
+              `رقم الرخصة المدخل (${licenseNumber}) لا يتطابق مع الرقم المستخرج من وثيقة رخصة القيادة (${ocrDetectedNumber}). يرجى مراجعة الرقم المكتوب.`
+            );
+            return;
+          }
+        }
       }
     }
 
@@ -438,8 +643,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         phone: phone.trim(),
         phoneVerified: isPhoneVerified,
         email: driverEmail.trim() || undefined,
-        licenseNumber: licenseNumber.trim() || `16/2026/${Math.floor(100000 + Math.random() * 900000)}`,
-        licenseExpirationDate: licenseExpiration || '2030-12-31',
+        licenseNumber: licenseNumber.trim(),
+        licenseExpirationDate: licenseExpiration,
         licenseFrontUrl: licenseFront || '',
         licenseBackUrl: licenseBack || '',
         vehicleType,
@@ -473,47 +678,51 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md overflow-y-auto">
-      <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 shadow-2xl text-slate-100 my-auto relative">
-        {/* Wizard Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
-          <div className="flex items-center gap-2.5">
-            <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-            <h3 className="font-black text-sm sm:text-base text-white font-['Cairo']">
-              {t.driverWizardTitle}
-            </h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 backdrop-blur-md overflow-hidden">
+      <div className="w-full max-w-lg max-h-[92vh] flex flex-col bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl text-slate-100 my-auto relative overflow-hidden">
+        {/* Wizard Header (Fixed top) */}
+        <div className="shrink-0 p-4 sm:p-5 pb-3 border-b border-slate-800">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2.5">
+              <span className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
+              <h3 className="font-black text-sm sm:text-base text-white font-['Cairo']">
+                {t.driverWizardTitle}
+              </h3>
+            </div>
+            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+              {currentStep} / 5
+            </span>
           </div>
-          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            {currentStep} / 5
-          </span>
+
+          {/* Stepper progress indicator */}
+          <div className="grid grid-cols-5 gap-1.5">
+            {[1, 2, 3, 4, 5].map((step) => (
+              <div
+                key={step}
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  step === currentStep
+                    ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50'
+                    : step < currentStep
+                    ? 'bg-emerald-700/60'
+                    : 'bg-slate-800'
+                }`}
+              />
+            ))}
+          </div>
+
+          {/* Error notification */}
+          {errorMsg && (
+            <div className="mt-3 p-2.5 rounded-xl bg-red-950/60 border border-red-800/80 text-red-200 text-xs flex items-center gap-2">
+              <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
         </div>
 
-        {/* Stepper progress indicator */}
-        <div className="grid grid-cols-5 gap-1.5 mb-5">
-          {[1, 2, 3, 4, 5].map((step) => (
-            <div
-              key={step}
-              className={`h-1.5 rounded-full transition-all duration-300 ${
-                step === currentStep
-                  ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50'
-                  : step < currentStep
-                  ? 'bg-emerald-700/60'
-                  : 'bg-slate-800'
-              }`}
-            />
-          ))}
-        </div>
-
-        {/* Error notification */}
-        {errorMsg && (
-          <div className="mb-4 p-3 rounded-xl bg-red-950/60 border border-red-800/80 text-red-200 text-xs flex items-center gap-2">
-            <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
-            <span>{errorMsg}</span>
-          </div>
-        )}
-
-        {/* STEP 1: Live Face Photo (Confidential Biometric) & Public Avatar (Separate & Optional) */}
-        {currentStep === 1 && (
+        {/* Wizard Scrollable Content Body */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4 space-y-4">
+          {/* STEP 1: Live Face Photo (Confidential Biometric) & Public Avatar (Separate & Optional) */}
+          {currentStep === 1 && (
           <div className="space-y-4">
             <div className="text-center">
               <h4 className="font-bold text-base text-white">{t.step1Title}</h4>
@@ -600,13 +809,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
                 {isFaceCameraActive ? (
                   <div className="flex flex-col gap-2 w-full max-w-xs items-center mt-3">
+                    {livePoseWarning && (
+                      <div className="w-full p-2.5 rounded-xl bg-red-950/80 border-2 border-red-500 text-red-200 text-xs font-bold flex items-center justify-center gap-1.5 animate-pulse text-center">
+                        <AlertTriangle size={15} className="text-red-400 shrink-0" />
+                        <span>{livePoseWarning}</span>
+                      </div>
+                    )}
                     <button
                       type="button"
                       onClick={captureFaceFromVideo}
-                      className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs shadow-lg shadow-emerald-500/20 transition flex items-center justify-center gap-2 cursor-pointer"
+                      disabled={!!livePoseWarning}
+                      className={`w-full py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer ${
+                        livePoseWarning
+                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                          : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20 active:scale-95'
+                      }`}
                     >
                       <Camera size={16} />
-                      <span>{t.captureNow}</span>
+                      <span>{livePoseWarning ? 'اضبط استقامة الوجه للالتقاط' : t.captureNow}</span>
                     </button>
                     <button
                       type="button"
@@ -931,61 +1151,101 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
             {/* AI OCR Scanner & Expiration Status Alert */}
             {isScanningLicense && (
-              <div className="p-3 rounded-2xl bg-blue-950/40 border border-blue-500/30 text-blue-300 text-xs flex items-center justify-center gap-2 animate-pulse">
-                <RefreshCw size={15} className="animate-spin text-blue-400" />
-                <span className="font-bold">جاري الفحص الذكي للرخصة واستخراج تاريخ الانتهاء (OCR)...</span>
+              <div className="p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/30 text-blue-300 text-xs flex items-center justify-center gap-2 animate-pulse">
+                <RefreshCw size={16} className="animate-spin text-blue-400" />
+                <span className="font-bold">جاري الفحص الذكي للرخصة والتحقق من صحة الوثيقة وتاريخ الانتهاء...</span>
               </div>
             )}
 
-            {licenseExpired && (
-              <div className="p-3.5 rounded-2xl bg-red-950/70 border-2 border-red-500 text-red-200 text-xs flex items-center gap-3 animate-bounce shadow-lg shadow-red-500/20">
-                <XCircle size={22} className="text-red-400 flex-shrink-0" />
-                <div>
-                  <p className="font-black text-sm text-red-300">رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل</p>
-                  <p className="text-[11px] text-red-200/90 mt-0.5">
-                    تاريخ الانتهاء المسجل ({licenseExpiration}) غير سارٍ. يُشترط تقديم رخصة سارية المفعول لتفعيل حساب السائق.
+            {/* Error rejection alert (dark, blurry, not a license, or expired) */}
+            {ocrError && !isScanningLicense && (
+              <div className="p-3.5 rounded-2xl bg-red-950/70 border-2 border-red-500 text-red-200 text-xs flex items-start gap-3 shadow-lg shadow-red-500/20">
+                <XCircle size={22} className="text-red-400 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-black text-sm text-red-300">فحص الوثيقة مرفوض ✕</p>
+                  <p className="text-[11px] text-red-200/90 mt-1 leading-relaxed">
+                    {ocrError}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => openLicenseLiveScanner('front')}
+                    className="mt-2.5 px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow active:scale-95"
+                  >
+                    <RefreshCw size={12} />
+                    <span>إعادة تصوير رخصة القيادة بوضوح</span>
+                  </button>
                 </div>
               </div>
             )}
 
-            {!isScanningLicense && !licenseExpired && licenseFront && (
-              <div className="p-2.5 rounded-2xl bg-emerald-950/50 border border-emerald-500 text-emerald-300 text-xs flex items-center justify-center gap-2">
-                <CheckCircle2 size={16} className="text-emerald-400 flex-shrink-0" />
-                <span className="font-bold">
-                  {licenseOcrMessage || '✅ تم التحقق: رخصة القيادة سارية المفعول ومؤكدة'}
-                </span>
+            {/* Legitimate Verified Document Card */}
+            {!isScanningLicense && !ocrError && ocrDocumentValid === true && !licenseExpired && licenseFront && (
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs space-y-2">
+                <div className="flex items-center gap-2 font-bold text-emerald-300">
+                  <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0" />
+                  <span>تم فحص وقراءة رخصة القيادة بنجاح (وثيقة معتمدة صالحة)</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-emerald-500/20 grid grid-cols-2 gap-2 text-[11px]">
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">الرقم المقروء من الوثيقة:</span>
+                    <strong className="font-mono text-white text-xs">{ocrDetectedNumber || 'مقروء'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">تاريخ الانتهاء المقروء:</span>
+                    <strong className="font-mono text-emerald-400 text-xs">{ocrDetectedExpiration || 'ساري'}</strong>
+                  </div>
+                </div>
               </div>
             )}
 
-            {/* License Number & Expiration */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  {t.licenseNumber} *
-                </label>
-                <input
-                  type="text"
-                  value={licenseNumber}
-                  onChange={(e) => setLicenseNumber(e.target.value)}
-                  placeholder="مثال: 16/2021/123456"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono focus:border-emerald-500"
-                />
+            {/* Mandatory Manual Input Section & Cross-Check Notice */}
+            <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <FileText size={15} className="text-emerald-400" />
+                  <span>إدخال بيانات الرخصة يدوياً (إلزامي للمطابقة الأمنية)</span>
+                </span>
+                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-bold">
+                  مطابقة أمنية
+                </span>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
-                  <span>{t.licenseExpiration} *</span>
-                  {licenseExpired && <span className="text-[10px] text-red-400 font-bold">منتهية!</span>}
-                </label>
-                <input
-                  type="date"
-                  value={licenseExpiration}
-                  onChange={(e) => handleExpirationDateChange(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-xl bg-slate-950 border ${
-                    licenseExpired ? 'border-red-500 text-red-300 focus:border-red-500' : 'border-slate-700 text-white focus:border-emerald-500'
-                  } text-xs transition`}
-                />
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    رقم رخصة القيادة *
+                  </label>
+                  <input
+                    type="text"
+                    value={licenseNumber}
+                    onChange={(e) => {
+                      setLicenseNumber(e.target.value);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    placeholder="مثال: 16/2021/123456"
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:border-emerald-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                    <span>تاريخ انتهاء الصلاحية *</span>
+                    {licenseExpired && <span className="text-[10px] text-red-400 font-bold">منتهية!</span>}
+                  </label>
+                  <input
+                    type="date"
+                    value={licenseExpiration}
+                    onChange={(e) => handleExpirationDateChange(e.target.value)}
+                    className={`w-full px-3 py-2.5 rounded-xl bg-slate-900 border ${
+                      licenseExpired ? 'border-red-500 text-red-300 focus:border-red-500' : 'border-slate-700 text-white focus:border-emerald-500'
+                    } text-xs transition`}
+                    required
+                  />
+                </div>
               </div>
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                يجب كتابة رقم الرخصة وتاريخ انتهائها كما هو مدون على الوثيقة تماماً. يقوم النظام بمطابقة إدخالك يدوياً مع فحص الذكاء الاصطناعي لمنع التزوير.
+              </p>
             </div>
 
             {/* Hidden File Inputs for Device Image Upload */}
@@ -1235,9 +1495,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             </div>
           </div>
         )}
+        </div>
 
-        {/* Wizard Footer Controls */}
-        <div className="flex items-center justify-between pt-5 mt-5 border-t border-slate-800">
+        {/* Wizard Footer Controls (Sticky pinned at bottom so it NEVER disappears) */}
+        <div className="shrink-0 sticky bottom-0 bg-slate-900/98 backdrop-blur-md px-4 sm:px-5 py-3 border-t border-slate-800 flex items-center justify-between z-20">
           {currentStep > 1 ? (
             <button
               type="button"
@@ -1258,21 +1519,35 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           )}
 
           {/* Status info in Step 4 */}
-          {currentStep === 4 && licenseExpired && (
-            <div className="text-[11px] text-red-400 font-bold px-3 py-1.5 rounded-xl bg-red-950/60 border border-red-500/40 flex items-center gap-1.5 animate-pulse">
+          {currentStep === 4 && isScanningLicense && (
+            <div className="text-[11px] text-blue-400 font-bold px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center gap-1.5 animate-pulse">
+              <RefreshCw size={13} className="animate-spin" />
+              <span>جاري الفحص (OCR)...</span>
+            </div>
+          )}
+
+          {currentStep === 4 && !isScanningLicense && licenseExpired && (
+            <div className="text-[11px] text-red-400 font-bold px-3 py-1.5 rounded-xl bg-red-950/60 border border-red-500/40 flex items-center gap-1.5">
               <AlertCircle size={14} />
               <span>رخصة منتهية الصلاحية ✕</span>
             </div>
           )}
 
-          {currentStep === 4 && !licenseFront && (
+          {currentStep === 4 && !isScanningLicense && !licenseExpired && (ocrDocumentValid === false || ocrError) && (
+            <div className="text-[11px] text-red-400 font-bold px-3 py-1.5 rounded-xl bg-red-950/60 border border-red-500/40 flex items-center gap-1.5">
+              <XCircle size={14} />
+              <span>رخصة غير مقروءة ✕</span>
+            </div>
+          )}
+
+          {currentStep === 4 && !licenseFront && !isScanningLicense && (
             <div className="text-[11px] text-amber-400 font-bold px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
               <Camera size={13} />
               <span>صورة الرخصة مطلوبة</span>
             </div>
           )}
 
-          {currentStep === 4 && licenseFront && !licenseExpired && (
+          {currentStep === 4 && !isScanningLicense && licenseFront && ocrDocumentValid === true && !licenseExpired && !ocrError && (
             <div className="text-[11px] text-emerald-400 font-bold px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
               <CheckCircle2 size={13} />
               <span>الرخصة جاهزة وسارية ✓</span>
@@ -1291,14 +1566,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             id="btn-driver-wizard-next"
             onClick={handleNextStep}
             disabled={
-              (currentStep === 1 && (!facePhoto || facePoseValid === false || isCheckingPose)) ||
+              (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
-              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense))
+              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false))
             }
             className={`px-6 py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
-              (currentStep === 1 && (!facePhoto || facePoseValid === false || isCheckingPose)) ||
+              (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
-              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense))
+              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false))
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 border border-slate-700'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20 active:scale-95'
             }`}

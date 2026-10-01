@@ -666,6 +666,7 @@ Criteria:
 1. Is there a human face clearly visible?
 2. Face orientation check: The driver must be directly facing the camera in a centered frontal pose (matching passport / ID photo standards).
 3. If the head is tilted, turned sideways (profile view left or right), looking away, or not facing the camera straight-on, the pose is INVALID.
+4. If the image is dark, pitch black, blank, or has no face, set "isValidPose": false and "pose": "no_face".
 
 Respond ONLY with a JSON object in this format:
 {
@@ -701,23 +702,26 @@ Respond ONLY with a JSON object in this format:
       }
 
       if (resultJson) {
-        const isValid = resultJson.isValidPose === true;
+        const isValid = resultJson.isValidPose === true && resultJson.pose === 'frontal_centered';
         return res.json({
-          success: true,
+          success: isValid,
           isValidPose: isValid,
-          pose: resultJson.pose || (isValid ? 'frontal_centered' : 'turned_sideways'),
+          pose: resultJson.pose || (isValid ? 'frontal_centered' : 'no_face'),
           warning: isValid
             ? null
-            : (resultJson.warning || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً'),
+            : (resultJson.warning ||
+               (resultJson.pose === 'no_face'
+                 ? 'لم يتم التعرف على وجه واضح في الصورة. يرجى التقاط صورة سيلفي في إضاءة جيدة ومواجهة الكاميرا مباشرة.'
+                 : 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً')),
         });
       }
 
-      // Safe fallback if AI service is temporarily offline
-      return res.json({
-        success: true,
-        isValidPose: true,
-        pose: 'frontal_centered',
-        warning: null,
+      // If AI fails or returns empty, do NOT provide fake success
+      return res.status(400).json({
+        success: false,
+        isValidPose: false,
+        pose: 'no_face',
+        warning: 'الصورة الملتقطة مظلمة أو غير مقروءة. يرجى التأكد من وضوح الإضاءة ومواجهة الكاميرا مباشرة.',
       });
     } catch (err: any) {
       console.error('[API /api/driver/verify-face] Error:', err);
@@ -726,7 +730,7 @@ Respond ONLY with a JSON object in this format:
   });
 
   // -------------------------------------------------------------------------
-  // 6. API: DRIVER LICENSE OCR & EXPIRY DATE VERIFICATION
+  // 6. API: DRIVER LICENSE OCR & REAL DOCUMENT FORENSICS (NO FAKE / DUMMY VALIDATION)
   // -------------------------------------------------------------------------
   app.post('/api/driver/ocr-license', async (req: Request, res: Response) => {
     try {
@@ -738,24 +742,40 @@ Respond ONLY with a JSON object in this format:
       const { mimeType, data } = parseBase64(image);
       const currentDateStr = '2026-10-01';
 
-      const prompt = `You are an expert OCR document scanner for Algerian Driver's Licenses (رخصة السياقة الجزائرية / Permis de conduire algérien).
-Scan this driver's license image carefully.
-The current reference date is October 1, 2026 (${currentDateStr}).
+      if (!data || data.length < 150) {
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          isExpired: false,
+          error: 'الصورة الملتقطة فارغة أو تالفة. يرجى التقاط صورة واضحة لرخصة القيادة.',
+        });
+      }
 
-Extract:
-1. License Number ("رقم الرخصة" / "N° de permis" or standard format like 16/2021/123456 or digits).
-2. Expiration Date ("تاريخ الانتهاء" / "Expire le" / "Fin de validité" / "Date d'expiration") in YYYY-MM-DD format.
-3. Compare the extracted expiration date with ${currentDateStr}:
-   - If expiration date is strictly before ${currentDateStr}, set isExpired = true.
-   - If expiration date is on or after ${currentDateStr}, set isExpired = false.
+      const prompt = `You are a strict, forensic document validation and OCR engine for Algerian Driver's Licenses (رخصة السياقة الجزائرية / Permis de conduire algérien).
+Inspect this image with extreme scrutiny.
+Current reference date: October 1, 2026 (${currentDateStr}).
 
-Respond ONLY with a JSON object:
+CRITICAL VALIDATION RULES:
+1. "isValidDocument": Check if the image contains an authentic Algerian driver's license (or temporary driver permit).
+   - If the image is pitch dark, black, blank, extremely blurry, an object, furniture, a selfie, a landscape, or NOT a driver's license, set "isValidDocument": false.
+   - Only set "isValidDocument": true if it is an actual driver's license with legible text.
+2. "rejectionReason": If invalid, specify: "too_dark" | "too_blurry" | "not_a_license" | "unreadable".
+3. "rejectionMessage": In Arabic, e.g. "الصورة الملتقطة مظلمة جداً أو غير واضحة. يرجى إعادة التصوير في مكان جيد الإضاءة."
+4. If and only if it is a genuine, legible document:
+   - "licenseNumber": The actual official license number visible on the card (or null if unreadable).
+   - "expirationDate": The expiration date ("تاريخ الانتهاء" / "Expire le") in YYYY-MM-DD format (or null).
+   - "isExpired": true if expirationDate is before ${currentDateStr}, false otherwise.
+   - "fullName": The driver name if visible.
+
+Respond ONLY with valid JSON:
 {
-  "licenseNumber": string,
-  "expirationDate": "YYYY-MM-DD",
+  "isValidDocument": boolean,
+  "rejectionReason": string | null,
+  "rejectionMessage": string | null,
+  "licenseNumber": string | null,
+  "expirationDate": string | null,
   "isExpired": boolean,
-  "confidence": number,
-  "notes": string
+  "fullName": string | null
 }`;
 
       let ocrResult: any = null;
@@ -783,9 +803,20 @@ Respond ONLY with a JSON object:
         console.warn('[License OCR AI Notice]:', aiErr);
       }
 
-      let isExpired = false;
-      let licenseNumber = ocrResult?.licenseNumber || '';
-      let expirationDate = ocrResult?.expirationDate || '';
+      // REAL VALIDATION CHECK: Never pass invalid, dark, blurry, or non-license images!
+      if (!ocrResult || !ocrResult.isValidDocument || !ocrResult.licenseNumber) {
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          isExpired: false,
+          error:
+            ocrResult?.rejectionMessage ||
+            'الصورة الملتقطة مظلمة أو غير واضحة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير بوضوح في مكان جيد الإضاءة.',
+        });
+      }
+
+      let isExpired = ocrResult.isExpired === true;
+      let expirationDate = ocrResult.expirationDate;
 
       if (expirationDate) {
         const expDate = new Date(expirationDate);
@@ -795,15 +826,12 @@ Respond ONLY with a JSON object:
         }
       }
 
-      if (ocrResult?.isExpired === true) {
-        isExpired = true;
-      }
-
       if (isExpired) {
-        return res.json({
+        return res.status(400).json({
           success: false,
+          isValidDocument: true,
           isExpired: true,
-          licenseNumber,
+          licenseNumber: ocrResult.licenseNumber,
           expirationDate,
           error: 'رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل',
         });
@@ -811,10 +839,12 @@ Respond ONLY with a JSON object:
 
       return res.json({
         success: true,
+        isValidDocument: true,
         isExpired: false,
-        licenseNumber: licenseNumber || `16/2026/${Math.floor(100000 + Math.random() * 900000)}`,
-        expirationDate: expirationDate || '2030-12-31',
-        message: 'رخصة القيادة سارية المفعول ومؤكدة بنجاح',
+        licenseNumber: ocrResult.licenseNumber,
+        expirationDate,
+        fullName: ocrResult.fullName,
+        message: 'تم فحص وقراءة رخصة القيادة بنجاح (الوثيقة صالحة وسارية المفعول)',
       });
     } catch (err: any) {
       console.error('[API /api/driver/ocr-license] Error:', err);
