@@ -655,20 +655,39 @@ async function startServer() {
     try {
       const { image } = req.body;
       if (!image) {
-        return res.status(400).json({ error: 'صورة السيلفي مطلوبة للتحقق' });
+        return res.status(400).json({
+          success: false,
+          isValidPose: false,
+          pose: 'no_face',
+          warning: 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة',
+        });
       }
 
       const { mimeType, data } = parseBase64(image);
 
-      const prompt = `You are a biometric facial pose and orientation analysis expert for Algerian driver registration.
-Analyze the human face in this selfie photo strictly.
-Criteria:
-1. Is there a human face clearly visible?
-2. Face orientation check: The driver must be directly facing the camera in a centered frontal pose (matching passport / ID photo standards).
-3. If the head is tilted, turned sideways (profile view left or right), looking away, or not facing the camera straight-on, the pose is INVALID.
-4. If the image is dark, pitch black, blank, or has no face, set "isValidPose": false and "pose": "no_face".
+      // Early byte-level rejection for empty, corrupt, or tiny payloads
+      if (!data || data.length < 250) {
+        return res.status(400).json({
+          success: false,
+          isValidPose: false,
+          pose: 'no_face',
+          warning: 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة',
+        });
+      }
 
-Respond ONLY with a JSON object in this format:
+      const prompt = `You are a strict computer vision and biometric face-verification security inspector for driver onboarding.
+Examine this image with extreme scrutiny.
+
+STRICT VALIDATION CRITERIA:
+1. "isValidPose": TRUE ONLY IF all the following conditions are strictly met:
+   - There is a genuine, clearly visible, well-lit human face in the frame.
+   - The person is looking directly at the camera in a centered frontal pose (matching official passport/ID standards).
+2. IMMEDIATE REJECTION (set "isValidPose": false):
+   - The image is a wall, ceiling, floor, cloth, furniture, dark surface, landscape, document, or non-face object -> set "pose": "no_face", "warning": "لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة".
+   - The image is dark, pitch black, blurry, underexposed, or covered -> set "pose": "no_face", "warning": "لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة".
+   - The head is tilted, looking away, turned sideways (left or right profile view) -> set "pose": "turned_sideways" or "tilted", "warning": "يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً".
+
+Respond ONLY with valid JSON:
 {
   "isValidPose": boolean,
   "pose": "frontal_centered" | "turned_sideways" | "tilted" | "no_face",
@@ -703,29 +722,43 @@ Respond ONLY with a JSON object in this format:
 
       if (resultJson) {
         const isValid = resultJson.isValidPose === true && resultJson.pose === 'frontal_centered';
-        return res.json({
-          success: isValid,
-          isValidPose: isValid,
-          pose: resultJson.pose || (isValid ? 'frontal_centered' : 'no_face'),
-          warning: isValid
-            ? null
-            : (resultJson.warning ||
-               (resultJson.pose === 'no_face'
-                 ? 'لم يتم التعرف على وجه واضح في الصورة. يرجى التقاط صورة سيلفي في إضاءة جيدة ومواجهة الكاميرا مباشرة.'
-                 : 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً')),
+        if (isValid) {
+          return res.json({
+            success: true,
+            isValidPose: true,
+            pose: 'frontal_centered',
+            warning: null,
+          });
+        }
+
+        const rejectionWarning =
+          resultJson.warning ||
+          (resultJson.pose === 'no_face'
+            ? 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة'
+            : 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
+
+        return res.status(400).json({
+          success: false,
+          isValidPose: false,
+          pose: resultJson.pose || 'no_face',
+          warning: rejectionWarning,
         });
       }
 
-      // If AI fails or returns empty, do NOT provide fake success
+      // If AI fails or returns empty, strictly reject:
       return res.status(400).json({
         success: false,
         isValidPose: false,
         pose: 'no_face',
-        warning: 'الصورة الملتقطة مظلمة أو غير مقروءة. يرجى التأكد من وضوح الإضاءة ومواجهة الكاميرا مباشرة.',
+        warning: 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة',
       });
     } catch (err: any) {
       console.error('[API /api/driver/verify-face] Error:', err);
-      return res.status(500).json({ error: err.message || 'فشل فحص وضعية الوجه' });
+      return res.status(500).json({
+        success: false,
+        isValidPose: false,
+        warning: 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة',
+      });
     }
   });
 

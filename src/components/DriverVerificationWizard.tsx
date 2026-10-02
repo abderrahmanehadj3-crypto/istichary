@@ -28,6 +28,7 @@ import {
   captureFrameFromVideo,
   launchNativeDeviceCamera,
 } from '../utils/nativeCameraBridge';
+import { analyzeFaceBiometrics } from '../utils/faceBiometricsCV';
 import { saveDriverVerification } from '../utils/supabaseSync';
 
 interface DriverVerificationWizardProps {
@@ -61,10 +62,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceStreamRef = useRef<MediaStream | null>(null);
 
-  // AI Face Pose Verification State
-  const [facePoseValid, setFacePoseValid] = useState<boolean | null>(
-    currentUser.driverDetails?.facePhotoUrl ? true : null
-  );
+  // AI Face Pose Verification State (Strict Zero-Mock: always false until verified by computer vision)
+  const [facePoseValid, setFacePoseValid] = useState<boolean>(false);
   const [facePoseWarning, setFacePoseWarning] = useState<string | null>(null);
   const [livePoseWarning, setLivePoseWarning] = useState<string | null>(null);
   const [isCheckingPose, setIsCheckingPose] = useState<boolean>(false);
@@ -174,76 +173,54 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsLicenseScannerOpen(false);
   };
 
-  // Real-time live video face orientation & symmetry monitor
+  // Real-time live video face orientation & computer vision monitor
   useEffect(() => {
     if (!isFaceCameraActive) {
       setLivePoseWarning(null);
       return;
     }
 
-    const intervalId = setInterval(() => {
+    const intervalId = setInterval(async () => {
       const video = faceVideoRef.current;
       if (!video || video.readyState < 2 || !video.videoWidth) return;
 
       try {
-        const offCanvas = document.createElement('canvas');
-        offCanvas.width = 160;
-        offCanvas.height = 160;
-        const ctx = offCanvas.getContext('2d');
-        if (!ctx) return;
-
-        ctx.drawImage(video, 0, 0, 160, 160);
-        const imgData = ctx.getImageData(0, 0, 160, 160);
-        const data = imgData.data;
-
-        let leftLum = 0;
-        let rightLum = 0;
-        let leftCount = 0;
-        let rightCount = 0;
-        let totalLum = 0;
-
-        for (let y = 30; y < 130; y++) {
-          for (let x = 20; x < 140; x++) {
-            const idx = (y * 160 + x) * 4;
-            const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-            totalLum += lum;
-
-            if (x < 70) {
-              leftLum += lum;
-              leftCount++;
-            } else if (x > 90) {
-              rightLum += lum;
-              rightCount++;
-            }
-          }
-        }
-
-        const avgLum = totalLum / (100 * 120);
-        if (avgLum < 28) {
-          setLivePoseWarning('الإضاءة ضعيفة جداً. يرجى الوقوف في مكان جيد الإضاءة.');
-          return;
-        }
-
-        const avgLeft = leftCount > 0 ? leftLum / leftCount : 0;
-        const avgRight = rightCount > 0 ? rightLum / rightCount : 0;
-        const asymmetry = Math.abs(avgLeft - avgRight) / Math.max(avgLeft, avgRight, 1);
-
-        // If face is turned sideways into a profile view or cast in strong lateral shadow:
-        if (asymmetry > 0.42) {
-          setLivePoseWarning('يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
+        const cv = await analyzeFaceBiometrics(video);
+        if (!cv.faceDetected) {
+          setLivePoseWarning('لم يتم اكتشاف وجه بوضوح، يرجى الوقوف أمام الكاميرا في إضاءة جيدة');
+        } else if (!cv.isValidPose) {
+          setLivePoseWarning(cv.errorMessage || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
         } else {
           setLivePoseWarning(null);
         }
       } catch (err) {}
-    }, 400);
+    }, 450);
 
     return () => clearInterval(intervalId);
   }, [isFaceCameraActive]);
 
-  // AI Face Pose Verification (Ensures frontal centered pose, blocks sideways / tilted)
-  const verifyFacePose = async (photoDataUrl: string) => {
+  // Real Computer Vision & Biometric Facial Verification (Strict Zero-Mock)
+  const verifyFacePose = async (photoDataUrl: string): Promise<boolean> => {
     setIsCheckingPose(true);
+    setFacePoseValid(false);
     setFacePoseWarning(null);
+
+    // 1. Strict Client-Side Computer Vision Analysis (Pixel, Bounding Box, Lighting, Clarity, Symmetry)
+    try {
+      const cvResult = await analyzeFaceBiometrics(photoDataUrl);
+      if (!cvResult.isValid || !cvResult.faceDetected || !cvResult.isValidPose) {
+        setFacePoseValid(false);
+        const warn = cvResult.errorMessage || 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة';
+        setFacePoseWarning(warn);
+        setErrorMsg(warn);
+        setIsCheckingPose(false);
+        return false;
+      }
+    } catch (cvErr) {
+      console.warn('[Client CV Analysis Exception]:', cvErr);
+    }
+
+    // 2. Strict Server-Side Biometric Forensic Verification
     try {
       const res = await fetch('/api/driver/verify-face', {
         method: 'POST',
@@ -251,26 +228,30 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         body: JSON.stringify({ image: photoDataUrl }),
       });
       const data = await res.json().catch(() => null);
-      if (res.ok && data && data.isValidPose && data.success) {
+
+      if (res.ok && data?.success && data?.isValidPose) {
         setFacePoseValid(true);
         setFacePoseWarning(null);
-        if (errorMsg && (errorMsg.includes('الوجه') || errorMsg.includes('وضعية'))) {
+        if (errorMsg && (errorMsg.includes('الوجه') || errorMsg.includes('وضعية') || errorMsg.includes('اكتشاف'))) {
           setErrorMsg(null);
         }
+        return true;
       } else {
         setFacePoseValid(false);
         const warn =
           data?.warning ||
-          'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً';
+          'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة';
         setFacePoseWarning(warn);
         setErrorMsg(warn);
+        return false;
       }
     } catch (e) {
       console.warn('[Face verify notice]:', e);
       setFacePoseValid(false);
-      const warn = 'تعذر التحقق من وضعية الوجه. يرجى التأكد من وضوح الصورة ومواجهة الكاميرا مباشرة.';
+      const warn = 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة';
       setFacePoseWarning(warn);
       setErrorMsg(warn);
+      return false;
     } finally {
       setIsCheckingPose(false);
     }
@@ -412,12 +393,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     }
   }, [isFaceCameraActive]);
 
-  const captureFaceFromVideo = () => {
+  const captureFaceFromVideo = async () => {
     if (faceVideoRef.current) {
       try {
         const dataUrl = captureFrameFromVideo(faceVideoRef.current, 0.9, 'user');
         setFacePhoto(dataUrl);
-        verifyFacePose(dataUrl);
+        setFacePoseValid(false);
+        setFacePoseWarning(null);
+        await verifyFacePose(dataUrl);
       } catch (e) {
         console.error('Capture face error:', e);
       }
@@ -438,9 +421,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsFaceCameraActive(false);
     launchNativeDeviceCamera(
       'user',
-      (dataUrl) => {
+      async (dataUrl) => {
         setFacePhoto(dataUrl);
-        verifyFacePose(dataUrl);
+        setFacePoseValid(false);
+        setFacePoseWarning(null);
+        await verifyFacePose(dataUrl);
         setErrorMsg(null);
       },
       (errMsg) => {
@@ -788,13 +773,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   </div>
                 )}
 
-                {facePhoto && !isCheckingPose && facePoseValid === false && (
+                {facePhoto && !isCheckingPose && !facePoseValid && (
                   <div className="mt-3 p-3 rounded-xl bg-red-950/60 border-2 border-red-500 text-red-200 text-xs flex items-center gap-2.5 w-full max-w-sm animate-bounce">
                     <AlertTriangle size={18} className="text-red-400 flex-shrink-0" />
                     <div>
-                      <p className="font-black text-red-300">وضعية غير صحيحة ✕</p>
+                      <p className="font-black text-red-300">التحقق البيومتري مرفوض ✕</p>
                       <p className="text-[11px] text-red-200 mt-0.5 font-bold">
-                        {facePoseWarning || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً'}
+                        {facePoseWarning || 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة'}
                       </p>
                     </div>
                   </div>
@@ -1554,10 +1539,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             </div>
           )}
 
-          {currentStep === 1 && facePhoto && facePoseValid === false && (
+          {currentStep === 1 && isCheckingPose && (
+            <div className="text-[11px] text-blue-400 font-bold px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center gap-1.5 animate-pulse">
+              <RefreshCw size={13} className="animate-spin" />
+              <span>جاري الفحص البيومتري...</span>
+            </div>
+          )}
+
+          {currentStep === 1 && facePhoto && !facePoseValid && !isCheckingPose && (
             <div className="text-[11px] text-red-400 font-bold px-3 py-1.5 rounded-xl bg-red-950/60 border border-red-500/40 flex items-center gap-1.5 animate-pulse">
               <AlertTriangle size={14} />
-              <span>الوجه غير مستقيم ✕</span>
+              <span>صورة الوجه مرفوضة ✕</span>
+            </div>
+          )}
+
+          {currentStep === 1 && facePhoto && facePoseValid === true && !isCheckingPose && (
+            <div className="text-[11px] text-emerald-400 font-bold px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
+              <CheckCircle2 size={13} />
+              <span>الوجه مؤكد بيومترياً ✓</span>
             </div>
           )}
 
