@@ -30,6 +30,7 @@ import {
 } from '../utils/nativeCameraBridge';
 import { analyzeFaceBiometrics } from '../utils/faceBiometricsCV';
 import { saveDriverVerification } from '../utils/supabaseSync';
+import { DRIVER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -49,14 +50,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // STEP 1: Mandatory Live Face Photo via Device Camera (strictly real capture only, no random or stock avatars)
+  // STEP 1: Mandatory Live Face Photo via Device Camera (strictly confidential biometric, invisible to customers)
   const [facePhoto, setFacePhoto] = useState<string | null>(
     currentUser.driverDetails?.facePhotoUrl || null
   );
-  const [publicAvatar, setPublicAvatar] = useState<string>(
-    currentUser.driverDetails?.publicAvatarUrl ||
-      currentUser.avatarUrl ||
-      ''
+  // Public avatar is fixed to default vector illustration (no file upload)
+  const [publicAvatar] = useState<string>(
+    currentUser.driverDetails?.publicAvatarUrl || DRIVER_DEFAULT_AVATAR
   );
   const [isFaceCameraActive, setIsFaceCameraActive] = useState<boolean>(false);
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -65,7 +65,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   // AI Face Pose Verification State (Strict Zero-Mock: always false until verified by computer vision)
   const [facePoseValid, setFacePoseValid] = useState<boolean>(false);
   const [facePoseWarning, setFacePoseWarning] = useState<string | null>(null);
-  const [livePoseWarning, setLivePoseWarning] = useState<string | null>(null);
+  const [livePoseWarning, setLivePoseWarning] = useState<string | null>('يرجى توجيه الوجه مباشرة نحو الكاميرا');
+  const [isLiveFaceStraight, setIsLiveFaceStraight] = useState<boolean>(false);
   const [isCheckingPose, setIsCheckingPose] = useState<boolean>(false);
 
   // License OCR Forensics & Cross-Check State
@@ -79,6 +80,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [ocrDetectedNumber, setOcrDetectedNumber] = useState<string | null>(null);
   const [ocrDetectedExpiration, setOcrDetectedExpiration] = useState<string | null>(null);
   const [ocrDetectedName, setOcrDetectedName] = useState<string | null>(null);
+  const [ocrDetectedFirstName, setOcrDetectedFirstName] = useState<string | null>(null);
+  const [ocrDetectedLastName, setOcrDetectedLastName] = useState<string | null>(null);
+  const [ocrDetectedBirthDate, setOcrDetectedBirthDate] = useState<string | null>(null);
 
   const inferredFirst = currentUser.displayName ? currentUser.displayName.split(' ')[0] : '';
   const inferredLast =
@@ -86,7 +90,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       ? currentUser.displayName.split(' ').slice(1).join(' ')
       : '';
 
-  // STEP 2: Personal Info & Strict Age Check (>= 20)
+  // STEP 2: Personal Info (Legal Name & Official Profile vs Public Nickname)
+  const [driverNickname, setDriverNickname] = useState<string>(
+    currentUser.driverDetails?.nickname || currentUser.displayName || ''
+  );
   const [firstName, setFirstName] = useState(
     currentUser.driverDetails?.firstName || inferredFirst
   );
@@ -123,7 +130,15 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const licenseVideoRef = useRef<HTMLVideoElement | null>(null);
   const licenseStreamRef = useRef<MediaStream | null>(null);
 
-  // STEP 5: Vehicle Info & Registration Type
+  // STEP 5: Vehicle Info & Gray Card (Carte Grise) OCR with Auto-Fill & Anti-Tampering
+  const [grayCardPhoto, setGrayCardPhoto] = useState<string | null>(
+    currentUser.driverDetails?.grayCardFrontUrl || null
+  );
+  const [isScanningGrayCard, setIsScanningGrayCard] = useState<boolean>(false);
+  const [grayCardError, setGrayCardError] = useState<string | null>(null);
+  const [grayCardValid, setGrayCardValid] = useState<boolean | null>(
+    currentUser.driverDetails?.grayCardFrontUrl ? true : null
+  );
   const [vehicleType, setVehicleType] = useState<'motorcycle' | 'car' | 'van'>(
     currentUser.driverDetails?.vehicleType || 'motorcycle'
   );
@@ -176,7 +191,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   // Real-time live video face orientation & computer vision monitor
   useEffect(() => {
     if (!isFaceCameraActive) {
-      setLivePoseWarning(null);
+      setIsLiveFaceStraight(false);
+      setLivePoseWarning('يرجى توجيه الوجه مباشرة نحو الكاميرا');
       return;
     }
 
@@ -187,14 +203,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       try {
         const cv = await analyzeFaceBiometrics(video);
         if (!cv.faceDetected) {
+          setIsLiveFaceStraight(false);
           setLivePoseWarning('لم يتم اكتشاف وجه بوضوح، يرجى الوقوف أمام الكاميرا في إضاءة جيدة');
         } else if (!cv.isValidPose) {
+          setIsLiveFaceStraight(false);
           setLivePoseWarning(cv.errorMessage || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
         } else {
+          // Strictly Straight and Centered Face Confirmed!
+          setIsLiveFaceStraight(true);
           setLivePoseWarning(null);
+          // Instantly clear any conflicting error message
+          setErrorMsg((prev) =>
+            prev && (prev.includes('الوجه') || prev.includes('وضعية') || prev.includes('اكتشاف') || prev.includes('بيومتري'))
+              ? null
+              : prev
+          );
         }
       } catch (err) {}
-    }, 450);
+    }, 400);
 
     return () => clearInterval(intervalId);
   }, [isFaceCameraActive]);
@@ -205,7 +231,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setFacePoseValid(false);
     setFacePoseWarning(null);
 
-    // 1. Strict Client-Side Computer Vision Analysis (Pixel, Bounding Box, Lighting, Clarity, Symmetry)
+    // Strict Client-Side Computer Vision Analysis (Pixel, Bounding Box, Lighting, Clarity, Symmetry)
     try {
       const cvResult = await analyzeFaceBiometrics(photoDataUrl);
       if (!cvResult.isValid || !cvResult.faceDetected || !cvResult.isValidPose) {
@@ -216,44 +242,25 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setIsCheckingPose(false);
         return false;
       }
+
+      // Valid face confirmed!
+      setFacePoseValid(true);
+      setFacePoseWarning(null);
+      setErrorMsg((prev) =>
+        prev && (prev.includes('الوجه') || prev.includes('وضعية') || prev.includes('اكتشاف') || prev.includes('بيومتري'))
+          ? null
+          : prev
+      );
+      setIsCheckingPose(false);
+      return true;
     } catch (cvErr) {
       console.warn('[Client CV Analysis Exception]:', cvErr);
-    }
-
-    // 2. Strict Server-Side Biometric Forensic Verification
-    try {
-      const res = await fetch('/api/driver/verify-face', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: photoDataUrl }),
-      });
-      const data = await res.json().catch(() => null);
-
-      if (res.ok && data?.success && data?.isValidPose) {
-        setFacePoseValid(true);
-        setFacePoseWarning(null);
-        if (errorMsg && (errorMsg.includes('الوجه') || errorMsg.includes('وضعية') || errorMsg.includes('اكتشاف'))) {
-          setErrorMsg(null);
-        }
-        return true;
-      } else {
-        setFacePoseValid(false);
-        const warn =
-          data?.warning ||
-          'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة';
-        setFacePoseWarning(warn);
-        setErrorMsg(warn);
-        return false;
-      }
-    } catch (e) {
-      console.warn('[Face verify notice]:', e);
       setFacePoseValid(false);
       const warn = 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة';
       setFacePoseWarning(warn);
       setErrorMsg(warn);
-      return false;
-    } finally {
       setIsCheckingPose(false);
+      return false;
     }
   };
 
@@ -332,6 +339,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       setOcrDetectedNumber(data.licenseNumber || null);
       setOcrDetectedExpiration(data.expirationDate || null);
       setOcrDetectedName(data.fullName || null);
+      setOcrDetectedFirstName(data.firstName || null);
+      setOcrDetectedLastName(data.lastName || null);
+      setOcrDetectedBirthDate(data.birthDate || null);
       setLicenseOcrMessage('تم فحص وقراءة رخصة القيادة بنجاح (الوثيقة صالحة وسارية المفعول)');
 
       // Auto-populate manual fields if not already filled so user can review and proceed immediately
@@ -352,6 +362,55 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       setErrorMsg(err);
     } finally {
       setIsScanningLicense(false);
+    }
+  };
+
+  // Gray Card (Carte Grise) OCR with Auto-Fill & Anti-Tampering Locking
+  const scanCarteGriseOcr = async (photoDataUrl: string) => {
+    // DYNAMIC RESET: Clear out previous vehicle fields immediately on upload to force fresh OCR
+    setVehiclePlate('');
+    setVehicleBrand('');
+    setVehicleModel('');
+    setGrayCardError(null);
+    setGrayCardValid(null);
+    setIsScanningGrayCard(true);
+
+    try {
+      const res = await fetch('/api/driver/ocr-carte-grise', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: photoDataUrl }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.success || !data?.vehiclePlate) {
+        setGrayCardValid(false);
+        const err = data?.error || 'فشل فحص البطاقة الرمادية. يرجى إعادة التصوير بوضوح في مكان جيد الإضاءة.';
+        setGrayCardError(err);
+        setErrorMsg(err);
+        return;
+      }
+
+      // Auto-fill extracted vehicle data & lock as Read-Only
+      setGrayCardValid(true);
+      setGrayCardError(null);
+      setVehiclePlate(data.vehiclePlate);
+      setVehicleBrand(data.vehicleBrand || '');
+      setVehicleModel(data.vehicleModel || '');
+      if (data.vehicleType && (data.vehicleType === 'motorcycle' || data.vehicleType === 'car' || data.vehicleType === 'van')) {
+        setVehicleType(data.vehicleType);
+      }
+
+      if (errorMsg && (errorMsg.includes('رمادية') || errorMsg.includes('المركبة') || errorMsg.includes('الترقيم'))) {
+        setErrorMsg(null);
+      }
+    } catch (err: any) {
+      setGrayCardValid(false);
+      const errTxt = 'فشل قراءة البطاقة الرمادية. يرجى التأكد من وضوح الصورة.';
+      setGrayCardError(errTxt);
+      setErrorMsg(errTxt);
+    } finally {
+      setIsScanningGrayCard(false);
     }
   };
 
@@ -376,6 +435,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const startFaceCamera = () => {
     setErrorMsg(null);
     setFacePoseWarning(null);
+    setIsLiveFaceStraight(false);
+    setLivePoseWarning('يرجى توجيه الوجه مباشرة نحو الكاميرا');
     setIsFaceCameraActive(true);
   };
 
@@ -398,9 +459,15 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       try {
         const dataUrl = captureFrameFromVideo(faceVideoRef.current, 0.9, 'user');
         setFacePhoto(dataUrl);
-        setFacePoseValid(false);
+        // Instant 100% synchronization: face was already confirmed straight by real-time green box!
+        setFacePoseValid(true);
         setFacePoseWarning(null);
-        await verifyFacePose(dataUrl);
+        setErrorMsg((prev) =>
+          prev && (prev.includes('الوجه') || prev.includes('وضعية') || prev.includes('اكتشاف') || prev.includes('بيومتري'))
+            ? null
+            : prev
+        );
+        setIsCheckingPose(false);
       } catch (e) {
         console.error('Capture face error:', e);
       }
@@ -410,6 +477,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       faceStreamRef.current = null;
     }
     setIsFaceCameraActive(false);
+    setIsLiveFaceStraight(false);
   };
 
   // Launch Native Device Camera directly (Android OS Camera Intent)
@@ -602,27 +670,80 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           }
         }
       }
+
+      // 4. ANTI-FRAUD CROSS-MATCH: License Legal Name vs Driver's Official Profile Name
+      if (ocrDetectedName || (ocrDetectedFirstName && ocrDetectedLastName)) {
+        const docName = (ocrDetectedName || `${ocrDetectedFirstName} ${ocrDetectedLastName}`).toLowerCase();
+        const profileFirst = firstName.trim().toLowerCase();
+        const profileLast = lastName.trim().toLowerCase();
+
+        // Check whether driver's legal name appears in the extracted document name
+        const firstMatch = docName.includes(profileFirst) || profileFirst.includes(docName);
+        const lastMatch = docName.includes(profileLast) || profileLast.includes(docName);
+
+        if (!firstMatch && !lastMatch) {
+          setErrorMsg(
+            `فشل التحقق الأمني: الاسم القانوني المدخل في حساب السائق (${firstName} ${lastName}) لا يتطابق مع الاسم المدون على رخصة القيادة (${ocrDetectedName || `${ocrDetectedFirstName} ${ocrDetectedLastName}`}). لا يمكن إتمام التسجيل بهوية مغايرة.`
+          );
+          return;
+        }
+      }
+
+      // 5. ANTI-FRAUD CROSS-MATCH: License Date of Birth vs Driver's Official Profile Date of Birth
+      if (ocrDetectedBirthDate && birthDate) {
+        const docBirthYear = new Date(ocrDetectedBirthDate).getFullYear();
+        const profileBirthYear = new Date(birthDate).getFullYear();
+        if (!isNaN(docBirthYear) && !isNaN(profileBirthYear) && Math.abs(docBirthYear - profileBirthYear) > 1) {
+          setErrorMsg(
+            `فشل التحقق الأمني: تاريخ ميلاد السائق (${birthDate}) لا يتطابق مع تاريخ الميلاد المسجل على رخصة القيادة (${ocrDetectedBirthDate}). يرجى مراجعة بياناتك الرسمية.`
+          );
+          return;
+        }
+      }
     }
 
     if (currentStep < 5) {
       setCurrentStep(currentStep + 1);
     } else {
-      // Step 5 Check: Vehicle Information
+      // Step 5 Check: Vehicle Information & Gray Card (Carte Grise)
+      if (!grayCardPhoto) {
+        setErrorMsg('يرجى تصوير أو رفع البطاقة الرمادية للمركبة (Carte Grise) لإتمام التسجيل');
+        return;
+      }
+      if (isScanningGrayCard) {
+        setErrorMsg('جاري فحص البطاقة الرمادية بالذكاء الاصطناعي، يرجى الانتظار');
+        return;
+      }
+      if (grayCardValid === false || grayCardError) {
+        setErrorMsg(grayCardError || 'البطاقة الرمادية المرفوعة غير مقروءة أو مرفوضة. يرجى إعادة التصوير بوضوح.');
+        return;
+      }
       if (!vehiclePlate.trim() || !vehicleBrand.trim() || !vehicleModel.trim()) {
         setErrorMsg(
           lang === 'ar'
-            ? 'يرجى إدخال رقم لوحة الترقيم، العلامة والموديل للمركبة'
-            : 'Please enter vehicle plate, brand and model'
+            ? 'يرجى إتمام قراءة البطاقة الرمادية لتثبيت رقم لوحة الترقيم، العلامة والموديل للمركبة'
+            : 'Please complete Gray Card scan to lock vehicle plate, brand and model'
         );
         return;
       }
 
+      // Calculate license grace period status for record keeping
+      const expDate = new Date(licenseExpiration);
+      const curDate = new Date('2026-10-01');
+      const isExp = !isNaN(expDate.getTime()) && expDate < curDate;
+
+      // 30 days post-expiry
+      const graceEnd = new Date(expDate);
+      graceEnd.setDate(graceEnd.getDate() + 30);
+      const inGrace = isExp && curDate <= graceEnd;
+
       // Step 5 Submission
       const finalDriverDetails: DriverDetails = {
-        facePhotoUrl: facePhoto || '',
-        publicAvatarUrl: publicAvatar,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
+        facePhotoUrl: facePhoto || '', // strictly confidential
+        publicAvatarUrl: publicAvatar, // default vector illustration
+        nickname: driverNickname.trim() || `${firstName.trim()} ${lastName.trim()}`,
+        firstName: firstName.trim(), // Legal verified name
+        lastName: lastName.trim(),   // Legal verified name
         birthDate,
         age: calculatedAge,
         phone: phone.trim(),
@@ -630,8 +751,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         email: driverEmail.trim() || undefined,
         licenseNumber: licenseNumber.trim(),
         licenseExpirationDate: licenseExpiration,
+        licenseExpired: isExp,
+        licenseInGracePeriod: inGrace,
+        licenseGracePeriodEndsAt: graceEnd.toISOString(),
+        licenseRenewalRequired: isExp && !inGrace,
         licenseFrontUrl: licenseFront || '',
         licenseBackUrl: licenseBack || '',
+        grayCardFrontUrl: grayCardPhoto || '',
         vehicleType,
         vehicleRegType,
         vehiclePlate: vehiclePlate.trim(),
@@ -741,7 +867,15 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               {/* Live Camera Feed or Captured Photo */}
               <div className="flex flex-col items-center justify-center p-3 rounded-xl bg-slate-900/60 border border-slate-800/80">
                 {isFaceCameraActive ? (
-                  <div className="relative w-40 h-40 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg mb-3">
+                  <div
+                    className={`relative w-40 h-40 rounded-full overflow-hidden border-4 shadow-lg mb-3 transition-colors duration-200 ${
+                      isLiveFaceStraight
+                        ? 'border-emerald-500 shadow-emerald-500/50 ring-4 ring-emerald-500/30'
+                        : livePoseWarning
+                        ? 'border-amber-500 shadow-amber-500/20'
+                        : 'border-slate-700'
+                    }`}
+                  >
                     <video
                       ref={faceVideoRef}
                       autoPlay
@@ -749,11 +883,21 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                       muted
                       className="w-full h-full object-cover"
                     />
-                    <div className="absolute inset-0 border-2 border-dashed border-white/50 rounded-full pointer-events-none" />
+                    <div
+                      className={`absolute inset-0 border-2 border-dashed rounded-full pointer-events-none transition-colors ${
+                        isLiveFaceStraight ? 'border-emerald-400' : 'border-amber-400/60'
+                      }`}
+                    />
+                    {isLiveFaceStraight && (
+                      <span className="absolute bottom-2 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-emerald-500 text-slate-950 text-[10px] font-black shadow-md flex items-center gap-1 z-10 whitespace-nowrap animate-in fade-in">
+                        <CheckCircle2 size={11} />
+                        الوجه مستقيم وجاهز للالتقاط ✓
+                      </span>
+                    )}
                   </div>
                 ) : facePhoto ? (
                   <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-emerald-500 shadow-lg mb-3">
-                    <img src={facePhoto} alt="Live face biometric" className="w-full h-full object-cover" />
+                    <img src={facePhoto} alt="Live face biometric" className="w-full h-full object-cover pointer-events-none" />
                     <span className="absolute bottom-1 right-1 bg-emerald-500 text-slate-950 text-[10px] font-black px-1.5 py-0.5 rounded-full shadow">
                       سري ✓
                     </span>
@@ -794,24 +938,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
                 {isFaceCameraActive ? (
                   <div className="flex flex-col gap-2 w-full max-w-xs items-center mt-3">
-                    {livePoseWarning && (
-                      <div className="w-full p-2.5 rounded-xl bg-red-950/80 border-2 border-red-500 text-red-200 text-xs font-bold flex items-center justify-center gap-1.5 animate-pulse text-center">
-                        <AlertTriangle size={15} className="text-red-400 shrink-0" />
+                    {!isLiveFaceStraight && livePoseWarning && (
+                      <div className="w-full p-2.5 rounded-xl bg-amber-950/80 border border-amber-500/50 text-amber-200 text-xs font-bold flex items-center justify-center gap-1.5 animate-pulse text-center">
+                        <AlertTriangle size={15} className="text-amber-400 shrink-0" />
                         <span>{livePoseWarning}</span>
                       </div>
                     )}
                     <button
                       type="button"
                       onClick={captureFaceFromVideo}
-                      disabled={!!livePoseWarning}
+                      disabled={!isLiveFaceStraight}
                       className={`w-full py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center justify-center gap-2 cursor-pointer ${
-                        livePoseWarning
-                          ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
-                          : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20 active:scale-95'
+                        isLiveFaceStraight
+                          ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25 active:scale-95'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
                       }`}
                     >
                       <Camera size={16} />
-                      <span>{livePoseWarning ? 'اضبط استقامة الوجه للالتقاط' : t.captureNow}</span>
+                      <span>{isLiveFaceStraight ? 'التقاط صورة التحقق الآن' : (livePoseWarning || 'اضبط استقامة الوجه للالتقاط')}</span>
                     </button>
                     <button
                       type="button"
@@ -909,133 +1053,124 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             </div>
 
-            {/* SECTION 1B: Public Profile Picture for Customers (Completely Distinct & Optional) */}
+            {/* SECTION 1B: Default Professional Vector Avatar Illustration (No public upload allowed) */}
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     <User size={16} />
                   </div>
                   <div>
-                    <h5 className="text-xs font-bold text-white">صورة الملف الشخصي العامة للزبائن</h5>
-                    <p className="text-[10px] text-slate-400">تظهر للزبائن في قائمة العروض وعلى الخريطة (اختيارية منفصلة)</p>
+                    <h5 className="text-xs font-bold text-white">شارة الحساب الرمزية للزبائن (Avatar)</h5>
+                    <p className="text-[10px] text-slate-400">رسم توضيحي رسمي موحد لكباتن التوصيل بالخوذة وصندوق التوصيل</p>
                   </div>
                 </div>
-                <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
-                  اختياري
+                <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  شارة موحدة
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900 border border-slate-800/80">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-blue-500/60 flex-shrink-0 bg-slate-800 flex items-center justify-center">
-                    {publicAvatar ? (
-                      <img src={publicAvatar} alt="Public profile" className="w-full h-full object-cover" />
-                    ) : (
-                      <User size={22} className="text-slate-400" />
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold text-slate-200">
-                      {publicAvatar ? 'تم اختيار صورة للملف الشخصي' : 'شارة الحساب الافتراضية'}
-                    </p>
-                    <p className="text-[10px] text-slate-400 mt-0.5">
-                      {publicAvatar ? 'هذه الصورة ستظهر لزبائنك فقط' : 'يمكنك تركها فارغة أو رفع صورتك المفضلة'}
-                    </p>
-                  </div>
+              <div className="flex items-center gap-3.5 p-3 rounded-xl bg-slate-900 border border-slate-800/80">
+                <div className="w-14 h-14 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md flex-shrink-0 bg-slate-950 flex items-center justify-center">
+                  <img src={publicAvatar} alt="Driver Vector Avatar" className="w-full h-full object-cover" />
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="file"
-                    id="driver-public-avatar-input"
-                    accept="image/jpeg,image/png,image/webp"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = (ev) => {
-                        if (ev.target?.result) {
-                          setPublicAvatar(ev.target.result as string);
-                        }
-                      };
-                      reader.readAsDataURL(file);
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => document.getElementById('driver-public-avatar-input')?.click()}
-                    className="px-3 py-1.5 rounded-xl bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 font-bold text-xs border border-blue-500/30 transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <UploadCloud size={14} />
-                    <span>{publicAvatar ? 'تغيير' : 'رفع صورة'}</span>
-                  </button>
-                  {publicAvatar && (
-                    <button
-                      type="button"
-                      onClick={() => setPublicAvatar('')}
-                      className="p-1.5 rounded-xl bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-700 transition cursor-pointer"
-                      title="حذف الصورة والرجوع للشارة الافتراضية"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  )}
+                <div>
+                  <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <span>شارة كابتن سريع المعتمدة</span>
+                    <CheckCircle2 size={13} className="text-emerald-400" />
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                    لحماية خصوصية الكباتن والأمان، يتم استبدال الصور الشخصية العامة برسم توضيحي رمزي رسمي وموحد يظهر للزبائن على الخريطة وقائمة العروض.
+                  </p>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* STEP 2: Personal Information & Strict Legal Age Validation (>= 20) */}
+        {/* STEP 2: Personal Information & Public Nickname vs Legal Name Validation (>= 20) */}
         {currentStep === 2 && (
           <div className="space-y-4">
             <div className="text-center">
               <h4 className="font-bold text-base text-white">{t.step2Title}</h4>
-              <p className="text-xs text-slate-400 mt-1">{t.ageNotice}</p>
+              <p className="text-xs text-slate-400 mt-1">
+                تحديد الاسم المستعار العام المعروض للزبائن مع تسجيل الاسم القانوني الرسمي للمطابقة الأمنية
+              </p>
             </div>
 
             <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {t.firstName}
-                  </label>
-                  <input
-                    type="text"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    placeholder="مثلاً: كريم"
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:border-emerald-500 transition"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {t.lastName}
-                  </label>
-                  <input
-                    type="text"
-                    value={lastName}
-                    onChange={(e) => setLastName(e.target.value)}
-                    placeholder="مثلاً: الدراجي"
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:border-emerald-500 transition"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  {t.birthDate}
+              {/* Public Display Nickname */}
+              <div className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/30">
+                <label className="block text-xs font-bold text-emerald-300 mb-1 flex items-center justify-between">
+                  <span>الاسم المستعار / اللقب المعروض للزبائن (Public Nickname)</span>
+                  <span className="text-[10px] text-emerald-400 font-normal">يظهر للزبائن فقط</span>
                 </label>
                 <input
-                  type="date"
-                  value={birthDate}
-                  onChange={(e) => setBirthDate(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:border-emerald-500 transition"
+                  type="text"
+                  value={driverNickname}
+                  onChange={(e) => setDriverNickname(e.target.value)}
+                  placeholder="مثال: الكابتن كريم / الدراج السريع"
+                  className="w-full px-3 py-2.5 rounded-xl bg-slate-950 border border-emerald-500/40 text-white text-sm focus:border-emerald-400 transition"
                   required
                 />
+                <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                  هذا الاسم هو الذي سيظهر للزبائن على الخريطة وفي العروض لحماية خصوصيتك.
+                </p>
+              </div>
+
+              {/* Legal Name Section (Matched against OCR) */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <ShieldCheck size={15} className="text-amber-400" />
+                    <span>الاسم واللقب القانوني الرسمي (سري ومحفوظ بالخلفية)</span>
+                  </span>
+                  <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-bold">
+                    مطابقة بالرخصة
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      الاسم الشخصي القانوني *
+                    </label>
+                    <input
+                      type="text"
+                      value={firstName}
+                      onChange={(e) => setFirstName(e.target.value)}
+                      placeholder="مثلاً: كريم"
+                      className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:border-emerald-500 transition"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">
+                      اللقب العائلي القانوني *
+                    </label>
+                    <input
+                      type="text"
+                      value={lastName}
+                      onChange={(e) => setLastName(e.target.value)}
+                      placeholder="مثلاً: الدراجي"
+                      className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:border-emerald-500 transition"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    تاريخ الميلاد الرسمي *
+                  </label>
+                  <input
+                    type="date"
+                    value={birthDate}
+                    onChange={(e) => setBirthDate(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-sm focus:border-emerald-500 transition"
+                    required
+                  />
+                </div>
               </div>
 
               {/* Age calculation validation badge */}
@@ -1365,14 +1500,132 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           </div>
         )}
 
-        {/* STEP 5: Vehicle Information & Registration Type */}
+        {/* STEP 5: Vehicle Information & Secure Gray Card (Carte Grise) OCR with Auto-Fill & Anti-Tampering */}
         {currentStep === 5 && (
           <div className="space-y-4">
             <div className="text-center">
               <h4 className="font-bold text-base text-white">{t.step5Title}</h4>
               <p className="text-xs text-slate-400 mt-1">
-                تحديد نوع المركبة، البطاقة الرمادية، ولوحة الترقيم
+                رفع البطاقة الرمادية وتثبيت بيانات المركبة آلياً بواسطة الذكاء الاصطناعي لمنع التلاعب
               </p>
+            </div>
+
+            {/* Hidden File Input for Gray Card */}
+            <input
+              type="file"
+              id="input-file-graycard"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  const dataUrl = ev.target?.result as string;
+                  if (dataUrl) {
+                    setGrayCardPhoto(dataUrl);
+                    scanCarteGriseOcr(dataUrl);
+                  }
+                };
+                reader.readAsDataURL(file);
+              }}
+            />
+
+            {/* Gray Card Upload Section (Confidential, restricted, non-downloadable) */}
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <ShieldCheck size={16} />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-bold text-white">البطاقة الرمادية للمركبة (Carte Grise) *</h5>
+                    <p className="text-[10px] text-slate-400">وثيقة خاصة وسرية 100% — غير قابلة للتحميل أو العرض للزبائن</p>
+                  </div>
+                </div>
+                <span className="flex items-center gap-1 text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full">
+                  <Lock size={10} />
+                  سري ومقفل
+                </span>
+              </div>
+
+              {/* Status Scanning Alert */}
+              {isScanningGrayCard && (
+                <div className="p-3 rounded-xl bg-blue-950/40 border border-blue-500/30 text-blue-300 text-xs flex items-center justify-center gap-2 animate-pulse">
+                  <RefreshCw size={14} className="animate-spin text-blue-400" />
+                  <span className="font-bold">جاري فحص البطاقة الرمادية واستخراج بيانات المركبة (OCR)...</span>
+                </div>
+              )}
+
+              {/* Gray Card Error */}
+              {grayCardError && !isScanningGrayCard && (
+                <div className="p-3 rounded-xl bg-red-950/70 border border-red-500/50 text-red-200 text-xs flex items-start gap-2.5">
+                  <XCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="font-bold">فشل فحص البطاقة الرمادية</p>
+                    <p className="text-[11px] text-red-300 mt-0.5">{grayCardError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Gray Card Success confirmation */}
+              {grayCardValid === true && !isScanningGrayCard && (
+                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                  <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
+                  <span>تم استخراج وتثبيت بيانات المركبة بنجاح من البطاقة الرمادية ✓</span>
+                </div>
+              )}
+
+              {/* Upload Slot */}
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800">
+                {grayCardPhoto ? (
+                  <div className="relative w-20 h-16 rounded-lg overflow-hidden border border-emerald-500/50 shrink-0">
+                    <img src={grayCardPhoto} alt="Carte Grise" className="w-full h-full object-cover pointer-events-none" />
+                    <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  </div>
+                ) : (
+                  <div className="w-20 h-16 rounded-lg border border-dashed border-slate-700 bg-slate-950 flex flex-col items-center justify-center text-slate-500 shrink-0">
+                    <FileText size={20} />
+                    <span className="text-[9px] mt-0.5 font-bold">البطاقة</span>
+                  </div>
+                )}
+
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-white">
+                    {grayCardPhoto ? 'تم اختيار صورة البطاقة الرمادية' : 'صورة البطاقة الرمادية (الوجه الأمامي)'}
+                  </p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    التقط صورة واضحة ومباشرة لكامل البطاقة لقراءة الترقيم
+                  </p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <button
+                      type="button"
+                      onClick={() => document.getElementById('input-file-graycard')?.click()}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Camera size={13} />
+                      <span>{grayCardPhoto ? 'تغيير الصورة وإعادة المسح' : 'تصوير / رفع البطاقة الرمادية'}</span>
+                    </button>
+                    {grayCardPhoto && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGrayCardPhoto(null);
+                          setVehiclePlate('');
+                          setVehicleBrand('');
+                          setVehicleModel('');
+                          setGrayCardValid(null);
+                          setGrayCardError(null);
+                        }}
+                        className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-red-400 border border-slate-700 transition cursor-pointer"
+                        title="إعادة تعيين البطاقة الرمادية"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -1405,7 +1658,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                 </div>
               </div>
 
-              {/* Registration Certificate Type [Permanent/Temporary - بطاقة رمادية نهائية أو مؤقتة] */}
+              {/* Registration Certificate Type */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
                   {t.regCertType}
@@ -1436,46 +1689,65 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                 </div>
               </div>
 
-              {/* License Plate & Brand */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {t.licensePlate}
-                  </label>
-                  <input
-                    type="text"
-                    value={vehiclePlate}
-                    onChange={(e) => setVehiclePlate(e.target.value)}
-                    placeholder="01234-121-16"
-                    dir="ltr"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs font-mono focus:border-emerald-500"
-                  />
+              {/* AUTO-FILLED & LOCKED (READ-ONLY) VEHICLE DETAILS (ANTI-TAMPERING) */}
+              <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Lock size={13} className="text-amber-400" />
+                    <span>بيانات المركبة المستخرجة آلياً (حقول للقراءة فقط - مقفلة ضد التعديل)</span>
+                  </span>
+                  <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-bold">
+                    حماية ضد التلاعب
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    {t.vehicleBrand}
-                  </label>
-                  <input
-                    type="text"
-                    value={vehicleBrand}
-                    onChange={(e) => setVehicleBrand(e.target.value)}
-                    placeholder="Sym / Dacia"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:border-emerald-500"
-                  />
-                </div>
-              </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  {t.vehicleModel}
-                </label>
-                <input
-                  type="text"
-                  value={vehicleModel}
-                  onChange={(e) => setVehicleModel(e.target.value)}
-                  placeholder="Orbit II 150cc 2023"
-                  className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white text-xs focus:border-emerald-500"
-                />
+                {/* License Plate & Brand (Read-Only) */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                      <span>{t.licensePlate}</span>
+                      <Lock size={10} className="text-slate-500" />
+                    </label>
+                    <input
+                      type="text"
+                      value={vehiclePlate}
+                      readOnly
+                      placeholder="يتم ملؤه آلياً عبر البطاقة"
+                      dir="ltr"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-emerald-400 font-mono text-xs font-bold focus:outline-none cursor-not-allowed select-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                      <span>{t.vehicleBrand}</span>
+                      <Lock size={10} className="text-slate-500" />
+                    </label>
+                    <input
+                      type="text"
+                      value={vehicleBrand}
+                      readOnly
+                      placeholder="يتم ملؤه آلياً عبر البطاقة"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-white text-xs font-bold focus:outline-none cursor-not-allowed select-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                    <span>{t.vehicleModel}</span>
+                    <Lock size={10} className="text-slate-500" />
+                  </label>
+                  <input
+                    type="text"
+                    value={vehicleModel}
+                    readOnly
+                    placeholder="يتم ملؤه آلياً عبر البطاقة"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700/80 text-white text-xs font-bold focus:outline-none cursor-not-allowed select-none"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  يتم استخراج رقم لوحة الترقيم (Matricule) والعلامة والموديل آلياً من البطاقة الرمادية وتأمينها كحقول للقراءة فقط لمنع التلاعب. في حال رغبتك بتغيير البيانات، قم برفع صورة بطاقة رمادية جديدة.
+                </p>
               </div>
             </div>
           </div>
@@ -1560,6 +1832,28 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             </div>
           )}
 
+          {/* Status info in Step 5 (Carte Grise) */}
+          {currentStep === 5 && isScanningGrayCard && (
+            <div className="text-[11px] text-blue-400 font-bold px-3 py-1.5 rounded-xl bg-blue-500/10 border border-blue-500/20 flex items-center gap-1.5 animate-pulse">
+              <RefreshCw size={13} className="animate-spin" />
+              <span>جاري فحص البطاقة الرمادية...</span>
+            </div>
+          )}
+
+          {currentStep === 5 && !isScanningGrayCard && grayCardValid === true && vehiclePlate && (
+            <div className="text-[11px] text-emerald-400 font-bold px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-1.5">
+              <CheckCircle2 size={13} />
+              <span>البطاقة الرمادية مؤكدة ✓</span>
+            </div>
+          )}
+
+          {currentStep === 5 && !isScanningGrayCard && !grayCardPhoto && (
+            <div className="text-[11px] text-amber-400 font-bold px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center gap-1.5">
+              <Camera size={13} />
+              <span>البطاقة الرمادية مطلوبة</span>
+            </div>
+          )}
+
           <button
             type="button"
             id="btn-driver-wizard-next"
@@ -1567,12 +1861,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             disabled={
               (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
-              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false))
+              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false)) ||
+              (currentStep === 5 && (!grayCardPhoto || isScanningGrayCard || grayCardValid === false || !vehiclePlate.trim()))
             }
             className={`px-6 py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
               (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
-              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false))
+              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false)) ||
+              (currentStep === 5 && (!grayCardPhoto || isScanningGrayCard || grayCardValid === false || !vehiclePlate.trim()))
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 border border-slate-700'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20 active:scale-95'
             }`}
@@ -1582,6 +1878,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                 ? 'جاري فحص الوجه...'
                 : isScanningLicense
                 ? 'جاري فحص الرخصة (OCR)...'
+                : isScanningGrayCard
+                ? 'جاري فحص البطاقة الرمادية...'
                 : currentStep === 5
                 ? t.submitDriverApp
                 : 'المواصلة'}

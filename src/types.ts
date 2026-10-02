@@ -14,23 +14,29 @@ export interface Wilaya {
 }
 
 export interface DriverDetails {
-  facePhotoUrl?: string; // Private live biometric face photo (admin only)
-  publicAvatarUrl?: string; // Public avatar visible to customers
-  firstName: string;
-  lastName: string;
+  facePhotoUrl?: string; // Private live biometric face photo (admin/internal confidential only - strictly private)
+  publicAvatarUrl?: string; // Public vector avatar visible to customers
+  nickname?: string; // Public custom nickname/display name for customers (e.g. "الكابتن سفيان")
+  firstName: string; // Legal full name (verified against License OCR)
+  lastName: string;  // Legal family name (verified against License OCR)
   birthDate: string;
   age: number; // Strictly >= 20
   phone: string;
   phoneVerified: boolean;
   email?: string; // Driver bound email for security notices
-  licenseFrontUrl?: string;
-  licenseBackUrl?: string;
+  licenseFrontUrl?: string; // Private storage
+  licenseBackUrl?: string; // Private storage
   licenseNumber: string;
-  licenseExpirationDate: string;
+  licenseExpirationDate: string; // YYYY-MM-DD
+  licenseExpired?: boolean;
+  licenseInGracePeriod?: boolean; // Within 30 days post-expiry
+  licenseGracePeriodEndsAt?: string; // ISO date for 1-month enforcement deadline
+  licenseRenewalRequired?: boolean; // Forceful block after 1-month grace period
+  grayCardFrontUrl?: string; // Vehicle registration Carte Grise (private storage, strictly non-downloadable)
   vehicleRegType: 'permanent' | 'temporary'; // بطاقة رمادية نهائية / مؤقتة
-  vehiclePlate: string;
-  vehicleBrand: string;
-  vehicleModel: string;
+  vehiclePlate: string; // OCR extracted & locked (Read-Only)
+  vehicleBrand: string; // OCR extracted & locked (Read-Only)
+  vehicleModel: string; // OCR extracted & locked (Read-Only)
   vehicleType: 'motorcycle' | 'car' | 'van';
   verificationStatus: 'verified' | 'pending' | 'rejected';
   isOnline: boolean;

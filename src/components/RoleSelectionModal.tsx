@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { AppTranslations } from '../i18n/translations';
 import { UserRole, UserProfile } from '../types';
-import { Package, Bike, Check, ArrowRight, Camera, User, Sparkles } from 'lucide-react';
+import { Package, Bike, Check, ArrowRight, User, ShieldCheck } from 'lucide-react';
 import { Sari3Logo } from './Sari3Logo';
+import { CUSTOMER_DEFAULT_AVATAR, DRIVER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
 
 interface RoleSelectionModalProps {
   isOpen: boolean;
@@ -10,14 +11,6 @@ interface RoleSelectionModalProps {
   t: AppTranslations;
   onSelectRole: (role: UserRole, updatedProfile?: Partial<UserProfile>) => void;
 }
-
-const PRESET_AVATARS = [
-  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=200&auto=format&fit=crop&q=80',
-];
 
 export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
   isOpen,
@@ -27,9 +20,6 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
 }) => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
   const [customerName, setCustomerName] = useState(currentUser.displayName || 'أمين بلحاج');
-  const [customerAvatar, setCustomerAvatar] = useState(
-    currentUser.avatarUrl || PRESET_AVATARS[0]
-  );
 
   if (!isOpen) return null;
 
@@ -37,7 +27,7 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
     const updated: Partial<UserProfile> = {
       role: selectedRole,
       displayName: customerName.trim() || currentUser.displayName,
-      avatarUrl: customerAvatar,
+      avatarUrl: selectedRole === 'driver' ? DRIVER_DEFAULT_AVATAR : CUSTOMER_DEFAULT_AVATAR,
     };
     onSelectRole(selectedRole, updated);
   };
@@ -153,43 +143,20 @@ export const RoleSelectionModal: React.FC<RoleSelectionModalProps> = ({
               />
             </div>
 
-            <div>
-              <label className="block text-xs text-slate-400 mb-1.5">
-                اختر صورة الحساب أو ارفع صورتك
-              </label>
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {PRESET_AVATARS.map((av, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => setCustomerAvatar(av)}
-                    className={`w-11 h-11 rounded-full overflow-hidden border-2 transition flex-shrink-0 cursor-pointer ${
-                      customerAvatar === av
-                        ? 'border-emerald-500 scale-105 shadow-md shadow-emerald-500/30'
-                        : 'border-slate-800 opacity-60 hover:opacity-100'
-                    }`}
-                  >
-                    <img src={av} alt="Avatar" className="w-full h-full object-cover" />
-                  </button>
-                ))}
-
-                {/* Upload or Camera custom photo */}
-                <label className="w-11 h-11 rounded-full border-2 border-dashed border-slate-700 hover:border-emerald-500 text-slate-400 hover:text-emerald-400 flex items-center justify-center cursor-pointer transition flex-shrink-0 bg-slate-900">
-                  <Camera size={16} />
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onload = () => setCustomerAvatar(reader.result as string);
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                  />
-                </label>
+            {/* Customer Vector Avatar Display */}
+            <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-3">
+              <div className="w-12 h-12 rounded-full overflow-hidden border-2 border-emerald-500 bg-slate-950 flex items-center justify-center shrink-0">
+                <img
+                  src={CUSTOMER_DEFAULT_AVATAR}
+                  alt="Customer Avatar"
+                  className="w-full h-full object-cover"
+                />
+              </div>
+              <div>
+                <span className="text-xs font-bold text-white block">صورة الحساب الرمزية الرسمية</span>
+                <span className="text-[11px] text-slate-400 block mt-0.5">
+                  رسم توضيحي لزبون يحمل هاتفاً ذكياً وعناصر التسوق. لا حاجة لرفع صور شخصية.
+                </span>
               </div>
             </div>
           </div>

@@ -416,12 +416,18 @@ export async function saveDriverVerification(
       driver_id: safeDriverId,
       first_name: details.firstName,
       last_name: details.lastName,
+      nickname: details.nickname || null,
       birth_date: details.birthDate,
       age: details.age,
       face_photo_url: secureFaceUrl, // Private biometric face capture
-      public_avatar_url: details.publicAvatarUrl || null, // Optional public avatar
+      public_avatar_url: details.publicAvatarUrl || null, // Default vector illustration
       license_number: details.licenseNumber,
       license_expiration_date: details.licenseExpirationDate,
+      license_expired: !!details.licenseExpired,
+      license_in_grace_period: !!details.licenseInGracePeriod,
+      license_grace_period_ends_at: details.licenseGracePeriodEndsAt || null,
+      license_renewal_required: !!details.licenseRenewalRequired,
+      gray_card_front_url: details.grayCardFrontUrl || '', // Confidential Gray Card
       license_front_url: details.licenseFrontUrl || '',
       license_back_url: details.licenseBackUrl || '',
       vehicle_type: details.vehicleType,
@@ -441,11 +447,12 @@ export async function saveDriverVerification(
       console.warn('[SupabaseSync] Driver verification upsert notice:', error.message);
     }
 
-    // Update public profile with driver role and optional public avatar
+    // Update public profile with driver role, custom public nickname, and vector avatar
+    const publicDisplayName = details.nickname?.trim() || `${details.firstName} ${details.lastName}`.trim();
     await supabase.from('profiles').upsert({
       id: safeDriverId,
       role: 'driver',
-      display_name: `${details.firstName} ${details.lastName}`.trim(),
+      display_name: publicDisplayName,
       avatar_url: details.publicAvatarUrl || null,
       updated_at: new Date().toISOString(),
     });

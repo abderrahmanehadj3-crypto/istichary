@@ -7,8 +7,8 @@ import {
   ThemeMode,
   UserProfile,
 } from '../types';
-import { ProfilePhotoUploader } from './ProfilePhotoUploader';
 import { Sari3Logo } from './Sari3Logo';
+import { CUSTOMER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
 import {
   X,
   User,
@@ -158,14 +158,13 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
 
         {/* Customer Header Card */}
         <div className="p-4 bg-gradient-to-b from-slate-900/80 to-transparent border-b border-slate-800/60 flex items-center gap-3">
-          <img
-            src={
-              currentUser.avatarUrl ||
-              'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80'
-            }
-            alt="Customer Avatar"
-            className="w-13 h-13 rounded-full object-cover border-2 border-emerald-500 shadow-md"
-          />
+          <div className="w-13 h-13 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md bg-slate-950 flex items-center justify-center shrink-0">
+            <img
+              src={currentUser.avatarUrl || CUSTOMER_DEFAULT_AVATAR}
+              alt="Customer Avatar"
+              className="w-full h-full object-cover"
+            />
+          </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
               <h3 className="font-black text-sm text-white truncate">{currentUser.displayName}</h3>
@@ -270,14 +269,26 @@ export const CustomerDrawerMenu: React.FC<CustomerDrawerMenuProps> = ({
                 </div>
               )}
 
-              {/* Profile Photo Uploader (Gallery or Camera) */}
-              <div className="py-2">
-                <ProfilePhotoUploader
-                  currentPhotoUrl={selectedAvatar || null}
-                  onPhotoSelected={(url) => setSelectedAvatar(url)}
-                  title="صورة الملف الشخصي"
-                  subtitle="اختر صورة من المعرض أو التقط صورة حية بالكاميرا"
-                />
+              {/* Default Vector Illustration Badge for Customer (No upload required) */}
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-center gap-3.5">
+                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md bg-slate-950 flex items-center justify-center shrink-0">
+                  <img
+                    src={CUSTOMER_DEFAULT_AVATAR}
+                    alt="Customer Avatar"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-bold text-white">شارة حساب الزبون الرسمية</h4>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-bold px-2 py-0.5 rounded border border-emerald-500/20">
+                      شارة موحدة
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    رسم توضيحي رمزي عصري لزبون يحمل هاتفاً ذكياً وعناصر التسوق. لا حاجة لرفع أي صور شخصية لحماية خصوصيتك.
+                  </p>
+                </div>
               </div>
 
               {/* Display Name */}

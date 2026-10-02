@@ -9,8 +9,8 @@ import {
   UserProfile,
   WalletTransaction,
 } from '../types';
-import { ProfilePhotoUploader } from './ProfilePhotoUploader';
 import { Sari3Logo } from './Sari3Logo';
+import { DRIVER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
 import {
   X,
   User,
@@ -38,6 +38,9 @@ import {
   Phone,
   Filter,
   Package,
+  AlertTriangle,
+  Lock,
+  RefreshCw,
 } from 'lucide-react';
 
 interface DriverDrawerMenuProps {
@@ -108,6 +111,91 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
   if (!isOpen) return null;
 
   const driver = currentUser.driverDetails;
+
+  // SMART EXPIRED LICENSE & 1-MONTH (30 DAYS) GRACE PERIOD POLICY CHECK
+  // Current reference date: 2026-10-01
+  const referenceDate = new Date('2026-10-01');
+  const expDateObj = driver?.licenseExpirationDate ? new Date(driver.licenseExpirationDate) : null;
+  const isLicenseExpired = expDateObj ? expDateObj < referenceDate : false;
+
+  // Calculate 1 month (30 days) grace period post-expiry
+  let daysSinceExpiry = 0;
+  let isInGracePeriod = false;
+  let isPastGracePeriod = false;
+  let daysRemainingInGrace = 0;
+
+  if (isLicenseExpired && expDateObj) {
+    const diffTime = referenceDate.getTime() - expDateObj.getTime();
+    daysSinceExpiry = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    if (daysSinceExpiry <= 30) {
+      isInGracePeriod = true;
+      daysRemainingInGrace = Math.max(0, 30 - daysSinceExpiry);
+    } else {
+      isPastGracePeriod = true;
+    }
+  }
+
+  // License Renewal State for drivers past grace period
+  const [isRenewalModalOpen, setIsRenewalModalOpen] = useState(false);
+  const [renewalLicenseImage, setRenewalLicenseImage] = useState<string | null>(null);
+  const [isScanningRenewal, setIsScanningRenewal] = useState(false);
+  const [renewalError, setRenewalError] = useState<string | null>(null);
+  const [renewalSuccess, setRenewalSuccess] = useState(false);
+
+  // Handle License Renewal OCR
+  const handleRenewalOcr = async (photoDataUrl: string) => {
+    setRenewalLicenseImage(photoDataUrl);
+    setIsScanningRenewal(true);
+    setRenewalError(null);
+
+    try {
+      const res = await fetch('/api/driver/ocr-license', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: photoDataUrl,
+          isRenewalCheck: true, // Allows inspecting new expiry date
+        }),
+      });
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.success || !data?.expirationDate) {
+        setRenewalError(data?.error || 'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة صالحة. يرجى إعادة التصوير بوضوح.');
+        return;
+      }
+
+      const newExp = new Date(data.expirationDate);
+      if (isNaN(newExp.getTime()) || newExp < referenceDate) {
+        setRenewalError(`الرخصة المرفوعة لا تزال منتهية الصلاحية (${data.expirationDate}). يرجى تقديم وثيقة التجديد الرسمية.`);
+        return;
+      }
+
+      // Success: Updated renewed license
+      setRenewalSuccess(true);
+      if (onUpdateProfile && driver) {
+        onUpdateProfile({
+          driverDetails: {
+            ...driver,
+            licenseExpirationDate: data.expirationDate,
+            licenseNumber: data.licenseNumber || driver.licenseNumber,
+            licenseExpired: false,
+            licenseInGracePeriod: false,
+            licenseRenewalRequired: false,
+            licenseFrontUrl: photoDataUrl,
+          },
+        });
+      }
+      setTimeout(() => {
+        setIsRenewalModalOpen(false);
+        setRenewalSuccess(false);
+        setRenewalLicenseImage(null);
+      }, 2000);
+    } catch (err: any) {
+      setRenewalError('فشل التحقق من رخصة القيادة المجددة. يرجى المحاولة مجدداً.');
+    } finally {
+      setIsScanningRenewal(false);
+    }
+  };
 
   // Real-time Delivery Earnings derived from live orders
   const deliveredOrders = orders.filter(
@@ -249,18 +337,18 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
 
         {/* Driver Profile Card Header */}
         <div className="p-4 bg-gradient-to-b from-slate-900/80 to-transparent border-b border-slate-800/60 flex items-center gap-3">
-          <img
-            src={
-              driver?.publicAvatarUrl ||
-              currentUser.avatarUrl ||
-              'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=200&auto=format&fit=crop&q=80'
-            }
-            alt="Driver Avatar"
-            className="w-13 h-13 rounded-full object-cover border-2 border-purple-500 shadow-md"
-          />
+          <div className="w-13 h-13 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md bg-slate-950 flex items-center justify-center shrink-0">
+            <img
+              src={driver?.publicAvatarUrl || DRIVER_DEFAULT_AVATAR}
+              alt="Driver Avatar"
+              className="w-full h-full object-cover"
+            />
+          </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
-              <h3 className="font-black text-sm text-white truncate">{currentUser.displayName}</h3>
+              <h3 className="font-black text-sm text-white truncate">
+                {driver?.nickname || currentUser.displayName}
+              </h3>
               <ShieldCheck size={16} className="text-emerald-400 flex-shrink-0" />
             </div>
             <p className="text-xs text-slate-400 font-mono mt-0.5">{currentUser.phone}</p>
@@ -380,30 +468,79 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
           {/* VIEW 2: DRIVER PROFILE & VERIFICATION DETAILS */}
           {activeView === 'profile' && (
             <div className="space-y-4">
-              {/* Profile Photo Uploader (Gallery or Live Camera) */}
-              <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
-                <ProfilePhotoUploader
-                  currentPhotoUrl={
-                    currentUser.driverDetails?.publicAvatarUrl ||
-                    currentUser.avatarUrl ||
-                    currentUser.driverDetails?.facePhotoUrl ||
-                    null
-                  }
-                  onPhotoSelected={(url) => {
-                    if (onUpdateProfile) {
-                      onUpdateProfile({
-                        avatarUrl: url,
-                        driverDetails: {
-                          ...currentUser.driverDetails!,
-                          publicAvatarUrl: url,
-                        },
-                      });
-                    }
-                  }}
-                  title="صورة الكابتن الشخصية"
-                  subtitle="تحديث الصورة الشخصية عبر المعرض أو الكاميرا الحية"
-                />
+              {/* Default Vector Avatar Showcase (No upload allowed) */}
+              <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-center gap-3.5">
+                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-emerald-500 shadow-md bg-slate-950 flex items-center justify-center shrink-0">
+                  <img
+                    src={driver?.publicAvatarUrl || DRIVER_DEFAULT_AVATAR}
+                    alt="Driver Vector Avatar"
+                    className="w-full h-full object-cover"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <h4 className="text-xs font-bold text-white">شارة الحساب الرمزية للزبائن</h4>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-bold px-2 py-0.5 rounded border border-emerald-500/20">
+                      شارة موحدة
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    رسم توضيحي رمزي رسمي لكابتن التوصيل بالخوذة وصندوق التوصيل لحماية خصوصيتك التامة أمام الزبائن.
+                  </p>
+                </div>
               </div>
+
+              {/* SMART LICENSE EXPIRY & 1-MONTH GRACE PERIOD BANNER */}
+              {isLicenseExpired && (
+                <div
+                  className={`p-3.5 rounded-2xl border ${
+                    isInGracePeriod
+                      ? 'bg-amber-950/40 border-amber-500/60 text-amber-200'
+                      : 'bg-red-950/70 border-red-500 text-red-100 shadow-lg shadow-red-500/20'
+                  }`}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <AlertTriangle
+                      size={20}
+                      className={`shrink-0 mt-0.5 ${isInGracePeriod ? 'text-amber-400' : 'text-red-400 animate-pulse'}`}
+                    />
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-black text-xs">
+                          {isInGracePeriod ? 'تنبيه: رخصة القيادة منتهية (فترة سماح 30 يوم)' : 'تنبيه أمني: انتهاء فترة السماح لرخصة القيادة'}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isInGracePeriod
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                              : 'bg-red-600 text-white animate-bounce'
+                          }`}
+                        >
+                          {isInGracePeriod ? `باقي ${daysRemainingInGrace} يوم` : 'مطلوب التجديد فوراً'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] mt-1.5 leading-relaxed">
+                        {isInGracePeriod
+                          ? `انتهت صلاحية رخصتك في (${driver?.licenseExpirationDate}). يمنحك نظام "سريع" فترة سماح استثنائية لمدة شهر (30 يوماً) لمواصلة العمل مع ضرورة تجديدها.`
+                          : `لقد مضى أكثر من شهر (30 يوماً) على انتهاء رخصة قيادتك (${driver?.licenseExpirationDate}). تم إيقاف استقبال الطلبات مؤقتاً لحين رفع وثيقة الرخصة المجددة بالذكاء الاصطناعي.`}
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => setIsRenewalModalOpen(true)}
+                        className={`mt-2.5 px-3 py-1.5 rounded-xl font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow ${
+                          isInGracePeriod
+                            ? 'bg-amber-500 hover:bg-amber-400 text-slate-950'
+                            : 'bg-red-600 hover:bg-red-500 text-white'
+                        }`}
+                      >
+                        <RefreshCw size={12} />
+                        <span>تحديث وتصوير الرخصة المجددة (OCR)</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
                 <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
@@ -415,8 +552,14 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                 </div>
 
                 <div className="space-y-2 text-xs">
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">الاسم الكامل:</span>
+                  <div className="flex justify-between items-center bg-slate-950 p-2 rounded-xl border border-slate-800">
+                    <span className="text-slate-400">الاسم المستعار للزبائن:</span>
+                    <span className="font-bold text-emerald-400">
+                      {driver?.nickname || currentUser.displayName}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">الاسم القانوني (الرسمي):</span>
                     <span className="font-bold text-white">
                       {driver?.firstName || currentUser.displayName} {driver?.lastName || ''}
                     </span>
@@ -440,31 +583,50 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
 
               {/* License Details Card */}
               <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-purple-400 border-b border-slate-800/80 pb-2">
-                  <FileText size={15} />
-                  <span>رخصة القيادة (Permis de Conduire)</span>
+                <div className="flex items-center justify-between text-xs font-bold text-purple-400 border-b border-slate-800/80 pb-2">
+                  <div className="flex items-center gap-2">
+                    <FileText size={15} />
+                    <span>رخصة القيادة (Permis de Conduire)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                    <Lock size={10} />
+                    تخزين آمن ومحمي
+                  </span>
                 </div>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400">رقم الرخصة:</span>
                     <span className="font-mono font-bold text-white">{driver?.licenseNumber || '—'}</span>
                   </div>
-                  <div className="flex justify-between">
+                  <div className="flex justify-between items-center">
                     <span className="text-slate-400">تاريخ الانتهاء:</span>
-                    <span className="font-mono text-white">{driver?.licenseExpirationDate || '—'}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-white">{driver?.licenseExpirationDate || '—'}</span>
+                      {isLicenseExpired && (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${isInGracePeriod ? 'bg-amber-500/20 text-amber-400' : 'bg-red-500/20 text-red-400'}`}>
+                          {isInGracePeriod ? 'فترة سماح 30 يوم' : 'منتهية'}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">المسح الحي للكاميرا:</span>
-                    <span className="text-emerald-400 font-bold">تم المطابقة بنجاح ✓</span>
+                    <span className="text-slate-400">المطابقة البيومترية:</span>
+                    <span className="text-emerald-400 font-bold">تم المطابقة ومحقونة أمنياً ✓</span>
                   </div>
                 </div>
               </div>
 
               {/* Vehicle & Gray Card Details */}
               <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2.5">
-                <div className="flex items-center gap-2 text-xs font-bold text-purple-400 border-b border-slate-800/80 pb-2">
-                  <Bike size={15} />
-                  <span>بيانات المركبة والبطاقة الرمادية</span>
+                <div className="flex items-center justify-between text-xs font-bold text-purple-400 border-b border-slate-800/80 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Bike size={15} />
+                    <span>بيانات المركبة والبطاقة الرمادية (Carte Grise)</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                    <Lock size={10} />
+                    حقول مقفلة آلياً
+                  </span>
                 </div>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between">
@@ -478,7 +640,7 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">العلامة والموديل:</span>
+                    <span className="text-slate-400">العلامة والموديل (OCR):</span>
                     <span className="font-bold text-white">
                       {driver?.vehicleBrand || '—'} {driver?.vehicleModel || ''}
                     </span>
@@ -492,6 +654,10 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                     <span className="font-bold text-white">
                       {driver?.vehicleRegType === 'temporary' ? 'بطاقة رمادية مؤقتة' : 'بطاقة رمادية نهائية'}
                     </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">تأمين الوثيقة:</span>
+                    <span className="text-emerald-400 font-bold">مخزنة بسيرفر خاص غير قابل للتنزيل ✓</span>
                   </div>
                 </div>
               </div>
@@ -845,6 +1011,96 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Forceful License Renewal Modal (AI OCR) */}
+      {isRenewalModalOpen && (
+        <div className="fixed inset-0 z-60 bg-black/90 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-5 shadow-2xl text-slate-100 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <RefreshCw size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">تجديد رخصة القيادة بالذكاء الاصطناعي</h3>
+                  <p className="text-[10px] text-slate-400">فحص وثيقة التجديد وتحديث تاريخ الصلاحية آلياً</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRenewalModalOpen(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {renewalSuccess && (
+              <div className="p-3 rounded-2xl bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-xs flex items-center gap-2">
+                <CheckCircle2 size={18} className="text-emerald-400 shrink-0" />
+                <span>تم توثيق وتحديث رخصة القيادة بنجاح! تم رفع أي تقييد عن الحساب.</span>
+              </div>
+            )}
+
+            {renewalError && (
+              <div className="p-3 rounded-2xl bg-red-950/60 border border-red-500/50 text-red-200 text-xs flex items-start gap-2">
+                <AlertCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
+                <span>{renewalError}</span>
+              </div>
+            )}
+
+            <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
+              <input
+                type="file"
+                id="input-renewal-license"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const dataUrl = ev.target?.result as string;
+                    if (dataUrl) handleRenewalOcr(dataUrl);
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+
+              {renewalLicenseImage ? (
+                <div className="w-full h-36 rounded-xl overflow-hidden border border-emerald-500">
+                  <img src={renewalLicenseImage} alt="Renewed License" className="w-full h-full object-cover" />
+                </div>
+              ) : (
+                <div className="w-full h-36 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/60 flex flex-col items-center justify-center text-slate-500">
+                  <FileText size={32} className="text-slate-600 mb-1" />
+                  <span className="text-xs font-bold text-slate-300">صورة رخصة القيادة المجددة</span>
+                  <span className="text-[10px] text-slate-500">يجب أن توضح تاريخ الانتهاء الجديد بوضوح</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                disabled={isScanningRenewal}
+                onClick={() => document.getElementById('input-renewal-license')?.click()}
+                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20"
+              >
+                {isScanningRenewal ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>جاري الفحص الذكي للرخصة (OCR)...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    <span>التقاط أو رفع صورة الرخصة المجددة</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -790,15 +790,18 @@ Current reference date: October 1, 2026 (${currentDateStr}).
 
 CRITICAL VALIDATION RULES:
 1. "isValidDocument": Check if the image contains an authentic Algerian driver's license (or temporary driver permit).
-   - If the image is pitch dark, black, blank, extremely blurry, an object, furniture, a selfie, a landscape, or NOT a driver's license, set "isValidDocument": false.
+   - If the image is pitch dark, black, blank, extremely blurry, an object, furniture, a wall, floor, a selfie, a landscape, or NOT a driver's license, set "isValidDocument": false.
    - Only set "isValidDocument": true if it is an actual driver's license with legible text.
 2. "rejectionReason": If invalid, specify: "too_dark" | "too_blurry" | "not_a_license" | "unreadable".
-3. "rejectionMessage": In Arabic, e.g. "الصورة الملتقطة مظلمة جداً أو غير واضحة. يرجى إعادة التصوير في مكان جيد الإضاءة."
+3. "rejectionMessage": In Arabic, e.g. "الصورة الملتقطة مظلمة أو غير واضحة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير في مكان جيد الإضاءة."
 4. If and only if it is a genuine, legible document:
    - "licenseNumber": The actual official license number visible on the card (or null if unreadable).
    - "expirationDate": The expiration date ("تاريخ الانتهاء" / "Expire le") in YYYY-MM-DD format (or null).
    - "isExpired": true if expirationDate is before ${currentDateStr}, false otherwise.
-   - "fullName": The driver name if visible.
+   - "fullName": The legal full name (Nom et Prénom / اللقب والاسم) visible on the license.
+   - "firstName": The driver's first name if distinguishable.
+   - "lastName": The driver's family/last name if distinguishable.
+   - "birthDate": Date of birth in YYYY-MM-DD format if visible on the license.
 
 Respond ONLY with valid JSON:
 {
@@ -808,7 +811,10 @@ Respond ONLY with valid JSON:
   "licenseNumber": string | null,
   "expirationDate": string | null,
   "isExpired": boolean,
-  "fullName": string | null
+  "fullName": string | null,
+  "firstName": string | null,
+  "lastName": string | null,
+  "birthDate": string | null
 }`;
 
       let ocrResult: any = null;
@@ -859,29 +865,128 @@ Respond ONLY with valid JSON:
         }
       }
 
-      if (isExpired) {
+      // Support isRenewalCheck parameter for already registered drivers vs new registrations
+      const isRenewalCheck = req.body.isRenewalCheck === true;
+
+      if (isExpired && !isRenewalCheck) {
         return res.status(400).json({
           success: false,
           isValidDocument: true,
           isExpired: true,
           licenseNumber: ocrResult.licenseNumber,
           expirationDate,
-          error: 'رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل',
+          error: 'رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل الجديد برخصة منتهية.',
         });
       }
 
       return res.json({
         success: true,
         isValidDocument: true,
-        isExpired: false,
+        isExpired,
         licenseNumber: ocrResult.licenseNumber,
         expirationDate,
         fullName: ocrResult.fullName,
-        message: 'تم فحص وقراءة رخصة القيادة بنجاح (الوثيقة صالحة وسارية المفعول)',
+        firstName: ocrResult.firstName,
+        lastName: ocrResult.lastName,
+        birthDate: ocrResult.birthDate,
+        message: 'تم فحص وقراءة رخصة القيادة بنجاح ومطابقة الوثيقة',
       });
     } catch (err: any) {
       console.error('[API /api/driver/ocr-license] Error:', err);
       return res.status(500).json({ error: err.message || 'فشل فحص رخصة القيادة' });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // 6B. API: VEHICLE GRAY CARD (CARTE GRISE) OCR & ANTI-FRAUD EXTRACTION
+  // -------------------------------------------------------------------------
+  app.post('/api/driver/ocr-carte-grise', async (req: Request, res: Response) => {
+    try {
+      const { image } = req.body;
+      if (!image) {
+        return res.status(400).json({ error: 'صورة البطاقة الرمادية مطلوبة' });
+      }
+
+      const { mimeType, data } = parseBase64(image);
+
+      if (!data || data.length < 150) {
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          error: 'الصورة الملتقطة فارغة أو تالفة. يرجى التقاط صورة واضحة للبطاقة الرمادية.',
+        });
+      }
+
+      const prompt = `You are an expert Algerian vehicle registration document (البطاقة الرمادية / Carte Grise / بطاقة ترقيم المركبات) OCR & anti-tampering engine.
+Inspect this image with extreme scrutiny.
+
+STRICT VALIDATION CRITERIA:
+1. "isValidDocument": Check if this is an authentic Algerian vehicle registration document (Carte Grise or provisional registration receipt).
+   - If the image is dark, pitch black, blurry, a wall, an object, a person, a driver's license, or not a Gray Card, set "isValidDocument": false.
+2. EXTRACT ONLY VEHICLE DETAILS (Completely ignore owner identity/name):
+   - "vehicleBrand": Vehicle make/manufacturer (Marque), e.g. "Sym", "Yamaha", "Peugeot", "Renault", "Dacia", "Toyota", "Kymco".
+   - "vehicleModel": Vehicle commercial model (Genre / Type / Modèle), e.g. "Orbit II 150cc", "Clio 4", "Logan", "Partner", "T-Max".
+   - "vehiclePlate": Official Algerian registration plate / Matricule (e.g. "01234-121-16", "04562-119-06", etc.). Format cleanly with hyphens if appropriate.
+   - "vehicleType": "motorcycle" | "car" | "van" based on vehicle classification.
+
+Respond ONLY with valid JSON:
+{
+  "isValidDocument": boolean,
+  "rejectionReason": string | null,
+  "rejectionMessage": string | null,
+  "vehicleBrand": string | null,
+  "vehicleModel": string | null,
+  "vehiclePlate": string | null,
+  "vehicleType": "motorcycle" | "car" | "van" | null
+}`;
+
+      let ocrResult: any = null;
+      try {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.8-flash',
+          contents: [
+            {
+              inlineData: {
+                mimeType,
+                data,
+              },
+            },
+            prompt,
+          ],
+          config: {
+            responseMimeType: 'application/json',
+          },
+        });
+
+        if (response.text) {
+          ocrResult = JSON.parse(response.text);
+        }
+      } catch (aiErr) {
+        console.warn('[Carte Grise OCR AI Notice]:', aiErr);
+      }
+
+      if (!ocrResult || !ocrResult.isValidDocument || !ocrResult.vehiclePlate) {
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          error:
+            ocrResult?.rejectionMessage ||
+            'الصورة الملتقطة لا تمثل بطاقة رمادية واضحة أو غير مقروءة. يرجى إعادة تصوير البطاقة الرمادية في إضاءة جيدة.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        isValidDocument: true,
+        vehicleBrand: ocrResult.vehicleBrand || 'غير محدد',
+        vehicleModel: ocrResult.vehicleModel || 'غير محدد',
+        vehiclePlate: ocrResult.vehiclePlate,
+        vehicleType: ocrResult.vehicleType || 'motorcycle',
+        message: 'تم فحص البطاقة الرمادية واستخراج بيانات المركبة وتثبيتها بنجاح',
+      });
+    } catch (err: any) {
+      console.error('[API /api/driver/ocr-carte-grise] Error:', err);
+      return res.status(500).json({ error: err.message || 'فشل فحص البطاقة الرمادية' });
     }
   });
 
@@ -895,15 +1000,24 @@ Respond ONLY with valid JSON:
         return res.status(400).json({ error: 'بيانات السائق غير مكتملة' });
       }
 
-      // 1. Save confidential biometric selfie & license in Firestore driver_verifications collection
+      // 1. Save confidential biometric selfie, gray card & license in Firestore driver_verifications collection
       if (firestoreDb) {
         await setDoc(doc(firestoreDb, 'driver_verifications', driverId), {
           driverId,
           facePhotoUrl: driverDetails.facePhotoUrl || '', // strictly confidential, never public
-          licenseFrontUrl: driverDetails.licenseFrontUrl || '',
-          licenseBackUrl: driverDetails.licenseBackUrl || '',
+          publicAvatarUrl: driverDetails.publicAvatarUrl || '', // public vector illustration
+          nickname: driverDetails.nickname || '', // public display nickname
+          legalFirstName: driverDetails.firstName || '',
+          legalLastName: driverDetails.lastName || '',
+          birthDate: driverDetails.birthDate || '',
+          licenseFrontUrl: driverDetails.licenseFrontUrl || '', // confidential
+          licenseBackUrl: driverDetails.licenseBackUrl || '', // confidential
           licenseNumber: driverDetails.licenseNumber || '',
           licenseExpirationDate: driverDetails.licenseExpirationDate || '',
+          licenseExpired: driverDetails.licenseExpired || false,
+          licenseInGracePeriod: driverDetails.licenseInGracePeriod || false,
+          licenseGracePeriodEndsAt: driverDetails.licenseGracePeriodEndsAt || null,
+          grayCardFrontUrl: driverDetails.grayCardFrontUrl || '', // confidential vehicle Gray Card
           vehiclePlate: driverDetails.vehiclePlate || '',
           vehicleBrand: driverDetails.vehicleBrand || '',
           vehicleModel: driverDetails.vehicleModel || '',
@@ -920,6 +1034,7 @@ Respond ONLY with valid JSON:
           .from('profiles')
           .update({
             role: 'driver',
+            display_name: driverDetails.nickname || `${driverDetails.firstName} ${driverDetails.lastName}`.trim(),
             avatar_url: driverDetails.publicAvatarUrl || undefined,
             driver_verified: true,
             updated_at: new Date().toISOString(),

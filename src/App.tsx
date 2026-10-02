@@ -670,6 +670,7 @@ export function App() {
             }}
             selectedWilaya={selectedWilaya}
             onWilayaChange={setSelectedWilaya}
+            onUpdateProfile={handleUpdateProfile}
           />
         ) : (
           /* ISOLATED CUSTOMER DASHBOARD */
