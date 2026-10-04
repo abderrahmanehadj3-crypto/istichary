@@ -80,9 +80,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [ocrDetectedNumber, setOcrDetectedNumber] = useState<string | null>(null);
   const [ocrDetectedExpiration, setOcrDetectedExpiration] = useState<string | null>(null);
   const [ocrDetectedName, setOcrDetectedName] = useState<string | null>(null);
+  const [ocrDetectedNameAr, setOcrDetectedNameAr] = useState<string | null>(null);
   const [ocrDetectedFirstName, setOcrDetectedFirstName] = useState<string | null>(null);
   const [ocrDetectedLastName, setOcrDetectedLastName] = useState<string | null>(null);
+  const [ocrDetectedFirstNameAr, setOcrDetectedFirstNameAr] = useState<string | null>(null);
+  const [ocrDetectedLastNameAr, setOcrDetectedLastNameAr] = useState<string | null>(null);
   const [ocrDetectedBirthDate, setOcrDetectedBirthDate] = useState<string | null>(null);
+  const [ocrDetectedNIN, setOcrDetectedNIN] = useState<string | null>(null);
+  const [ocrDetectedCategory, setOcrDetectedCategory] = useState<string | null>(null);
 
   const inferredFirst = currentUser.displayName ? currentUser.displayName.split(' ')[0] : '';
   const inferredLast =
@@ -312,18 +317,26 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       console.warn('[Client pre-check notice]:', e);
     }
 
-    // 2. Strict Server-side Document Forensic Verification
+    // 2. Strict Server-side Document Forensic Verification & Cross-Matching
     try {
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: photoDataUrl }),
+        body: JSON.stringify({
+          image: photoDataUrl,
+          expectedFirstName: firstName,
+          expectedLastName: lastName,
+          expectedBirthDate: birthDate,
+          isRenewalCheck: false,
+        }),
       });
       const data = await res.json().catch(() => null);
 
       if (!res.ok || !data?.success) {
         setOcrDocumentValid(false);
-        const err = data?.error || 'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير بوضوح.';
+        const err =
+          data?.error ||
+          'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير بوضوح في مكان جيد الإضاءة.';
         setOcrError(err);
         setErrorMsg(err);
         if (data?.isExpired) {
@@ -332,32 +345,37 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         return;
       }
 
-      // Valid genuine document
+      // Valid genuine document with matching legal credentials
       setOcrDocumentValid(true);
       setOcrError(null);
       setLicenseExpired(false);
       setOcrDetectedNumber(data.licenseNumber || null);
       setOcrDetectedExpiration(data.expirationDate || null);
       setOcrDetectedName(data.fullName || null);
+      setOcrDetectedNameAr(data.fullNameAr || null);
       setOcrDetectedFirstName(data.firstName || null);
       setOcrDetectedLastName(data.lastName || null);
+      setOcrDetectedFirstNameAr(data.firstNameAr || null);
+      setOcrDetectedLastNameAr(data.lastNameAr || null);
       setOcrDetectedBirthDate(data.birthDate || null);
-      setLicenseOcrMessage('تم فحص وقراءة رخصة القيادة بنجاح (الوثيقة صالحة وسارية المفعول)');
+      setOcrDetectedNIN(data.nationalIdNumber || null);
+      setOcrDetectedCategory(data.category || null);
+      setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
 
-      // Auto-populate manual fields if not already filled so user can review and proceed immediately
-      if (data.licenseNumber && !licenseNumber.trim()) {
+      // Auto-populate manual fields with verified extracted data
+      if (data.licenseNumber) {
         setLicenseNumber(data.licenseNumber);
       }
-      if (data.expirationDate && !licenseExpiration) {
+      if (data.expirationDate) {
         setLicenseExpiration(data.expirationDate);
       }
 
-      if (errorMsg && (errorMsg.includes('رخصة') || errorMsg.includes('الوثيقة'))) {
+      if (errorMsg && (errorMsg.includes('رخصة') || errorMsg.includes('الوثيقة') || errorMsg.includes('الاسم') || errorMsg.includes('الميلاد'))) {
         setErrorMsg(null);
       }
     } catch (e: any) {
       setOcrDocumentValid(false);
-      const err = 'تعذر التحقق من رخصة القيادة. يرجى التأكد من وضوح الصورة والمحاولة مجدداً.';
+      const err = 'تعذر التحقق من رخصة القيادة. يرجى التأكد من وضوح الصورة والاتصال بالإنترنت ثم المحاولة مجدداً.';
       setOcrError(err);
       setErrorMsg(err);
     } finally {
@@ -635,10 +653,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
       // 1. Expiry check on date
       const expDate = new Date(activeExp);
-      const curDate = new Date('2026-10-01');
+      const curDate = new Date('2026-10-04');
       if (isNaN(expDate.getTime()) || expDate < curDate) {
         setLicenseExpired(true);
-        setErrorMsg('رخصة القيادة منتهية الصلاحية، لا يمكن إتمام التسجيل');
+        setErrorMsg(`رخصة القيادة منتهية الصلاحية (${activeExp}). يُشترط تقديم رخصة سارية المفعول لإتمام تسجيل كابتن جديد.`);
         return;
       }
 
@@ -657,12 +675,12 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
       // 3. Cross-check driver's manual license number with document OCR
       if (ocrDetectedNumber) {
-        const cleanManual = licenseNumber.replace(/[\s\-\/\.]/g, '');
-        const cleanOcr = ocrDetectedNumber.replace(/[\s\-\/\.]/g, '');
+        const cleanManual = licenseNumber.replace(/[\s\-\/\.]/g, '').toUpperCase();
+        const cleanOcr = ocrDetectedNumber.replace(/[\s\-\/\.]/g, '').toUpperCase();
         const digitsManual = cleanManual.replace(/\D/g, '');
         const digitsOcr = cleanOcr.replace(/\D/g, '');
         if (digitsManual.length >= 4 && digitsOcr.length >= 4) {
-          if (!digitsManual.includes(digitsOcr) && !digitsOcr.includes(digitsManual)) {
+          if (!cleanManual.includes(cleanOcr) && !cleanOcr.includes(cleanManual) && !digitsManual.includes(digitsOcr) && !digitsOcr.includes(digitsManual)) {
             setErrorMsg(
               `رقم الرخصة المدخل (${licenseNumber}) لا يتطابق مع الرقم المستخرج من وثيقة رخصة القيادة (${ocrDetectedNumber}). يرجى مراجعة الرقم المكتوب.`
             );
@@ -671,33 +689,70 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         }
       }
 
-      // 4. ANTI-FRAUD CROSS-MATCH: License Legal Name vs Driver's Official Profile Name
-      if (ocrDetectedName || (ocrDetectedFirstName && ocrDetectedLastName)) {
-        const docName = (ocrDetectedName || `${ocrDetectedFirstName} ${ocrDetectedLastName}`).toLowerCase();
-        const profileFirst = firstName.trim().toLowerCase();
-        const profileLast = lastName.trim().toLowerCase();
+      // 4. STRICT ANTI-FRAUD CROSS-MATCH: License Legal Name vs Driver's Official Profile Name
+      if (ocrDetectedName || ocrDetectedNameAr || ocrDetectedFirstName || ocrDetectedLastName || ocrDetectedFirstNameAr || ocrDetectedLastNameAr) {
+        const profileFirst = firstName.trim();
+        const profileLast = lastName.trim();
+        const profileFull = `${profileFirst} ${profileLast}`.trim();
 
-        // Check whether driver's legal name appears in the extracted document name
-        const firstMatch = docName.includes(profileFirst) || profileFirst.includes(docName);
-        const lastMatch = docName.includes(profileLast) || profileLast.includes(docName);
+        // Helper for normalization
+        const norm = (s: string | null | undefined): string => {
+          if (!s) return '';
+          return s
+            .toLowerCase()
+            .replace(/[\u064B-\u065F\u0670]/g, '')
+            .replace(/ـ/g, '')
+            .replace(/[أإآٱ]/g, 'ا')
+            .replace(/ة/g, 'ه')
+            .replace(/ى/g, 'ي')
+            .replace(/[ؤئء]/g, '')
+            .replace(/[\s\-\_\.\,]/g, '');
+        };
 
-        if (!firstMatch && !lastMatch) {
+        const isMatch = (t1: string, t2: string): boolean => {
+          const n1 = norm(t1);
+          const n2 = norm(t2);
+          if (!n1 || !n2) return false;
+          return n1 === n2 || n1.includes(n2) || n2.includes(n1);
+        };
+
+        const matchLatinFirst = isMatch(profileFirst, ocrDetectedFirstName || '') || isMatch(profileFirst, ocrDetectedName || '');
+        const matchLatinLast = isMatch(profileLast, ocrDetectedLastName || '') || isMatch(profileLast, ocrDetectedName || '');
+        const matchLatinFull = isMatch(profileFull, ocrDetectedName || '');
+
+        const matchArFirst = isMatch(profileFirst, ocrDetectedFirstNameAr || '') || isMatch(profileFirst, ocrDetectedNameAr || '');
+        const matchArLast = isMatch(profileLast, ocrDetectedLastNameAr || '') || isMatch(profileLast, ocrDetectedNameAr || '');
+        const matchArFull = isMatch(profileFull, ocrDetectedNameAr || '');
+
+        const isNameVerified =
+          (matchLatinFirst && matchLatinLast) ||
+          (matchArFirst && matchArLast) ||
+          ((matchLatinFirst || matchArFirst) && (matchLatinLast || matchArLast)) ||
+          matchLatinFull ||
+          matchArFull;
+
+        if (!isNameVerified) {
+          const docDisplayName = ocrDetectedNameAr || ocrDetectedName || `${ocrDetectedLastName || ''} ${ocrDetectedFirstName || ''}`.trim();
           setErrorMsg(
-            `فشل التحقق الأمني: الاسم القانوني المدخل في حساب السائق (${firstName} ${lastName}) لا يتطابق مع الاسم المدون على رخصة القيادة (${ocrDetectedName || `${ocrDetectedFirstName} ${ocrDetectedLastName}`}). لا يمكن إتمام التسجيل بهوية مغايرة.`
+            `فشل التحقق الأمني (مكافحة التزوير والاحتيال): الاسم القانوني المسجل في الحساب (${profileFull}) لا يتطابق مع الاسم المدون على رخصة السياقة (${docDisplayName}). يجب أن يتطابق الحساب 100% مع وثيقة الهوية الرسمية.`
           );
           return;
         }
       }
 
-      // 5. ANTI-FRAUD CROSS-MATCH: License Date of Birth vs Driver's Official Profile Date of Birth
+      // 5. STRICT ANTI-FRAUD CROSS-MATCH: License Date of Birth vs Driver's Official Profile Date of Birth
       if (ocrDetectedBirthDate && birthDate) {
-        const docBirthYear = new Date(ocrDetectedBirthDate).getFullYear();
-        const profileBirthYear = new Date(birthDate).getFullYear();
-        if (!isNaN(docBirthYear) && !isNaN(profileBirthYear) && Math.abs(docBirthYear - profileBirthYear) > 1) {
-          setErrorMsg(
-            `فشل التحقق الأمني: تاريخ ميلاد السائق (${birthDate}) لا يتطابق مع تاريخ الميلاد المسجل على رخصة القيادة (${ocrDetectedBirthDate}). يرجى مراجعة بياناتك الرسمية.`
-          );
-          return;
+        const cleanProfileDob = birthDate.trim();
+        const cleanOcrDob = ocrDetectedBirthDate.trim();
+        if (cleanProfileDob !== cleanOcrDob) {
+          const profileYear = new Date(cleanProfileDob).getFullYear();
+          const ocrYear = new Date(cleanOcrDob).getFullYear();
+          if (profileYear !== ocrYear || Math.abs(new Date(cleanProfileDob).getTime() - new Date(cleanOcrDob).getTime()) > 86400000 * 2) {
+            setErrorMsg(
+              `فشل التحقق الأمني: تاريخ ميلاد السائق المسجل (${birthDate}) لا يتطابق مع تاريخ الميلاد المطبوع على رخصة القيادة (${ocrDetectedBirthDate}). يرجى التأكد من مطابقة بيانات حسابك مع وثائقك الرسمية.`
+            );
+            return;
+          }
         }
       }
     }
@@ -1298,22 +1353,60 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             )}
 
-            {/* Legitimate Verified Document Card */}
+            {/* Legitimate Verified Document Card with Comprehensive Extracted Fields */}
             {!isScanningLicense && !ocrError && ocrDocumentValid === true && !licenseExpired && licenseFront && (
-              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs space-y-2">
-                <div className="flex items-center gap-2 font-bold text-emerald-300">
-                  <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0" />
-                  <span>تم فحص وقراءة رخصة القيادة بنجاح (وثيقة معتمدة صالحة)</span>
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs space-y-2.5 shadow-lg shadow-emerald-500/10">
+                <div className="flex items-center justify-between font-bold text-emerald-300">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0" />
+                    <span>تم التحقق الأمني وقراءة رخصة السياقة بنجاح ✓</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                    رخصة بيومترية معتمدة
+                  </span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-slate-950/80 border border-emerald-500/20 grid grid-cols-2 gap-2 text-[11px]">
+
+                <div className="p-3 rounded-xl bg-slate-950/90 border border-emerald-500/20 grid grid-cols-2 gap-2.5 text-[11px]">
                   <div>
-                    <span className="text-slate-400 block text-[10px]">الرقم المقروء من الوثيقة:</span>
-                    <strong className="font-mono text-white text-xs">{ocrDetectedNumber || 'مقروء'}</strong>
+                    <span className="text-slate-400 block text-[10px]">الاسم القانوني المستخرج:</span>
+                    <strong className="text-white text-xs block truncate">
+                      {ocrDetectedNameAr || ocrDetectedName || `${ocrDetectedLastName || ''} ${ocrDetectedFirstName || ''}`.trim() || 'مطابق'}
+                    </strong>
+                    {ocrDetectedName && ocrDetectedNameAr && ocrDetectedName !== ocrDetectedNameAr && (
+                      <span className="text-slate-400 font-mono text-[9px] block truncate">{ocrDetectedName}</span>
+                    )}
                   </div>
                   <div>
-                    <span className="text-slate-400 block text-[10px]">تاريخ الانتهاء المقروء:</span>
-                    <strong className="font-mono text-emerald-400 text-xs">{ocrDetectedExpiration || 'ساري'}</strong>
+                    <span className="text-slate-400 block text-[10px]">تاريخ الميلاد:</span>
+                    <strong className="font-mono text-emerald-400 text-xs block">
+                      {ocrDetectedBirthDate || 'مستخرج'}
+                    </strong>
                   </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">رقم رخصة القيادة:</span>
+                    <strong className="font-mono text-white text-xs block">{ocrDetectedNumber || 'مقروء'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-400 block text-[10px]">تاريخ انتهاء الصلاحية:</span>
+                    <strong className="font-mono text-emerald-400 text-xs block">{ocrDetectedExpiration || 'ساري'}</strong>
+                  </div>
+                  {ocrDetectedCategory && (
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">صنف الرخصة:</span>
+                      <strong className="font-mono text-amber-300 text-xs block">الصنف ({ocrDetectedCategory})</strong>
+                    </div>
+                  )}
+                  {ocrDetectedNIN && (
+                    <div>
+                      <span className="text-slate-400 block text-[10px]">رقم التعريف الوطني (NIN):</span>
+                      <strong className="font-mono text-slate-300 text-[10px] block truncate">{ocrDetectedNIN}</strong>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 text-[10px] text-emerald-400/90 bg-emerald-950/60 p-2 rounded-lg border border-emerald-500/20">
+                  <ShieldCheck size={14} className="text-emerald-400 flex-shrink-0" />
+                  <span>تطابق أمني 100%: الاسم وتاريخ الميلاد متطابقان مع الحساب والوثيقة سارية المفعول</span>
                 </div>
               </div>
             )}
@@ -1861,13 +1954,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             disabled={
               (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
-              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false)) ||
+              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false || !!ocrError)) ||
               (currentStep === 5 && (!grayCardPhoto || isScanningGrayCard || grayCardValid === false || !vehiclePlate.trim()))
             }
             className={`px-6 py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
               (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
-              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false)) ||
+              (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false || !!ocrError)) ||
               (currentStep === 5 && (!grayCardPhoto || isScanningGrayCard || grayCardValid === false || !vehiclePlate.trim()))
                 ? 'bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 border border-slate-700'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20 active:scale-95'

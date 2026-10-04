@@ -105,6 +105,9 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           image: photoDataUrl,
+          expectedFirstName: driver?.firstName,
+          expectedLastName: driver?.lastName,
+          expectedBirthDate: driver?.birthDate,
           isRenewalCheck: true,
         }),
       });
