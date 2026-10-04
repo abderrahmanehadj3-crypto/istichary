@@ -89,6 +89,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [ocrDetectedNIN, setOcrDetectedNIN] = useState<string | null>(null);
   const [ocrDetectedCategory, setOcrDetectedCategory] = useState<string | null>(null);
 
+  // Anti-Tampering Read-Only OCR Lock States for Gray Card
+  const [ocrExtractedPlate, setOcrExtractedPlate] = useState<string | null>(null);
+  const [ocrExtractedBrand, setOcrExtractedBrand] = useState<string | null>(null);
+  const [ocrExtractedModel, setOcrExtractedModel] = useState<string | null>(null);
+
   const inferredFirst = currentUser.displayName ? currentUser.displayName.split(' ')[0] : '';
   const inferredLast =
     currentUser.displayName && currentUser.displayName.includes(' ')
@@ -389,6 +394,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setVehiclePlate('');
     setVehicleBrand('');
     setVehicleModel('');
+    setOcrExtractedPlate(null);
+    setOcrExtractedBrand(null);
+    setOcrExtractedModel(null);
     setGrayCardError(null);
     setGrayCardValid(null);
     setIsScanningGrayCard(true);
@@ -410,11 +418,19 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
 
       // Auto-fill extracted vehicle data & lock as Read-Only
+      const cleanPlate = data.vehiclePlate.trim();
+      const cleanBrand = (data.vehicleBrand || '').trim();
+      const cleanModel = (data.vehicleModel || '').trim();
+
       setGrayCardValid(true);
       setGrayCardError(null);
-      setVehiclePlate(data.vehiclePlate);
-      setVehicleBrand(data.vehicleBrand || '');
-      setVehicleModel(data.vehicleModel || '');
+      setVehiclePlate(cleanPlate);
+      setVehicleBrand(cleanBrand);
+      setVehicleModel(cleanModel);
+      setOcrExtractedPlate(cleanPlate);
+      setOcrExtractedBrand(cleanBrand);
+      setOcrExtractedModel(cleanModel);
+
       if (data.vehicleType && (data.vehicleType === 'motorcycle' || data.vehicleType === 'car' || data.vehicleType === 'van')) {
         setVehicleType(data.vehicleType);
       }
@@ -424,7 +440,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
     } catch (err: any) {
       setGrayCardValid(false);
-      const errTxt = 'فشل قراءة البطاقة الرمادية. يرجى التأكد من وضوح الصورة.';
+      const errTxt = 'فشل قراءة البطاقة الرمادية. يرجى التأكد من وضوح الصورة والاتصال بالإنترنت.';
       setGrayCardError(errTxt);
       setErrorMsg(errTxt);
     } finally {
@@ -570,6 +586,33 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       licenseStreamRef.current = null;
     }
     setIsLicenseScannerOpen(false);
+  };
+
+  // Gray Card Camera (Direct Live Camera Trigger - Rear Camera, strictly no gallery upload)
+  const openCarteGriseLiveScanner = () => {
+    setErrorMsg(null);
+    setGrayCardError(null);
+    // DYNAMIC RESET: Instantly clear out all previously populated vehicle fields to force fresh OCR
+    setVehiclePlate('');
+    setVehicleBrand('');
+    setVehicleModel('');
+    setOcrExtractedPlate(null);
+    setOcrExtractedBrand(null);
+    setOcrExtractedModel(null);
+    setGrayCardValid(null);
+    setGrayCardPhoto(null);
+
+    launchNativeDeviceCamera(
+      'environment',
+      (dataUrl) => {
+        setGrayCardPhoto(dataUrl);
+        scanCarteGriseOcr(dataUrl);
+        setErrorMsg(null);
+      },
+      (errMsg) => {
+        setErrorMsg(errMsg);
+      }
+    );
   };
 
   // Step Validation & Progression
@@ -762,29 +805,41 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     } else {
       // Step 5 Check: Vehicle Information & Gray Card (Carte Grise)
       if (!grayCardPhoto) {
-        setErrorMsg('يرجى تصوير أو رفع البطاقة الرمادية للمركبة (Carte Grise) لإتمام التسجيل');
+        setErrorMsg('يرجى التقاط صورة البطاقة الرمادية للمركبة (Carte Grise) عبر الكاميرا الحية لإتمام التسجيل');
         return;
       }
       if (isScanningGrayCard) {
-        setErrorMsg('جاري فحص البطاقة الرمادية بالذكاء الاصطناعي، يرجى الانتظار');
+        setErrorMsg('جاري فحص البطاقة الرمادية بالذكاء الاصطناعي، يرجى الانتظار ثوانٍ معدودة');
         return;
       }
       if (grayCardValid === false || grayCardError) {
-        setErrorMsg(grayCardError || 'البطاقة الرمادية المرفوعة غير مقروءة أو مرفوضة. يرجى إعادة التصوير بوضوح.');
+        setErrorMsg(grayCardError || 'البطاقة الرمادية الملتقطة غير مقروءة أو مرفوضة. يرجى إعادة التصوير بوضوح.');
         return;
       }
       if (!vehiclePlate.trim() || !vehicleBrand.trim() || !vehicleModel.trim()) {
         setErrorMsg(
           lang === 'ar'
-            ? 'يرجى إتمام قراءة البطاقة الرمادية لتثبيت رقم لوحة الترقيم، العلامة والموديل للمركبة'
+            ? 'يرجى إتمام فحص البطاقة الرمادية بالكاميرا لتثبيت رقم لوحة الترقيم، العلامة والموديل للمركبة'
             : 'Please complete Gray Card scan to lock vehicle plate, brand and model'
+        );
+        return;
+      }
+
+      // ANTI-TAMPERING VERIFICATION: Ensure plate, brand, and model were NOT manually edited or tampered with in DOM
+      const isPlateTampered = ocrExtractedPlate && vehiclePlate.trim().toUpperCase() !== ocrExtractedPlate.trim().toUpperCase();
+      const isBrandTampered = ocrExtractedBrand && vehicleBrand.trim().toUpperCase() !== ocrExtractedBrand.trim().toUpperCase();
+      const isModelTampered = ocrExtractedModel && vehicleModel.trim().toUpperCase() !== ocrExtractedModel.trim().toUpperCase();
+
+      if (isPlateTampered || isBrandTampered || isModelTampered) {
+        setErrorMsg(
+          'فشل التحقق الأمني (مكافحة التلاعب): تم اكتشاف تعديل أو حذف في بيانات المركبة المقفولة (لوحة الترقيم، العلامة أو الموديل). الحقول مخصصة للقراءة فقط ومستخرجة آلياً عبر البطاقة الرمادية.'
         );
         return;
       }
 
       // Calculate license grace period status for record keeping
       const expDate = new Date(licenseExpiration);
-      const curDate = new Date('2026-10-01');
+      const curDate = new Date('2026-10-04');
       const isExp = !isNaN(expDate.getTime()) && expDate < curDate;
 
       // 30 days post-expiry
@@ -1461,44 +1516,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </p>
             </div>
 
-            {/* Hidden File Inputs for Device Image Upload */}
-            <input
-              type="file"
-              id="input-file-license-front"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                  const dataUrl = ev.target?.result as string;
-                  if (dataUrl) {
-                    setLicenseFront(dataUrl);
-                    scanLicenseOcr(dataUrl);
-                  }
-                };
-                reader.readAsDataURL(file);
-              }}
-            />
-            <input
-              type="file"
-              id="input-file-license-back"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                  const dataUrl = ev.target?.result as string;
-                  if (dataUrl) setLicenseBack(dataUrl);
-                };
-                reader.readAsDataURL(file);
-              }}
-            />
-
-            {/* Front & Back Live Camera / Upload Photo Slots */}
+            {/* Front & Back Live Camera Only Photo Slots (No Gallery Upload Allowed) */}
             <div className="grid grid-cols-2 gap-3">
               {/* Front Side */}
               <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center flex flex-col justify-between">
@@ -1521,29 +1539,26 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     </span>
                   </div>
                 ) : (
-                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5">
-                    <Camera size={26} className="text-slate-600 mb-1" />
-                    <span className="text-[11px] text-slate-400 font-semibold">الوجه الأمامي</span>
-                    <span className="text-[10px] text-slate-500">كاميرا حية أو رفع صورة</span>
+                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5 p-2">
+                    <Camera size={26} className="text-emerald-400 mb-1" />
+                    <span className="text-[11px] text-slate-300 font-bold">الوجه الأمامي</span>
+                    <span className="text-[9px] text-amber-400 mt-1 font-semibold leading-tight">
+                      كاميرا حية فقط • ممنوع رفع صور من المعرض
+                    </span>
                   </div>
                 )}
-                <div className="flex flex-col gap-1.5 w-full">
+                <div className="w-full">
                   <button
                     type="button"
                     onClick={() => openLicenseLiveScanner('front')}
-                    className="w-full py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                    className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
                   >
                     <Camera size={14} />
-                    <span>{licenseFront ? t.retakeLive : 'كاميرا حية'}</span>
+                    <span>{licenseFront ? 'إعادة التقاط الوجه الأمامي (كاميرا حية)' : 'التقاط الوجه الأمامي (كاميرا حية)'}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => document.getElementById('input-file-license-front')?.click()}
-                    className="w-full py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-750 text-[11px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <UploadCloud size={13} />
-                    <span>رفع صورة</span>
-                  </button>
+                  <p className="text-[9px] text-slate-500 text-center mt-1">
+                    التقاط فوري عبر الكاميرا لمنع التزوير
+                  </p>
                 </div>
               </div>
 
@@ -1564,29 +1579,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     </span>
                   </div>
                 ) : (
-                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5">
-                    <Camera size={26} className="text-slate-600 mb-1" />
+                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5 p-2">
+                    <Camera size={26} className="text-slate-500 mb-1" />
                     <span className="text-[11px] text-slate-400 font-semibold">الوجه الخلفي</span>
-                    <span className="text-[10px] text-slate-500">(اختياري)</span>
+                    <span className="text-[9px] text-slate-500 mt-1">(اختياري • كاميرا حية فقط)</span>
                   </div>
                 )}
-                <div className="flex flex-col gap-1.5 w-full">
+                <div className="w-full">
                   <button
                     type="button"
                     onClick={() => openLicenseLiveScanner('back')}
-                    className="w-full py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                    className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
                   >
                     <Camera size={14} />
-                    <span>{licenseBack ? t.retakeLive : 'كاميرا حية'}</span>
+                    <span>{licenseBack ? 'إعادة التقاط الوجه الخلفي (كاميرا حية)' : 'التقاط الوجه الخلفي (كاميرا حية)'}</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => document.getElementById('input-file-license-back')?.click()}
-                    className="w-full py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-750 text-[11px] font-bold transition flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <UploadCloud size={13} />
-                    <span>رفع صورة</span>
-                  </button>
+                  <p className="text-[9px] text-slate-500 text-center mt-1">
+                    كاميرا حية فقط • لا يُقبل المعرض
+                  </p>
                 </div>
               </div>
             </div>
@@ -1599,32 +1609,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             <div className="text-center">
               <h4 className="font-bold text-base text-white">{t.step5Title}</h4>
               <p className="text-xs text-slate-400 mt-1">
-                رفع البطاقة الرمادية وتثبيت بيانات المركبة آلياً بواسطة الذكاء الاصطناعي لمنع التلاعب
+                التقاط البطاقة الرمادية وتثبيت بيانات المركبة آلياً بواسطة الذكاء الاصطناعي لمنع التلاعب
               </p>
             </div>
 
-            {/* Hidden File Input for Gray Card */}
-            <input
-              type="file"
-              id="input-file-graycard"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                  const dataUrl = ev.target?.result as string;
-                  if (dataUrl) {
-                    setGrayCardPhoto(dataUrl);
-                    scanCarteGriseOcr(dataUrl);
-                  }
-                };
-                reader.readAsDataURL(file);
-              }}
-            />
-
-            {/* Gray Card Upload Section (Confidential, restricted, non-downloadable) */}
+            {/* Gray Card Live Camera Section (Confidential, restricted, non-downloadable) */}
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -1669,7 +1658,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                 </div>
               )}
 
-              {/* Upload Slot */}
+              {/* Live Camera Capture Slot */}
               <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800">
                 {grayCardPhoto ? (
                   <div className="relative w-20 h-16 rounded-lg overflow-hidden border border-emerald-500/50 shrink-0">
@@ -1678,26 +1667,26 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   </div>
                 ) : (
                   <div className="w-20 h-16 rounded-lg border border-dashed border-slate-700 bg-slate-950 flex flex-col items-center justify-center text-slate-500 shrink-0">
-                    <FileText size={20} />
-                    <span className="text-[9px] mt-0.5 font-bold">البطاقة</span>
+                    <Camera size={20} className="text-emerald-400" />
+                    <span className="text-[9px] mt-0.5 font-bold">كاميرا حية</span>
                   </div>
                 )}
 
                 <div className="flex-1">
                   <p className="text-xs font-bold text-white">
-                    {grayCardPhoto ? 'تم اختيار صورة البطاقة الرمادية' : 'صورة البطاقة الرمادية (الوجه الأمامي)'}
+                    {grayCardPhoto ? 'تم التقاط صورة البطاقة الرمادية' : 'صورة البطاقة الرمادية (الوجه الأمامي)'}
                   </p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    التقط صورة واضحة ومباشرة لكامل البطاقة لقراءة الترقيم
+                  <p className="text-[10px] text-amber-400 mt-0.5 font-semibold">
+                    كاميرا حية فقط • يُمنع رفع صور من المعرض لمنع التزوير
                   </p>
                   <div className="flex items-center gap-2 mt-2">
                     <button
                       type="button"
-                      onClick={() => document.getElementById('input-file-graycard')?.click()}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                      onClick={openCarteGriseLiveScanner}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer active:scale-95"
                     >
-                      <Camera size={13} />
-                      <span>{grayCardPhoto ? 'تغيير الصورة وإعادة المسح' : 'تصوير / رفع البطاقة الرمادية'}</span>
+                      <Camera size={14} />
+                      <span>{grayCardPhoto ? 'إعادة التقاط البطاقة الرمادية (كاميرا حية)' : 'التقاط البطاقة الرمادية (كاميرا حية فقط)'}</span>
                     </button>
                     {grayCardPhoto && (
                       <button
@@ -1707,10 +1696,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                           setVehiclePlate('');
                           setVehicleBrand('');
                           setVehicleModel('');
+                          setOcrExtractedPlate(null);
+                          setOcrExtractedBrand(null);
+                          setOcrExtractedModel(null);
                           setGrayCardValid(null);
                           setGrayCardError(null);
                         }}
-                        className="p-1.5 rounded-xl bg-slate-800 text-slate-400 hover:text-red-400 border border-slate-700 transition cursor-pointer"
+                        className="p-2 rounded-xl bg-slate-800 text-slate-400 hover:text-red-400 border border-slate-700 transition cursor-pointer"
                         title="إعادة تعيين البطاقة الرمادية"
                       >
                         <Trash2 size={13} />

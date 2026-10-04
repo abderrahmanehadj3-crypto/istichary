@@ -216,8 +216,12 @@ export function App() {
     await saveNewOrderToSupabase(newOrder);
     setOrders((prev) => [newOrder, ...prev]);
 
-    // Play Dispatch alert sound
-    soundNotifier.playNewOrderSound();
+    // Play Dispatch alert sound & voice prompt for nearby drivers
+    if (currentUser.role === 'driver') {
+      soundNotifier.playProximityOrderAlert(newOrder.id, newOrder.distanceKm, 'هناك طلبية قريبة، انتبه!');
+    } else {
+      soundNotifier.playNewOrderSound();
+    }
 
     setActiveNotification({
       id: `notif-${Date.now()}`,

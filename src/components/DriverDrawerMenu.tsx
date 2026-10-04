@@ -41,7 +41,9 @@ import {
   AlertTriangle,
   Lock,
   RefreshCw,
+  Camera,
 } from 'lucide-react';
+import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
 
 interface DriverDrawerMenuProps {
   isOpen: boolean;
@@ -1050,23 +1052,6 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
             )}
 
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
-              <input
-                type="file"
-                id="input-renewal-license"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = (ev) => {
-                    const dataUrl = ev.target?.result as string;
-                    if (dataUrl) handleRenewalOcr(dataUrl);
-                  };
-                  reader.readAsDataURL(file);
-                }}
-              />
-
               {renewalLicenseImage ? (
                 <div className="w-full h-36 rounded-xl overflow-hidden border border-emerald-500">
                   <img src={renewalLicenseImage} alt="Renewed License" className="w-full h-full object-cover" />
@@ -1075,15 +1060,21 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                 <div className="w-full h-36 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/60 flex flex-col items-center justify-center text-slate-500">
                   <FileText size={32} className="text-slate-600 mb-1" />
                   <span className="text-xs font-bold text-slate-300">صورة رخصة القيادة المجددة</span>
-                  <span className="text-[10px] text-slate-500">يجب أن توضح تاريخ الانتهاء الجديد بوضوح</span>
+                  <span className="text-[10px] text-amber-400 mt-0.5 font-semibold">كاميرا حية مباشرة • يُمنع المعرض</span>
                 </div>
               )}
 
               <button
                 type="button"
                 disabled={isScanningRenewal}
-                onClick={() => document.getElementById('input-renewal-license')?.click()}
-                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20"
+                onClick={() => {
+                  launchNativeDeviceCamera(
+                    'environment',
+                    (dataUrl) => handleRenewalOcr(dataUrl),
+                    (err) => setRenewalError(err)
+                  );
+                }}
+                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs transition flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-500/20 active:scale-95"
               >
                 {isScanningRenewal ? (
                   <>
@@ -1092,11 +1083,14 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
                   </>
                 ) : (
                   <>
-                    <Upload size={14} />
-                    <span>التقاط أو رفع صورة الرخصة المجددة</span>
+                    <Camera size={14} />
+                    <span>التقاط صورة الرخصة المجددة (كاميرا حية فقط)</span>
                   </>
                 )}
               </button>
+              <p className="text-[10px] text-slate-400">
+                يتم فتح الكاميرا الحية مباشرة لتصوير الرخصة لمنع التزوير والاحتيال
+              </p>
             </div>
           </div>
         </div>

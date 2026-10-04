@@ -968,11 +968,14 @@ Respond ONLY with valid JSON:
       }
 
       const prompt = `You are an expert forensic document validation and OCR engine specialized in the official Algerian Driver's License:
-1. Algerian Biometric Smart Driver's License (رخصة السياقة البيومترية الإلكترونية الجزائرية / Permis de conduire biométrique algérien) - ISO/IEC 7810 ID-1 format.
+1. Algerian Biometric Smart Driver's License (رخصة السياقة البيومترية الإلكترونية الجزائرية / Permis de conduire biométrique algérien) - ISO/IEC 7810 ID-1 standard polycarbonate card.
 2. Algerian Classic Pink Driver's License (رخصة السياقة الورقية الوردية الكلاسيكية / Permis rose à 3 volets).
 
-Inspect this image with extreme forensic scrutiny against genuine Algerian driving license layouts.
-Current reference date: October 4, 2026 (${currentDateStr}).
+REAL-WORLD SMARTPHONE LIVE CAMERA TOLERANCE:
+- The driver captures this image using their device live camera.
+- The card is commonly held in the driver's hand/fingers, or placed on a steering wheel, table, or desk.
+- Normal handheld smartphone camera conditions: slight perspective tilt, minor glare/reflection on the plastic laminate, or visible fingers holding the border MUST NOT cause rejection. As long as the Algerian driver's license card is visible and its text/numbers can be read, it MUST BE ACCEPTED (isValidDocument: true).
+- DO NOT FALSELY REJECT valid licenses. Only reject if the card is NOT an Algerian driver's license (e.g. clearly a National ID CNI, Passport, Carte Grise, completely dark black image, or unreadable blur).
 
 DOCUMENT LAYOUT KNOWLEDGE BASE (ALGERIAN BIOMETRIC DRIVING LICENSE):
 1. FRONT SIDE STRUCTURE (الوجه الأمامي):
@@ -989,7 +992,7 @@ DOCUMENT LAYOUT KNOWLEDGE BASE (ALGERIAN BIOMETRIC DRIVING LICENSE):
      - 4b. Date of expiry / تاريخ انتهاء الصلاحية: Format "DD.MM.YYYY" (e.g. "4b. 28.04.2034")
      - 4c. Issuing authority / سلطة الإصدار (e.g. "بلدية أم البواقي - أم البواقي" or "دائرة...")
      - 4d. National Identification Number / الرقم التعريفي الوطني (NIN): 18-digit number (e.g. "100030088009650000")
-     - 5. License Number / رقم الرخصة (usually letter like 'A' followed by 8 digits, e.g. "A04201870", or "16/123456")
+     - 5. License Number / رقم الرخصة (usually letter like 'A' followed by 8 digits, e.g. "A04201870", or numeric format e.g. "16/123456" or "04201870")
      - 9. Category / الأصناف (e.g. "B" or "A1" or "A2")
      - 15. Gender / الجنس ("M" / "ذكر" or "F" / "أنثى")
 
@@ -1003,10 +1006,10 @@ DOCUMENT LAYOUT KNOWLEDGE BASE (ALGERIAN BIOMETRIC DRIVING LICENSE):
      - Line 3: "SURNAME<<GIVEN_NAMES" (e.g. "HADJADJ<<ABDERRAHMANE<<<<<<<<<<")
 
 CRITICAL VALIDATION & ANTI-FRAUD REJECTION RULES:
-1. "isValidDocument": MUST be true ONLY IF the image is an authentic, legible Algerian driver's license (front or back).
-   - REJECT IMMEDIATELY (set "isValidDocument": false) if:
-     - The image is pitch black, dark, blurry, low resolution, or text is unreadable.
-     - The image is a photo of a floor, wall, desk, ceiling, keyboard, computer screen, furniture, clothing, selfie, pet, or random object.
+1. "isValidDocument": MUST be true for any authentic, legible Algerian driver's license (front or back).
+   - REJECT ONLY IF:
+     - The image is pitch black, dark, blurry, low resolution, or text is completely unreadable.
+     - The image is a photo of a floor, wall, desk, ceiling, keyboard, computer screen, furniture, clothing, selfie, pet, or random object with no driver's license.
      - The image is an Algerian National ID Card (بطاقة التعريف الوطنية البيومترية CNI): Identify it specifically as "national_id_card" with rejection message: "الوثيقة المرفوعة هي بطاقة التعريف الوطنية وليست رخصة سياقة. يرجى رفع رخصة السياقة الرسمية."
      - The image is a Passport (جواز السفر البيومتري): Identify it specifically as "passport" with rejection message: "الوثيقة المرفوعة هي جواز سفر وليست رخصة سياقة."
      - The image is a Vehicle Registration Gray Card (البطاقة الرمادية Carte Grise): Identify as "carte_grise" with message: "الوثيقة المرفوعة هي بطاقة رمادية للمركبة وليست رخصة سياقة. يرجى رفع رخصة القيادة."
@@ -1014,9 +1017,9 @@ CRITICAL VALIDATION & ANTI-FRAUD REJECTION RULES:
 2. "rejectionReason": If invalid, specify: "not_a_license" | "too_dark_or_blurry" | "national_id_card" | "passport" | "carte_grise" | "other_card" | "unreadable".
 3. "rejectionMessage": Detailed, professional Arabic error message explaining why the document was rejected.
 4. Extract accurately:
-   - "licenseNumber": Official license number without spaces or dashes (e.g. "A04201870").
-   - "expirationDate": Expiration date in "YYYY-MM-DD" format (convert "28.04.2034" to "2034-04-28").
-   - "birthDate": Date of birth in "YYYY-MM-DD" format (convert "18.07.2003" to "2003-07-18").
+   - "licenseNumber": Official license number without spaces or dashes (e.g. "A04201870"). If from back side, extract from Line 1 of MRZ after "DLDZA". If field 5 is missing, extract from the most prominent license identifier or NIN.
+   - "expirationDate": Expiration date in "YYYY-MM-DD" format (convert "28.04.2034" to "2034-04-28"). If back side, extract from MRZ Line 2.
+   - "birthDate": Date of birth in "YYYY-MM-DD" format (convert "18.07.2003" to "2003-07-18"). If back side, extract from MRZ Line 2.
    - "issueDate": Issue date in "YYYY-MM-DD" format.
    - "fullName": Full legal Latin name (e.g. "HADJADJ ABDERRAHMANE").
    - "fullNameAr": Full legal Arabic name (e.g. "حجاج عبد الرحمان").
@@ -1075,8 +1078,21 @@ Respond ONLY with valid JSON:
         console.warn('[License OCR AI Notice]:', aiErr);
       }
 
+      // Robust fallback extraction: check if valid license fields were extracted
+      const extractedLicenseNum =
+        ocrResult?.licenseNumber ||
+        ocrResult?.documentNumber ||
+        ocrResult?.permisNumber ||
+        ocrResult?.nationalIdNumber;
+
+      const hasLegitAlgerianLicenseData =
+        ocrResult &&
+        (ocrResult.isValidDocument === true ||
+          (extractedLicenseNum &&
+            (ocrResult.fullName || ocrResult.fullNameAr || ocrResult.expirationDate || ocrResult.birthDate)));
+
       // STRICT VALIDATION CHECK: Never pass invalid, dark, blurry, or non-license images!
-      if (!ocrResult || !ocrResult.isValidDocument || !ocrResult.licenseNumber) {
+      if (!hasLegitAlgerianLicenseData || !extractedLicenseNum) {
         return res.status(400).json({
           success: false,
           isValidDocument: false,
@@ -1084,7 +1100,7 @@ Respond ONLY with valid JSON:
           rejectionReason: ocrResult?.rejectionReason || 'not_a_license',
           error:
             ocrResult?.rejectionMessage ||
-            'الصورة الملتقطة غير واضحة أو لا تمثل رخصة سياقة بيومترية جزائرية معتمدة. يرجى تصوير الوجه الأمامي أو الخلفي للرخصة بوضوح في إضاءة جيدة.',
+            'الصورة الملتقطة غير واضحة أو لا تمثل رخصة سياقة بيومترية جزائرية معتمدة. يرجى توجيه الكاميرا مباشرة نحو رخصة القيادة والتأكد من وضوح الأرقام والبيانات في إضاءة جيدة.',
         });
       }
 
@@ -1103,7 +1119,7 @@ Respond ONLY with valid JSON:
       }
 
       // Clean license number (remove whitespace, dashes)
-      const cleanLicenseNumber = ocrResult.licenseNumber.replace(/[\s\-\/\.]/g, '').toUpperCase();
+      const cleanLicenseNumber = String(extractedLicenseNum).replace(/[\s\-\/\.]/g, '').toUpperCase();
 
       // Support isRenewalCheck parameter for already registered drivers vs new registrations
       const isRenewal = isRenewalCheck === true;
@@ -1223,15 +1239,18 @@ Respond ONLY with valid JSON:
       }
 
       const prompt = `You are an expert Algerian vehicle registration document (البطاقة الرمادية / Carte Grise / بطاقة ترقيم المركبات) OCR & anti-tampering engine.
-Inspect this image with extreme scrutiny.
+
+REAL-WORLD SMARTPHONE LIVE CAMERA TOLERANCE:
+- The driver captures this image directly via their smartphone camera.
+- The document may be held with fingers/hands or laid on a surface. Normal handheld camera conditions (minor angle, slight lighting variation) MUST BE ACCEPTED if the registration card is visible and legible.
+- Do NOT falsely reject valid Algerian Gray Cards. Only reject if the image is pitch dark, completely unreadable, a driver's license, national ID, or random non-document object.
 
 STRICT VALIDATION CRITERIA:
 1. "isValidDocument": Check if this is an authentic Algerian vehicle registration document (Carte Grise or provisional registration receipt).
-   - If the image is dark, pitch black, blurry, a wall, an object, a person, a driver's license, or not a Gray Card, set "isValidDocument": false.
-2. EXTRACT ONLY VEHICLE DETAILS (Completely ignore owner identity/name):
-   - "vehicleBrand": Vehicle make/manufacturer (Marque), e.g. "Sym", "Yamaha", "Peugeot", "Renault", "Dacia", "Toyota", "Kymco".
-   - "vehicleModel": Vehicle commercial model (Genre / Type / Modèle), e.g. "Orbit II 150cc", "Clio 4", "Logan", "Partner", "T-Max".
-   - "vehiclePlate": Official Algerian registration plate / Matricule (e.g. "01234-121-16", "04562-119-06", etc.). Format cleanly with hyphens if appropriate.
+2. EXTRACT ONLY VEHICLE DETAILS (Strictly ignore owner identity/name for privacy):
+   - "vehicleBrand": Vehicle make/manufacturer (Marque), e.g. "Sym", "Yamaha", "Peugeot", "Renault", "Dacia", "Toyota", "Kymco", "VMS".
+   - "vehicleModel": Vehicle commercial model (Genre / Type / Modèle), e.g. "Orbit II 150cc", "Clio 4", "Logan", "Partner", "T-Max", "Cuxi".
+   - "vehiclePlate": Official Algerian registration plate / Matricule (e.g. "01234-121-16", "04562-119-06", "00432-120-31", etc.). Format cleanly with hyphens if appropriate.
    - "vehicleType": "motorcycle" | "car" | "van" based on vehicle classification.
 
 Respond ONLY with valid JSON:

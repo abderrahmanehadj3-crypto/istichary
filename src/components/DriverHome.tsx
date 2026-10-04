@@ -30,7 +30,11 @@ import {
   RefreshCw,
   AlertCircle,
   Lock,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
+import { soundNotifier, calculateHaversineDistanceKm } from '../utils/audioNotification';
+import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
 
 interface DriverHomeProps {
   currentUser: UserProfile;
@@ -201,6 +205,36 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
           (o.status === 'searching' || o.status === 'negotiating') &&
           (!activeMission || o.id === activeMission.id)
       );
+
+  // 5. PROXIMITY-BASED AUDIO ORDER ALERTS (VOICE NOTIFICATION)
+  // When a new delivery order is placed, calculate proximity and trigger audio alert + voice prompt
+  const [audioAlertsEnabled, setAudioAlertsEnabled] = useState<boolean>(true);
+  const alertedOrdersRef = React.useRef<Set<string>>(new Set());
+
+  React.useEffect(() => {
+    if (!effectiveIsOnline || !audioAlertsEnabled || availableOrders.length === 0) return;
+
+    availableOrders.forEach((order) => {
+      if (alertedOrdersRef.current.has(order.id)) return;
+      alertedOrdersRef.current.add(order.id);
+
+      // Calculate proximity distance using Haversine formula
+      let distKm = order.distanceKm || 2.5;
+      if (driverGpsCoords && order.pickupCoords) {
+        distKm = calculateHaversineDistanceKm(
+          driverGpsCoords.lat,
+          driverGpsCoords.lng,
+          order.pickupCoords.lat,
+          order.pickupCoords.lng
+        );
+      }
+
+      // Proximity dispatch alert for nearby drivers (within 25 km)
+      if (distKm <= 25) {
+        soundNotifier.playProximityOrderAlert(order.id, distKm, 'هناك طلبية قريبة، انتبه!');
+      }
+    });
+  }, [availableOrders, effectiveIsOnline, audioAlertsEnabled, driverGpsCoords]);
 
   // Submit Counter Offer with GPS coordinates
   const handleMakeBid = (order: DeliveryOrder, extraAmount: number = 0) => {
@@ -434,6 +468,45 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
         </select>
       </div>
 
+      {/* 5. PROXIMITY-BASED AUDIO ORDER ALERTS (VOICE NOTIFICATION) BANNER */}
+      <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/30 flex items-center justify-between gap-3 text-xs shadow-md">
+        <div className="flex items-center gap-2.5 text-emerald-300">
+          <div className="p-1.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+            <Volume2 size={16} className="animate-pulse" />
+          </div>
+          <div>
+            <span className="font-bold block text-white text-xs">
+              التنبيهات الصوتية الحية (Voice Alert)
+            </span>
+            <span className="text-[10px] text-emerald-300/80">
+              إشعار صوتي فوري عند توفر طلبية قريبة حتى لا تضطر للنظر إلى الشاشة أثناء القيادة
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => soundNotifier.playProximityOrderAlert('test-audio', 2.3, 'هناك طلبية قريبة، انتبه!')}
+            className="px-2.5 py-1.5 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold cursor-pointer transition active:scale-95 flex items-center gap-1"
+            title="تجربة صوت التنبيه والنطق"
+          >
+            <Volume2 size={12} />
+            <span>تجربة الصوت</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setAudioAlertsEnabled(!audioAlertsEnabled)}
+            className={`px-2.5 py-1.5 rounded-xl border text-[11px] font-bold cursor-pointer transition flex items-center gap-1 ${
+              audioAlertsEnabled
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                : 'bg-red-950 text-red-300 border-red-500/40'
+            }`}
+          >
+            {audioAlertsEnabled ? <span>مفعّل 🔊</span> : <span>صامت 🔇</span>}
+          </button>
+        </div>
+      </div>
+
       {/* Available Orders Section */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -617,23 +690,6 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             )}
 
             <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-3">
-              <input
-                type="file"
-                id="input-driverhome-renewal-license"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = (ev) => {
-                    const dataUrl = ev.target?.result as string;
-                    if (dataUrl) handleRenewalOcr(dataUrl);
-                  };
-                  reader.readAsDataURL(file);
-                }}
-              />
-
               {renewalLicenseImage ? (
                 <div className="w-full h-40 rounded-xl overflow-hidden border border-emerald-500">
                   <img src={renewalLicenseImage} alt="Renewed License" className="w-full h-full object-cover" />
@@ -642,7 +698,7 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
                 <div className="w-full h-40 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/60 flex flex-col items-center justify-center text-slate-500">
                   <FileText size={32} className="text-slate-600 mb-1" />
                   <span className="text-xs font-bold text-slate-300">صورة رخصة القيادة المجددة</span>
-                  <span className="text-[10px] text-slate-500 mt-1">يجب أن توضح تاريخ الانتهاء الجديد بوضوح</span>
+                  <span className="text-[10px] text-amber-400 mt-1 font-semibold">كاميرا حية مباشرة • يُمنع رفع صور من المعرض</span>
                 </div>
               )}
 
@@ -656,11 +712,17 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
               <button
                 type="button"
                 disabled={isScanningRenewal}
-                onClick={() => document.getElementById('input-driverhome-renewal-license')?.click()}
-                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md"
+                onClick={() => {
+                  launchNativeDeviceCamera(
+                    'environment',
+                    (dataUrl) => handleRenewalOcr(dataUrl),
+                    (errMsg) => setRenewalError(errMsg)
+                  );
+                }}
+                className="w-full py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 cursor-pointer shadow-md active:scale-95"
               >
                 <Camera size={14} />
-                <span>{renewalLicenseImage ? 'إعادة تصوير رخصة أخرى' : 'التقاط أو رفع صورة الرخصة'}</span>
+                <span>{renewalLicenseImage ? 'إعادة التقاط رخصة أخرى (كاميرا حية)' : 'التقاط صورة رخصة القيادة (كاميرا حية)'}</span>
               </button>
             </div>
 
