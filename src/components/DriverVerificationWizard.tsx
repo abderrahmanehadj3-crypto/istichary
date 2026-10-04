@@ -32,6 +32,7 @@ import { analyzeFaceBiometrics } from '../utils/faceBiometricsCV';
 import { saveDriverVerification } from '../utils/supabaseSync';
 import { DRIVER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
 import { soundNotifier } from '../utils/audioNotification';
+import { preprocessLicenseFrameForOcr } from '../utils/imagePreprocessingCV';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -327,11 +328,19 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
     // 2. Strict Server-side Document Forensic Verification & Cross-Matching
     try {
+      let processedDataUrl = photoDataUrl;
+      try {
+        const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
+        processedDataUrl = prep.processedDataUrl;
+      } catch (cvErr) {
+        console.warn('[CV Preprocessing fallback in scanLicenseOcr]:', cvErr);
+      }
+
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: photoDataUrl,
+          image: processedDataUrl,
           expectedFirstName: firstName,
           expectedLastName: lastName,
           expectedBirthDate: birthDate,
@@ -637,16 +646,27 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
   const handleProcessLicenseCapture = async (dataUrl: string) => {
     setLicenseFrameBorderState('detecting');
-    setFrameFeedbackMessage('جاري فحص الوثيقة بالذكاء الاصطناعي واستخراج البيانات...');
+    setFrameFeedbackMessage('جاري معالجة الصورة وتحسين التباين البصري (Auto-Contrast & Noise Reduction)...');
     setIsScanningLicense(true);
     setOcrError(null);
 
     try {
+      // 1. Client-side Computer Vision Pre-processing (Auto-contrast, deskewing, unsharp mask sharpening)
+      let processedImage = dataUrl;
+      try {
+        const preprocessed = await preprocessLicenseFrameForOcr(dataUrl);
+        processedImage = preprocessed.processedDataUrl;
+      } catch (cvErr) {
+        console.warn('[CV Preprocessing fallback]:', cvErr);
+      }
+
+      setFrameFeedbackMessage('جاري فحص الوثيقة ومطابقتها مع القالب البيومتري الجزائري...');
+
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: dataUrl,
+          image: processedImage,
           expectedFirstName: firstName,
           expectedLastName: lastName,
           expectedBirthDate: birthDate,

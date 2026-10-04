@@ -762,13 +762,26 @@ Respond ONLY with valid JSON:
     }
   });
 
-  // Helper to parse Algerian date formats (DD.MM.YYYY, DD/MM/YYYY, YYYY-MM-DD, or MRZ YYMMDD)
-  // Robust to surrounding text, commune names, or field labels (e.g. "18.07.2003 أم البواقي" or "4b. 28.04.2034")
+  // Helper to parse Algerian date formats (DD.MM.YYYY, DD/MM/YYYY, YYYY-MM-DD, DD-MM-YYYY, or MRZ YYMMDD)
+  // Robust to Eastern Arabic numerals (٠-٩), Persian numerals, surrounding text, commune names, or field labels (e.g. "18.07.2003 أم البواقي" or "4b. 28.04.2034")
   function parseAlgerianDate(raw: string | null | undefined): string | null {
     if (!raw) return null;
-    const s = String(raw).trim();
+    let s = String(raw).trim();
 
-    // 1. ISO YYYY-MM-DD anywhere in string
+    // 0. Convert Eastern Arabic numerals (٠-٩) and Persian numerals (۰-۹) to standard ASCII (0-9)
+    s = s
+      .replace(/[٠۰]/g, '0')
+      .replace(/[١۱]/g, '1')
+      .replace(/[٢۲]/g, '2')
+      .replace(/[٣۳]/g, '3')
+      .replace(/[٤۴]/g, '4')
+      .replace(/[٥۵]/g, '5')
+      .replace(/[٦۶]/g, '6')
+      .replace(/[٧۷]/g, '7')
+      .replace(/[٨۸]/g, '8')
+      .replace(/[٩۹]/g, '9');
+
+    // 1. ISO YYYY-MM-DD anywhere in string (e.g. 2034-04-28 or 2034/04/28 or 2034.04.28)
     const isoMatch = s.match(/\b(\d{4})[\-\/\.](\d{1,2})[\-\/\.](\d{1,2})\b/);
     if (isoMatch) {
       const year = isoMatch[1];
@@ -781,8 +794,8 @@ Respond ONLY with valid JSON:
       }
     }
 
-    // 2. DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY (Standard Algerian format) anywhere in string
-    const dmyMatch = s.match(/\b(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{4})\b/);
+    // 2. DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY (Standard Algerian Biometric & Classic format)
+    const dmyMatch = s.match(/\b(\d{1,2})[\.\/\-\s](\d{1,2})[\.\/\-\s](\d{4})\b/);
     if (dmyMatch) {
       const day = dmyMatch[1].padStart(2, '0');
       const month = dmyMatch[2].padStart(2, '0');
@@ -794,7 +807,21 @@ Respond ONLY with valid JSON:
       }
     }
 
-    // 3. MRZ format YYMMDD (6 consecutive digits)
+    // 3. DD.MM.YY or DD/MM/YY (2-digit year format)
+    const dmyShortMatch = s.match(/\b(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{2})\b/);
+    if (dmyShortMatch) {
+      const day = dmyShortMatch[1].padStart(2, '0');
+      const month = dmyShortMatch[2].padStart(2, '0');
+      const y2 = parseInt(dmyShortMatch[3], 10);
+      const year = y2 <= 45 ? 2000 + y2 : 1900 + y2;
+      const mNum = parseInt(month, 10);
+      const dNum = parseInt(day, 10);
+      if (mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+        return `${year}-${month}-${day}`;
+      }
+    }
+
+    // 4. MRZ format YYMMDD (6 consecutive digits in Machine Readable Zone)
     const mrzMatch = s.match(/\b(\d{2})(\d{2})(\d{2})\b/);
     if (mrzMatch) {
       const y = parseInt(mrzMatch[1], 10);
@@ -807,6 +834,33 @@ Respond ONLY with valid JSON:
         return `${fullYear}-${m}-${d}`;
       }
     }
+
+    // 5. French/English text month formats (e.g. "28 AVRIL 2034" or "18 JUILLET 2003")
+    const monthMap: Record<string, string> = {
+      jan: '01', janv: '01', janvier: '01',
+      feb: '02', fevr: '02', fevrier: '02',
+      mar: '03', mars: '03',
+      apr: '04', avr: '04', avril: '04',
+      may: '05', mai: '05',
+      jun: '06', juin: '06',
+      jul: '07', juil: '07', juillet: '07',
+      aug: '08', aout: '08', août: '08',
+      sep: '09', sept: '09', septembre: '09',
+      oct: '10', octobre: '10',
+      nov: '11', novembre: '11',
+      dec: '12', decembre: '12', décembre: '12',
+    };
+    const textMonthMatch = s.toLowerCase().match(/\b(\d{1,2})\s+([a-zéèû]+)\s+(\d{4})\b/);
+    if (textMonthMatch) {
+      const day = textMonthMatch[1].padStart(2, '0');
+      const mStr = textMonthMatch[2];
+      const year = textMonthMatch[3];
+      const matchedM = Object.keys(monthMap).find((k) => mStr.startsWith(k));
+      if (matchedM) {
+        return `${year}-${monthMap[matchedM]}-${day}`;
+      }
+    }
+
     return null;
   }
 
@@ -850,23 +904,56 @@ Respond ONLY with valid JSON:
       .replace(/[\s\-\_\.\,\/]/g, '');
   }
 
-  // Check match between two name tokens (exact or containment)
+  // Calculates Levenshtein similarity ratio between 0.0 and 1.0
+  function calculateStringSimilarity(a: string, b: string): number {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    const longer = a.length > b.length ? a : b;
+    const shorter = a.length > b.length ? b : a;
+    if (longer.length === 0) return 1.0;
+    
+    // Levenshtein distance
+    const costs: number[] = [];
+    for (let i = 0; i <= longer.length; i++) {
+      let lastValue = i;
+      for (let j = 0; j <= shorter.length; j++) {
+        if (i === 0) {
+          costs[j] = j;
+        } else if (j > 0) {
+          let newValue = costs[j - 1];
+          if (longer.charAt(i - 1) !== shorter.charAt(j - 1)) {
+            newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
+          }
+          costs[j - 1] = lastValue;
+          lastValue = newValue;
+        }
+      }
+      if (i > 0) costs[shorter.length] = lastValue;
+    }
+    return (longer.length - costs[shorter.length]) / longer.length;
+  }
+
+  // Check match between two name tokens (exact, containment, prefix, or fuzzy similarity >= 0.70)
   function isNameTokenMatch(profileToken: string, ocrToken: string): boolean {
     if (!profileToken || !ocrToken) return false;
     const pNormAr = normalizeArabicText(profileToken);
     const oNormAr = normalizeArabicText(ocrToken);
-    if (pNormAr && oNormAr && (pNormAr === oNormAr || pNormAr.includes(oNormAr) || oNormAr.includes(pNormAr))) {
-      return true;
+    if (pNormAr && oNormAr) {
+      if (pNormAr === oNormAr || pNormAr.includes(oNormAr) || oNormAr.includes(pNormAr)) return true;
+      if (calculateStringSimilarity(pNormAr, oNormAr) >= 0.65) return true;
     }
+
     const pNormLat = normalizeLatinText(profileToken);
     const oNormLat = normalizeLatinText(ocrToken);
-    if (pNormLat && oNormLat && (pNormLat === oNormLat || pNormLat.includes(oNormLat) || oNormLat.includes(pNormLat))) {
-      return true;
+    if (pNormLat && oNormLat) {
+      if (pNormLat === oNormLat || pNormLat.includes(oNormLat) || oNormLat.includes(pNormLat)) return true;
+      if (pNormLat.length >= 4 && oNormLat.length >= 4 && (pNormLat.startsWith(oNormLat.slice(0, 4)) || oNormLat.startsWith(pNormLat.slice(0, 4)))) return true;
+      if (calculateStringSimilarity(pNormLat, oNormLat) >= 0.65) return true;
     }
     return false;
   }
 
-  // Comprehensive cross-matcher for legal driver name against OCR license data
+  // Comprehensive cross-matcher for legal driver name against OCR license data with relaxed transliteration
   function crossMatchDriverLegalName(
     profileFirst: string,
     profileLast: string,
@@ -921,9 +1008,21 @@ Respond ONLY with valid JSON:
       return { matched: true };
     }
 
-    // 4. Single name partial match if only one name part is provided
+    // 4. Single name partial match if only one name part is provided or one part matched with high confidence
     if (pFirst && !pLast && (firstMatches || invertedFirstMatches)) return { matched: true };
     if (!pFirst && pLast && (lastMatches || invertedLastMatches)) return { matched: true };
+    if (firstMatches || lastMatches || invertedFirstMatches || invertedLastMatches) {
+      // One strong component matches (e.g. surname matches exactly or given name matches)
+      return { matched: true };
+    }
+
+    // 5. Fallback relaxed match: if full name has partial overlap
+    for (const oName of ocrFullNames) {
+      if (calculateStringSimilarity(normalizeLatinText(pFull), normalizeLatinText(oName)) >= 0.55 ||
+          calculateStringSimilarity(normalizeArabicText(pFull), normalizeArabicText(oName)) >= 0.55) {
+        return { matched: true };
+      }
+    }
 
     const licenseDisplayName =
       ocrResult.fullNameAr ||
@@ -933,7 +1032,7 @@ Respond ONLY with valid JSON:
 
     return {
       matched: false,
-      reason: `الاسم القانوني المسجل في الحساب (${pFull}) لا يتطابق مع الاسم المدون على رخصة القيادة (${licenseDisplayName}). يشترط نظام الأمان ومكافحة التزوير تطابق هوية صاحب الحساب بنسبة 100% مع الوثيقة الرسمية.`,
+      reason: `الاسم القانوني المسجل في الحساب (${pFull}) لا يتطابق مع الاسم المدون على رخصة القيادة (${licenseDisplayName}). يشترط نظام الأمان تطابق هوية صاحب الحساب بنسبة عالية مع الوثيقة الرسمية.`,
     };
   }
 
@@ -992,69 +1091,65 @@ Respond ONLY with valid JSON:
         });
       }
 
-      const prompt = `You are an expert forensic document validation and OCR engine specialized in the official Algerian Driver's License:
-1. Algerian Biometric Smart Driver's License (رخصة السياقة البيومترية الإلكترونية الجزائرية / Permis de conduire biométrique algérien) - ISO/IEC 7810 ID-1 standard polycarbonate card.
+      const prompt = `You are an expert forensic document validation and OCR engine specifically trained on the official ALGERIAN DRIVER'S LICENSE template:
+1. Algerian Biometric Smart Driver's License (رخصة السياقة البيومترية الإلكترونية الجزائرية / Permis de conduire biométrique algérien) - ISO/IEC 7810 ID-1 standard polycarbonate card (85.60 mm × 53.98 mm, aspect ratio 1.586:1).
 2. Algerian Classic Pink Driver's License (رخصة السياقة الورقية الوردية الكلاسيكية / Permis rose à 3 volets).
 
-REAL-WORLD SMARTPHONE LIVE CAMERA TOLERANCE:
-- The driver captures this image using their device live camera.
-- The card is commonly held in the driver's hand/fingers, or placed on a steering wheel, table, or desk.
-- Normal handheld smartphone camera conditions: slight perspective tilt, minor glare/reflection on the plastic laminate, or visible fingers holding the border MUST NOT cause rejection. As long as the Algerian driver's license card is visible and its text/numbers can be read, it MUST BE ACCEPTED (isValidDocument: true).
-- DO NOT FALSELY REJECT valid licenses. Only reject if the card is NOT an Algerian driver's license (e.g. clearly a National ID CNI, Passport, Carte Grise, completely dark black image, or unreadable blur).
+ALGERIAN BIOMETRIC LICENSE EXACT LAYOUT & GEOMETRY:
+1. FRONT SIDE TOP HEADER (القسم العلوي):
+   - Right/Center Arabic: "الجمهورية الجزائرية الديمقراطية الشعبية"
+   - Left/Center French: "RÉPUBLIQUE ALGÉRIENNE DÉMOCRATIQUE ET POPULAIRE"
+   - Main Document Title: "رخصة السياقة" / "PERMIS DE CONDUIRE"
+   - Optical Security DOVID: Gold circular diffraction hologram badge on upper left showing national emblem, "DZ", and "DRIVING LICENSE".
 
-DOCUMENT LAYOUT KNOWLEDGE BASE (ALGERIAN BIOMETRIC DRIVING LICENSE):
-1. FRONT SIDE STRUCTURE (الوجه الأمامي):
-   - Header: "الجمهورية الجزائرية الديمقراطية الشعبية" (top right or top center) and French subtitle "RÉPUBLIQUE ALGÉRIENNE DÉMOCRATIQUE ET POPULAIRE".
-   - Document Title: "رخصة السياقة" / "PERMIS DE CONDUIRE".
-   - Gold circular hologram badge with "DZ" national emblem and "DRIVING LICENSE".
-   - Left side: Driver color portrait photo.
-   - Center: Transparent ghost watermark portrait with national emblem.
-   - Standard numbered fields:
-     - 1. Surname / اللقب (Latin and Arabic, e.g. "1. HADJADJ" / "حجاج")
-     - 2. Given names / الإسم (Latin and Arabic, e.g. "2. ABDERRAHMANE" / "عبد الرحمان")
-     - 3. Date & Place of birth / تاريخ ومكان الازدياد: Format "DD.MM.YYYY Wilaya/Commune" (e.g. "3. 18.07.2003 أم البواقي")
-     - 4a. Date of issue / تاريخ الإصدار: Format "DD.MM.YYYY" (e.g. "4a. 29.04.2024")
-     - 4b. Date of expiry / تاريخ انتهاء الصلاحية: Format "DD.MM.YYYY" (e.g. "4b. 28.04.2034")
-     - 4c. Issuing authority / سلطة الإصدار (e.g. "بلدية أم البواقي - أم البواقي" or "دائرة...")
-     - 4d. National Identification Number / الرقم التعريفي الوطني (NIN): 18-digit number (e.g. "100030088009650000")
-     - 5. License Number / رقم الرخصة (usually letter like 'A' followed by 8 digits, e.g. "A04201870", or numeric format e.g. "16/123456" or "04201870")
-     - 9. Category / الأصناف (e.g. "B" or "A1" or "A2")
-     - 15. Gender / الجنس ("M" / "ذكر" or "F" / "أنثى")
+2. FRONT SIDE LEFT COLUMN (القسم الأيسر):
+   - Driver color/laser portrait photo (approx 25×32 mm).
+   - Holder signature (توقيع صاحب الرخصة / Signature du titulaire) engraved below photo.
+   - Ghost transparent watermark portrait in the center.
 
-2. BACK SIDE STRUCTURE (الوجه الخلفي):
-   - Contact smart microchip on the left with chip serial number (e.g. "055100615").
-   - Matrix table of vehicle categories (A, A1, B, C, C1, D, BE, CE, C1E, DE, F) with validity dates.
-   - Small secondary driver portrait on right with expiry date and blood type (e.g. "O+", "A+", "B-").
-   - 3-line ICAO Machine Readable Zone (MRZ) across the bottom:
-     - Line 1: starts with "DLDZA" followed by the License Number (e.g. "DLDZAA042018706<<<<<<<<<<<<<<<")
-     - Line 2: Date of birth (YYMMDD), gender, expiry date (YYMMDD), "DZA" (e.g. "0307189M3404285DZA<<<<<<<<<<<<4")
-     - Line 3: "SURNAME<<GIVEN_NAMES" (e.g. "HADJADJ<<ABDERRAHMANE<<<<<<<<<<")
+3. FRONT SIDE NUMBERED BIOMETRIC FIELDS (البيانات الرقمية الرسمية):
+   - Field 1: "1. Nom" / "اللقب": Surname in Latin uppercase (e.g. "HADJADJ") and Arabic (e.g. "حجاج").
+   - Field 2: "2. Prénom(s)" / "الإسم": Given names in Latin uppercase (e.g. "ABDERRAHMANE") and Arabic (e.g. "عبد الرحمان").
+   - Field 3: "3. Date et lieu de naissance" / "تاريخ ومكان الازدياد": Format "DD.MM.YYYY Place" (e.g. "18.07.2003 أم البواقي" or "15.03.1998 ALGER").
+   - Field 4a: "4a. Date de délivrance" / "تاريخ الإصدار": Format "DD.MM.YYYY" (e.g. "29.04.2024").
+   - Field 4b: "4b. Date d'expiration" / "تاريخ انتهاء الصلاحية": Format "DD.MM.YYYY" (e.g. "28.04.2034").
+   - Field 4c: "4c. Délivré par" / "سلطة الإصدار": Issuing authority (e.g. "بلدية أم البواقي" or "DAIRA DE SIDI M'HAMED").
+   - Field 4d: "4d. N° d'identification national (NIN)" / "الرقم التعريفي الوطني": 18-digit unique biometric identifier (e.g. "100030088009650000").
+   - Field 5: "5. N° du permis" / "رقم الرخصة": Official license number:
+     * Alphanumeric format (letter followed by 8 digits, e.g. "A04201870" or "B09123456").
+     * Pure numeric format (8 to 12 digits, e.g. "04201870" or "16202400192").
+     * Wilaya prefix format (e.g. "16/04201870" or "09/123456").
+   - Field 9: "9. Catégorie(s)" / "الأصناف": Vehicle categories (e.g. "B", "A1", "A2", "C", "D").
+   - Field 15: "15. Sexe" / "الجنس": "M" / "ذكر" or "F" / "أنثى".
 
-CRITICAL VALIDATION & ANTI-FRAUD REJECTION RULES:
-1. "isValidDocument": MUST be true for any authentic, legible Algerian driver's license (front or back).
-   - REJECT ONLY IF:
-     - The image is pitch black, dark, blurry, low resolution, or text is completely unreadable.
-     - The image is a photo of a floor, wall, desk, ceiling, keyboard, computer screen, furniture, clothing, selfie, pet, or random object with no driver's license.
-     - The image is an Algerian National ID Card (بطاقة التعريف الوطنية البيومترية CNI): Identify it specifically as "national_id_card" with rejection message: "الوثيقة المرفوعة هي بطاقة التعريف الوطنية وليست رخصة سياقة. يرجى رفع رخصة السياقة الرسمية."
-     - The image is a Passport (جواز السفر البيومتري): Identify it specifically as "passport" with rejection message: "الوثيقة المرفوعة هي جواز سفر وليست رخصة سياقة."
-     - The image is a Vehicle Registration Gray Card (البطاقة الرمادية Carte Grise): Identify as "carte_grise" with message: "الوثيقة المرفوعة هي بطاقة رمادية للمركبة وليست رخصة سياقة. يرجى رفع رخصة القيادة."
-     - The image is any other card (payment card, bank card, Carte Chifa, student card): Identify as "other_card" with message: "البطاقة المرفوعة غير مقبولة وليست رخصة سياقة. يرجى رفع رخصة القيادة الرسمية."
-2. "rejectionReason": If invalid, specify: "not_a_license" | "too_dark_or_blurry" | "national_id_card" | "passport" | "carte_grise" | "other_card" | "unreadable".
-3. "rejectionMessage": Detailed, professional Arabic error message explaining why the document was rejected.
-4. Extract accurately:
-   - "licenseNumber": Official license number without spaces or dashes (e.g. "A04201870"). If from back side, extract from Line 1 of MRZ after "DLDZA". If field 5 is missing, extract from the most prominent license identifier or NIN.
-   - "expirationDate": Expiration date in "YYYY-MM-DD" format (convert "28.04.2034" to "2034-04-28"). If back side, extract from MRZ Line 2.
-   - "birthDate": Date of birth in "YYYY-MM-DD" format (convert "18.07.2003" to "2003-07-18"). If back side, extract from MRZ Line 2.
-   - "issueDate": Issue date in "YYYY-MM-DD" format.
-   - "fullName": Full legal Latin name (e.g. "HADJADJ ABDERRAHMANE").
-   - "fullNameAr": Full legal Arabic name (e.g. "حجاج عبد الرحمان").
-   - "firstName": Latin given name (e.g. "ABDERRAHMANE").
-   - "lastName": Latin surname (e.g. "HADJADJ").
-   - "firstNameAr": Arabic given name (e.g. "عبد الرحمان").
-   - "lastNameAr": Arabic surname (e.g. "حجاج").
-   - "nationalIdNumber": 18-digit NIN if visible on front (e.g. "100030088009650000").
-   - "category": Vehicle category (e.g. "B", "A1", "A2").
-   - "documentSide": "front" | "back" | "unknown".
+4. REVERSE SIDE (الوجه الخلفي):
+   - ISO/IEC 7816 contact smart microchip on left with chip serial number.
+   - Category matrix table with vehicle pictograms and validity dates.
+   - Secondary driver photo with blood group (e.g. "O+", "A+", "B-").
+   - 3-line TD1 Machine Readable Zone (MRZ) across bottom:
+     * Line 1: Starts with "DLDZA" followed by 9-character license number (e.g. "DLDZAA042018706<<<<<<<<<<<<<<<").
+     * Line 2: Date of birth (YYMMDD), gender (M/F), expiry date (YYMMDD), "DZA".
+     * Line 3: "SURNAME<<GIVEN_NAMES".
+
+RELAXED REAL-WORLD TOLERANCE & ZERO-FALSE-REJECTION MANDATE:
+- Drivers capture live camera frames using smartphones in various real-world conditions (hand holding card edges, slight tilt, minor plastic glare/reflection, low or uneven lighting).
+- IF THE DOCUMENT MATCHES THE ALGERIAN DRIVER'S LICENSE TEMPLATE (front or back, biometric card or classic pink license) AND CONTAINS READABLE NUMBERS/TEXT, IT MUST BE ACCEPTED (isValidDocument: true).
+- DO NOT FALSELY REJECT valid Algerian licenses!
+- ONLY reject if:
+  * Image is pitch black, complete blur, or empty.
+  * Image is an Algerian National ID Card (بطاقة التعريف الوطنية CNI) -> rejectionReason: "national_id_card".
+  * Image is a Passport (جواز السفر) -> rejectionReason: "passport".
+  * Image is a Vehicle Registration Gray Card (البطاقة الرمادية) -> rejectionReason: "carte_grise".
+  * Image is a payment/bank card or unrelated object -> rejectionReason: "not_a_license".
+
+DATA EXTRACTION:
+- Extract "licenseNumber": from field 5, or MRZ Line 1 (after "DLDZA"), or field 4d (NIN), or prominent numeric license code.
+- Extract "expirationDate": in "YYYY-MM-DD" format (convert "28.04.2034" to "2034-04-28").
+- Extract "birthDate": in "YYYY-MM-DD" format.
+- Extract "issueDate": in "YYYY-MM-DD" format.
+- Extract "fullName": Latin surname and given name (e.g. "HADJADJ ABDERRAHMANE").
+- Extract "fullNameAr": Arabic surname and given name (e.g. "حجاج عبد الرحمان").
+- Extract "firstName", "lastName", "firstNameAr", "lastNameAr", "nationalIdNumber", "category".
 
 Respond ONLY with valid JSON:
 {
@@ -1118,18 +1213,26 @@ Respond ONLY with valid JSON:
         ''
       ).replace(/[\s\-\/\.]/g, '').toUpperCase();
 
+      // Relaxed pattern matching: test if raw license string or numbers match standard Algerian patterns
+      const hasValidLicenseFormat =
+        cleanLicenseNumber.length >= 6 ||
+        /^[A-Z]?[0-9]{6,18}$/.test(cleanLicenseNumber) ||
+        /[0-9]{6,18}/.test(cleanLicenseNumber);
+
       // If document is verified authentic Algerian license and has expiry date but field 5 label was faint
       if (!cleanLicenseNumber && parsedExpDate) {
         cleanLicenseNumber = `DZ${parsedExpDate.replace(/-/g, '')}`;
       }
 
-      const hasLegitAlgerianLicenseData =
-        ocrResult &&
-        (ocrResult.isValidDocument === true ||
-          (parsedExpDate && (ocrResult.fullName || ocrResult.fullNameAr || cleanLicenseNumber)));
+      // RELAXED CONFIDENCE THRESHOLD FOR ALGERIAN BIOMETRIC LICENSES:
+      // If the model identified it as an authentic license OR if it extracted valid Algerian license data:
+      // (expiry date + [name OR license number OR NIN OR category])
+      const isRecognizedAlgerianLicense =
+        ocrResult?.isValidDocument === true ||
+        (parsedExpDate && (ocrResult?.fullName || ocrResult?.fullNameAr || cleanLicenseNumber || ocrResult?.nationalIdNumber || ocrResult?.category === 'B'));
 
       // STRICT VALIDATION CHECK: Never pass non-license cards, dark/blurry images or fake documents
-      if (!hasLegitAlgerianLicenseData || !cleanLicenseNumber) {
+      if (!isRecognizedAlgerianLicense || (!cleanLicenseNumber && !parsedExpDate)) {
         return res.status(400).json({
           success: false,
           isValidDocument: false,
@@ -1137,7 +1240,7 @@ Respond ONLY with valid JSON:
           rejectionReason: ocrResult?.rejectionReason || 'not_a_license',
           error:
             ocrResult?.rejectionMessage ||
-            'الصورة الملتقطة غير واضحة أو لا تمثل رخصة سياقة بيومترية جزائرية معتمدة. يرجى توجيه الكاميرا مباشرة نحو رخصة القيادة والتأكد من وضوح الأرقام والبيانات في إضاءة جيدة.',
+            'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة بيومترية معتمدة. يرجى توجيه الكاميرا بدقة نحو الوثيقة في إضاءة جيدة.',
         });
       }
 

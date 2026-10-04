@@ -44,6 +44,7 @@ import {
   Camera,
 } from 'lucide-react';
 import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
+import { preprocessLicenseFrameForOcr } from '../utils/imagePreprocessingCV';
 
 interface DriverDrawerMenuProps {
   isOpen: boolean;
@@ -151,11 +152,19 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
     setRenewalError(null);
 
     try {
+      let processedDataUrl = photoDataUrl;
+      try {
+        const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
+        processedDataUrl = prep.processedDataUrl;
+      } catch (cvErr) {
+        console.warn('[CV Preprocessing fallback in DriverDrawerMenu]:', cvErr);
+      }
+
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: photoDataUrl,
+          image: processedDataUrl,
           isRenewalCheck: true, // Allows inspecting new expiry date
         }),
       });

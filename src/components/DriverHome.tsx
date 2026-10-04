@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { soundNotifier, calculateHaversineDistanceKm } from '../utils/audioNotification';
 import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
+import { preprocessLicenseFrameForOcr } from '../utils/imagePreprocessingCV';
 
 interface DriverHomeProps {
   currentUser: UserProfile;
@@ -104,11 +105,19 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
     setRenewalError(null);
 
     try {
+      let processedDataUrl = photoDataUrl;
+      try {
+        const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
+        processedDataUrl = prep.processedDataUrl;
+      } catch (cvErr) {
+        console.warn('[CV Preprocessing fallback in DriverHome]:', cvErr);
+      }
+
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: photoDataUrl,
+          image: processedDataUrl,
           expectedFirstName: driver?.firstName,
           expectedLastName: driver?.lastName,
           expectedBirthDate: driver?.birthDate,
