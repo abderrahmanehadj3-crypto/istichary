@@ -31,6 +31,7 @@ import {
 import { analyzeFaceBiometrics } from '../utils/faceBiometricsCV';
 import { saveDriverVerification } from '../utils/supabaseSync';
 import { DRIVER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
+import { soundNotifier } from '../utils/audioNotification';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -134,9 +135,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     currentUser.driverDetails?.licenseBackUrl || null
   );
 
-  // Live scanner state for license
-  const [isLicenseScannerOpen, setIsLicenseScannerOpen] = useState<boolean>(false);
+  // Embedded In-App Viewfinder Camera state for Driver's License
+  const [isEmbeddedLicenseCameraActive, setIsEmbeddedLicenseCameraActive] = useState<boolean>(false);
+  const [licenseFrameBorderState, setLicenseFrameBorderState] = useState<'neutral' | 'detecting' | 'valid' | 'rejected'>('neutral');
   const [licenseScanSide, setLicenseScanSide] = useState<'front' | 'back'>('front');
+  const [frameFeedbackMessage, setFrameFeedbackMessage] = useState<string | null>(null);
   const licenseVideoRef = useRef<HTMLVideoElement | null>(null);
   const licenseStreamRef = useRef<MediaStream | null>(null);
 
@@ -195,7 +198,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       licenseStreamRef.current = null;
     }
     setIsFaceCameraActive(false);
-    setIsLicenseScannerOpen(false);
+    setIsEmbeddedLicenseCameraActive(false);
   };
 
   // Real-time live video face orientation & computer vision monitor
@@ -536,56 +539,197 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     );
   };
 
-  // License Camera (Direct Native OS Camera Trigger - Rear Camera)
-  const openLicenseLiveScanner = (side: 'front' | 'back') => {
+  // Start embedded license viewfinder camera
+  const startEmbeddedLicenseCamera = (side: 'front' | 'back' = 'front') => {
     setLicenseScanSide(side);
-    setErrorMsg(null);
-    launchNativeDeviceCamera(
-      'environment',
-      (dataUrl) => {
-        if (side === 'front') {
-          setLicenseFront(dataUrl);
-          scanLicenseOcr(dataUrl);
-        } else {
-          setLicenseBack(dataUrl);
-        }
-        setErrorMsg(null);
-      },
-      (errMsg) => {
-        setErrorMsg(errMsg);
-      }
-    );
+    setLicenseFrameBorderState('neutral');
+    setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة جيدة');
+    setOcrError(null);
+    setIsEmbeddedLicenseCameraActive(true);
   };
 
-  const captureLicenseFromVideo = () => {
-    if (licenseVideoRef.current) {
-      try {
-        const dataUrl = captureFrameFromVideo(licenseVideoRef.current, 0.92, 'environment');
-        if (licenseScanSide === 'front') {
-          setLicenseFront(dataUrl);
-          scanLicenseOcr(dataUrl);
-        } else {
-          setLicenseBack(dataUrl);
-        }
-      } catch (e) {
-        console.error('Capture license error:', e);
-      }
-    } else {
-      launchNativeDeviceCamera('environment', (dataUrl) => {
-        if (licenseScanSide === 'front') {
-          setLicenseFront(dataUrl);
-          scanLicenseOcr(dataUrl);
-        } else {
-          setLicenseBack(dataUrl);
-        }
-      });
-    }
-
+  const stopEmbeddedLicenseCamera = () => {
     if (licenseStreamRef.current) {
       licenseStreamRef.current.getTracks().forEach((t) => t.stop());
       licenseStreamRef.current = null;
     }
-    setIsLicenseScannerOpen(false);
+    setIsEmbeddedLicenseCameraActive(false);
+  };
+
+  // Mount/unmount embedded camera stream for Step 4
+  useEffect(() => {
+    if (currentStep === 4 && isEmbeddedLicenseCameraActive && licenseVideoRef.current && !licenseStreamRef.current) {
+      startNativeCameraStream(licenseVideoRef.current, 'environment')
+        .then((stream) => {
+          licenseStreamRef.current = stream;
+          setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة');
+        })
+        .catch((err) => {
+          console.warn('[License Camera Stream] WebRTC failed, falling back:', err);
+          setLicenseFrameBorderState('rejected');
+          setFrameFeedbackMessage('تعذر فتح الكاميرا المباشرة. يرجى منح إذن الكاميرا للمتصفح.');
+        });
+    }
+  }, [currentStep, isEmbeddedLicenseCameraActive]);
+
+  // Auto-launch camera when entering Step 4
+  useEffect(() => {
+    if (currentStep === 4 && !licenseFront) {
+      startEmbeddedLicenseCamera('front');
+    } else if (currentStep !== 4) {
+      stopEmbeddedLicenseCamera();
+    }
+  }, [currentStep]);
+
+  // Real-time video quality check on the stream (lighting & blur)
+  useEffect(() => {
+    if (!isEmbeddedLicenseCameraActive || currentStep !== 4) return;
+
+    const intervalId = setInterval(() => {
+      const video = licenseVideoRef.current;
+      if (!video || video.readyState < 2 || !video.videoWidth || isScanningLicense) return;
+
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 160;
+        canvas.height = 100;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(video, 0, 0, 160, 100);
+        const imgData = ctx.getImageData(0, 0, 160, 100);
+        const data = imgData.data;
+        let sumBrightness = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          sumBrightness += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        }
+        const avgBrightness = sumBrightness / (data.length / 4);
+
+        if (avgBrightness < 32) {
+          if (licenseFrameBorderState !== 'rejected') {
+            setLicenseFrameBorderState('rejected');
+            setFrameFeedbackMessage('الإضاءة ضعيفة جداً أو الكاميرا مغطاة. يرجى توجيه الكاميرا نحو إضاءة جيدة.');
+          }
+        } else if (licenseFrameBorderState === 'rejected' && frameFeedbackMessage?.includes('الإضاءة ضعيفة')) {
+          setLicenseFrameBorderState('neutral');
+          setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة');
+        }
+      } catch (e) {}
+    }, 450);
+
+    return () => clearInterval(intervalId);
+  }, [isEmbeddedLicenseCameraActive, currentStep, licenseFrameBorderState, frameFeedbackMessage, isScanningLicense]);
+
+  const scanEmbeddedLicenseFrame = async () => {
+    if (licenseVideoRef.current) {
+      try {
+        const dataUrl = captureFrameFromVideo(licenseVideoRef.current, 0.92, 'environment');
+        await handleProcessLicenseCapture(dataUrl);
+      } catch (err: any) {
+        setLicenseFrameBorderState('rejected');
+        setOcrError('فشل التقاط صورة من الكاميرا المباشرة.');
+      }
+    } else {
+      launchNativeDeviceCamera('environment', (dataUrl) => {
+        handleProcessLicenseCapture(dataUrl);
+      });
+    }
+  };
+
+  const handleProcessLicenseCapture = async (dataUrl: string) => {
+    setLicenseFrameBorderState('detecting');
+    setFrameFeedbackMessage('جاري فحص الوثيقة بالذكاء الاصطناعي واستخراج البيانات...');
+    setIsScanningLicense(true);
+    setOcrError(null);
+
+    try {
+      const res = await fetch('/api/driver/ocr-license', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image: dataUrl,
+          expectedFirstName: firstName,
+          expectedLastName: lastName,
+          expectedBirthDate: birthDate,
+          isRenewalCheck: false,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok || !data?.success) {
+        // RED FRAME: Error/Rejected
+        setLicenseFrameBorderState('rejected');
+        setOcrDocumentValid(false);
+        const errMsg =
+          data?.error ||
+          'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة بيومترية معتمدة. يرجى توجيه الكاميرا بدقة نحو الوثيقة في إضاءة جيدة.';
+        setOcrError(errMsg);
+        setErrorMsg(errMsg);
+        setFrameFeedbackMessage(errMsg);
+        if (data?.isExpired) {
+          setLicenseExpired(true);
+        }
+        return;
+      }
+
+      // GREEN FRAME: Success!
+      setLicenseFrameBorderState('valid');
+      setOcrDocumentValid(true);
+      setOcrError(null);
+      setErrorMsg(null);
+      setLicenseExpired(false);
+      setFrameFeedbackMessage('✓ تم التحقق الأمني: رخصة سياقة بيومترية معتمدة 100%');
+
+      if (licenseScanSide === 'front') {
+        setLicenseFront(dataUrl);
+      } else {
+        setLicenseBack(dataUrl);
+      }
+
+      // Auto-fill & lock extracted data
+      setOcrDetectedNumber(data.licenseNumber || null);
+      setOcrDetectedExpiration(data.expirationDate || null);
+      setOcrDetectedName(data.fullName || null);
+      setOcrDetectedNameAr(data.fullNameAr || null);
+      setOcrDetectedFirstName(data.firstName || null);
+      setOcrDetectedLastName(data.lastName || null);
+      setOcrDetectedFirstNameAr(data.firstNameAr || null);
+      setOcrDetectedLastNameAr(data.lastNameAr || null);
+      setOcrDetectedBirthDate(data.birthDate || null);
+      setOcrDetectedNIN(data.nationalIdNumber || null);
+      setOcrDetectedCategory(data.category || null);
+      setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
+
+      if (data.licenseNumber) {
+        setLicenseNumber(data.licenseNumber);
+      }
+      if (data.expirationDate) {
+        setLicenseExpiration(data.expirationDate);
+      }
+
+      soundNotifier.playBidSound();
+
+      // Cleanly stop video stream after success celebration
+      setTimeout(() => {
+        stopEmbeddedLicenseCamera();
+      }, 1000);
+
+    } catch (err: any) {
+      setLicenseFrameBorderState('rejected');
+      setOcrDocumentValid(false);
+      const errMsg = 'تعذر التحقق من رخصة القيادة. يرجى التأكد من وضوح الصورة والاتصال بالإنترنت ثم المحاولة مجدداً.';
+      setOcrError(errMsg);
+      setErrorMsg(errMsg);
+      setFrameFeedbackMessage(errMsg);
+    } finally {
+      setIsScanningLicense(false);
+    }
+  };
+
+  // License Camera (Direct Native OS Camera Trigger - Rear Camera)
+  const openLicenseLiveScanner = (side: 'front' | 'back') => {
+    setLicenseScanSide(side);
+    startEmbeddedLicenseCamera(side);
   };
 
   // Gray Card Camera (Direct Live Camera Trigger - Rear Camera, strictly no gallery upload)
@@ -658,7 +802,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     // Step 4 Check: Strict Document Forensics & Mandatory Manual Input Cross-Check
     if (currentStep === 4) {
       if (!licenseFront) {
-        setErrorMsg('تصوير أو رفع رخصة السياقة إلزامي للمتابعة.');
+        setErrorMsg('المسح المباشر لرخصة السياقة عبر إطار الكاميرا الحية إلزامي للمتابعة.');
         return;
       }
       if (isScanningLicense) {
@@ -1379,30 +1523,229 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             </div>
 
-            {/* AI OCR Scanner & Expiration Status Alert */}
-            {isScanningLicense && (
-              <div className="p-3.5 rounded-2xl bg-blue-950/40 border border-blue-500/30 text-blue-300 text-xs flex items-center justify-center gap-2 animate-pulse">
-                <RefreshCw size={16} className="animate-spin text-blue-400" />
-                <span className="font-bold">جاري الفحص الذكي للرخصة والتحقق من صحة الوثيقة وتاريخ الانتهاء...</span>
+            {/* 1. EMBEDDED IN-APP VIEWFINDER CAMERA (DEDICATED RECTANGULAR FRAME) */}
+            <div className="p-4 rounded-3xl bg-slate-950 border border-slate-800 space-y-3 shadow-xl">
+              {/* Header & Side Selector Tabs */}
+              <div className="flex items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <ScanLine size={16} />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-bold text-white">إطار كاميرا المسح الضوئي المباشر (Viewfinder)</h5>
+                    <p className="text-[10px] text-amber-400 font-semibold">ممنوع رفع صور من المعرض • كاميرا حية فقط لمنع التزوير</p>
+                  </div>
+                </div>
+
+                {/* Front / Back Toggle */}
+                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLicenseScanSide('front');
+                      startEmbeddedLicenseCamera('front');
+                    }}
+                    className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
+                      licenseScanSide === 'front'
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    الوجه الأمامي *
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLicenseScanSide('back');
+                      startEmbeddedLicenseCamera('back');
+                    }}
+                    className={`px-3 py-1 rounded-lg font-bold transition cursor-pointer ${
+                      licenseScanSide === 'back'
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    الوجه الخلفي
+                  </button>
+                </div>
               </div>
-            )}
+
+              {/* DEDICATED RECTANGULAR VIEWFINDER FRAME (ID-1 Card Aspect Ratio 1.58:1) */}
+              <div
+                className={`relative w-full max-w-sm sm:max-w-md mx-auto aspect-[1.58/1] rounded-2xl overflow-hidden transition-all duration-300 flex items-center justify-center bg-slate-950 ${
+                  licenseFrameBorderState === 'valid'
+                    ? 'border-4 border-emerald-500 shadow-[0_0_35px_rgba(16,185,129,0.8)] ring-4 ring-emerald-500/40'
+                    : licenseFrameBorderState === 'rejected'
+                    ? 'border-4 border-red-500 shadow-[0_0_35px_rgba(239,68,68,0.8)] ring-4 ring-red-500/40'
+                    : licenseFrameBorderState === 'detecting'
+                    ? 'border-4 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.5)] ring-2 ring-cyan-500/30'
+                    : isEmbeddedLicenseCameraActive
+                    ? 'border-2 border-emerald-500/70 shadow-lg'
+                    : 'border-2 border-dashed border-slate-700'
+                }`}
+              >
+                {/* Active Live Video Stream inside the Frame */}
+                {isEmbeddedLicenseCameraActive ? (
+                  <>
+                    <video
+                      ref={licenseVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover"
+                    />
+
+                    {/* HUD Alignment Frame & Corner Brackets */}
+                    <div className="absolute inset-3 border border-white/20 rounded-xl pointer-events-none flex flex-col justify-between p-2.5">
+                      {/* Top Corner Markers & Side indicator */}
+                      <div className="flex items-center justify-between text-[10px] font-bold">
+                        <span className="bg-slate-950/85 text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/30 backdrop-blur-sm flex items-center gap-1">
+                          <ScanLine size={11} className="animate-spin" />
+                          <span>{licenseScanSide === 'front' ? 'الوجه الأمامي (البيانات + الصورة)' : 'الوجه الخلفي (الأصناف + MRZ)'}</span>
+                        </span>
+                        <span className="text-[10px] bg-slate-950/85 text-white px-2 py-0.5 rounded-full border border-slate-700">
+                          بطاقة بيومترية ID-1
+                        </span>
+                      </div>
+
+                      {/* Animated Laser Scanning Beam */}
+                      {(licenseFrameBorderState === 'detecting' || isScanningLicense) && (
+                        <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_12px_#22d3ee] animate-bounce my-auto" />
+                      )}
+
+                      {/* Bottom Live Feedback Pill */}
+                      <div className="flex items-center justify-center">
+                        <div
+                          className={`px-3 py-1 rounded-full text-[10px] font-black shadow-lg backdrop-blur-md transition-colors flex items-center gap-1.5 ${
+                            licenseFrameBorderState === 'valid'
+                              ? 'bg-emerald-500 text-slate-950'
+                              : licenseFrameBorderState === 'rejected'
+                              ? 'bg-red-600 text-white animate-pulse'
+                              : licenseFrameBorderState === 'detecting'
+                              ? 'bg-cyan-500 text-slate-950 animate-pulse'
+                              : 'bg-slate-900/85 text-emerald-300 border border-emerald-500/30'
+                          }`}
+                        >
+                          {licenseFrameBorderState === 'valid' && <CheckCircle2 size={12} />}
+                          {licenseFrameBorderState === 'rejected' && <XCircle size={12} />}
+                          {licenseFrameBorderState === 'detecting' && <RefreshCw size={12} className="animate-spin" />}
+                          <span>
+                            {frameFeedbackMessage ||
+                              (licenseFrameBorderState === 'valid'
+                                ? 'تم فحص وقراءة رخصة السياقة بنجاح ✓'
+                                : licenseFrameBorderState === 'rejected'
+                                ? 'الوثيقة غير مقروءة أو مرفوضة ✕'
+                                : 'وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة')}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (licenseScanSide === 'front' && licenseFront) || (licenseScanSide === 'back' && licenseBack) ? (
+                  /* Captured Image Display with Green Success State */
+                  <div className="relative w-full h-full">
+                    <img
+                      src={licenseScanSide === 'front' ? licenseFront! : licenseBack!}
+                      alt="Captured License"
+                      className="w-full h-full object-cover pointer-events-none"
+                    />
+                    <div className="absolute top-2.5 right-2.5 bg-emerald-500 text-slate-950 text-[10px] font-black px-2.5 py-0.5 rounded-full shadow flex items-center gap-1">
+                      <CheckCircle2 size={12} />
+                      <span>تم المسح والتأكيد بنجاح ✓</span>
+                    </div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex items-end justify-center p-3">
+                      <button
+                        type="button"
+                        onClick={() => startEmbeddedLicenseCamera(licenseScanSide)}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                      >
+                        <Camera size={13} />
+                        <span>إعادة تشغيل الكاميرا الحية والمسح المباشر</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Idle Placeholder: Start Camera */
+                  <div className="flex flex-col items-center justify-center p-6 text-center text-slate-400 space-y-2.5">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shadow-inner">
+                      <Camera size={26} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-white">إطار الكاميرا الحية لرخصة السياقة</p>
+                      <p className="text-[10px] text-amber-400 mt-0.5 font-semibold">
+                        كاميرا حية مباشرة داخل الإطار • يُمنع المعرض لمنع التزوير
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => startEmbeddedLicenseCamera(licenseScanSide)}
+                      className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md active:scale-95"
+                    >
+                      <Camera size={14} />
+                      <span>بدء تشغيل كاميرا المسح المباشر الآن</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Viewfinder Action Button Controls */}
+              {isEmbeddedLicenseCameraActive && (
+                <div className="flex items-center gap-2 max-w-sm sm:max-w-md mx-auto pt-1">
+                  <button
+                    type="button"
+                    disabled={isScanningLicense}
+                    onClick={scanEmbeddedLicenseFrame}
+                    className={`flex-1 py-3 rounded-2xl font-black text-xs shadow-xl transition flex items-center justify-center gap-2 cursor-pointer ${
+                      isScanningLicense
+                        ? 'bg-cyan-600 text-white opacity-80 cursor-wait'
+                        : licenseFrameBorderState === 'valid'
+                        ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25 active:scale-95'
+                        : licenseFrameBorderState === 'rejected'
+                        ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-500/25 active:scale-95'
+                        : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25 active:scale-95'
+                    }`}
+                  >
+                    {isScanningLicense ? (
+                      <>
+                        <RefreshCw size={15} className="animate-spin" />
+                        <span>جاري الفحص البصري والاستخراج (OCR)...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Camera size={15} />
+                        <span>التقاط وفحص رخصة السياقة الآن (فحص فوري)</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={stopEmbeddedLicenseCamera}
+                    className="px-3.5 py-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white text-xs font-bold transition cursor-pointer"
+                    title="إيقاف الكاميرا"
+                  >
+                    إيقاف
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Error rejection alert (dark, blurry, not a license, or expired) */}
             {ocrError && !isScanningLicense && (
-              <div className="p-3.5 rounded-2xl bg-red-950/70 border-2 border-red-500 text-red-200 text-xs flex items-start gap-3 shadow-lg shadow-red-500/20">
+              <div className="p-3.5 rounded-2xl bg-red-950/70 border-2 border-red-500 text-red-200 text-xs flex items-start gap-3 shadow-lg shadow-red-500/20 animate-in fade-in">
                 <XCircle size={22} className="text-red-400 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <p className="font-black text-sm text-red-300">فحص الوثيقة مرفوض ✕</p>
+                  <p className="font-black text-sm text-red-300">فحص الوثيقة مرفوض (إطار أحمر) ✕</p>
                   <p className="text-[11px] text-red-200/90 mt-1 leading-relaxed">
                     {ocrError}
                   </p>
                   <button
                     type="button"
-                    onClick={() => openLicenseLiveScanner('front')}
+                    onClick={() => startEmbeddedLicenseCamera(licenseScanSide)}
                     className="mt-2.5 px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow active:scale-95"
                   >
                     <RefreshCw size={12} />
-                    <span>إعادة تصوير رخصة القيادة بوضوح</span>
+                    <span>إعادة تشغيل الكاميرا والمحاولة بوضوح</span>
                   </button>
                 </div>
               </div>
@@ -1410,11 +1753,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
             {/* Legitimate Verified Document Card with Comprehensive Extracted Fields */}
             {!isScanningLicense && !ocrError && ocrDocumentValid === true && !licenseExpired && licenseFront && (
-              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs space-y-2.5 shadow-lg shadow-emerald-500/10">
+              <div className="p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-500/50 text-emerald-300 text-xs space-y-2.5 shadow-lg shadow-emerald-500/10 animate-in fade-in">
                 <div className="flex items-center justify-between font-bold text-emerald-300">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 size={18} className="text-emerald-400 flex-shrink-0" />
-                    <span>تم التحقق الأمني وقراءة رخصة السياقة بنجاح ✓</span>
+                    <span>تم التحقق الأمني وقراءة رخصة السياقة بنجاح (إطار أخضر) ✓</span>
                   </div>
                   <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded-full border border-emerald-500/30">
                     رخصة بيومترية معتمدة
@@ -1466,22 +1809,23 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               </div>
             )}
 
-            {/* Mandatory Manual Input Section & Cross-Check Notice */}
+            {/* Mandatory Manual Input Section (Auto-Populated & Locked by OCR) */}
             <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <FileText size={15} className="text-emerald-400" />
-                  <span>إدخال بيانات الرخصة يدوياً (إلزامي للمطابقة الأمنية)</span>
+                  <Lock size={13} className="text-amber-400" />
+                  <span>بيانات الرخصة المستخرجة (تأكيد القراءة الآلية)</span>
                 </span>
-                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20 font-bold">
-                  مطابقة أمنية
+                <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 font-bold">
+                  {ocrDocumentValid ? 'مثبت ومطابق ✓' : 'بانتظار الفحص'}
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-300 mb-1">
-                    رقم رخصة القيادة *
+                  <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
+                    <span>رقم رخصة القيادة *</span>
+                    {ocrDetectedNumber && <Lock size={10} className="text-slate-500" />}
                   </label>
                   <input
                     type="text"
@@ -1490,115 +1834,42 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                       setLicenseNumber(e.target.value);
                       if (errorMsg) setErrorMsg(null);
                     }}
-                    placeholder="مثال: 16/2021/123456"
-                    className="w-full px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs font-mono focus:border-emerald-500"
+                    placeholder="يتم ملؤه آلياً عبر الكاميرا"
+                    readOnly={!!ocrDetectedNumber}
+                    className={`w-full px-3 py-2.5 rounded-xl bg-slate-900 border ${
+                      ocrDetectedNumber ? 'border-emerald-500/40 text-emerald-300 cursor-not-allowed' : 'border-slate-700 text-white'
+                    } text-xs font-mono focus:border-emerald-500`}
                     required
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center justify-between">
                     <span>تاريخ انتهاء الصلاحية *</span>
-                    {licenseExpired && <span className="text-[10px] text-red-400 font-bold">منتهية!</span>}
+                    {licenseExpired ? (
+                      <span className="text-[10px] text-red-400 font-bold">منتهية!</span>
+                    ) : ocrDetectedExpiration ? (
+                      <Lock size={10} className="text-slate-500" />
+                    ) : null}
                   </label>
                   <input
                     type="date"
                     value={licenseExpiration}
                     onChange={(e) => handleExpirationDateChange(e.target.value)}
+                    readOnly={!!ocrDetectedExpiration}
                     className={`w-full px-3 py-2.5 rounded-xl bg-slate-900 border ${
-                      licenseExpired ? 'border-red-500 text-red-300 focus:border-red-500' : 'border-slate-700 text-white focus:border-emerald-500'
+                      licenseExpired
+                        ? 'border-red-500 text-red-300 focus:border-red-500'
+                        : ocrDetectedExpiration
+                        ? 'border-emerald-500/40 text-emerald-300 cursor-not-allowed'
+                        : 'border-slate-700 text-white focus:border-emerald-500'
                     } text-xs transition`}
                     required
                   />
                 </div>
               </div>
               <p className="text-[10px] text-slate-400 leading-relaxed">
-                يجب كتابة رقم الرخصة وتاريخ انتهائها كما هو مدون على الوثيقة تماماً. يقوم النظام بمطابقة إدخالك يدوياً مع فحص الذكاء الاصطناعي لمنع التزوير.
+                يتم استخراج رقم الرخصة وتاريخ انتهائها آلياً وفورياً من الإطار المستطيل للكاميرا الحية لتأكيد صحة الوثيقة ومنع أي تلاعب أو إدخال يدوي غير مطابق.
               </p>
-            </div>
-
-            {/* Front & Back Live Camera Only Photo Slots (No Gallery Upload Allowed) */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Front Side */}
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center flex flex-col justify-between">
-                <span className="text-[11px] font-bold text-slate-200 block mb-2">
-                  {t.licenseFrontPhoto} <span className="text-emerald-400">*</span>
-                </span>
-                {licenseFront ? (
-                  <div className="relative mb-2.5">
-                    <img
-                      src={licenseFront}
-                      alt="License Front"
-                      className={`w-full h-28 object-cover rounded-xl border-2 ${
-                        licenseExpired ? 'border-red-500' : 'border-emerald-500'
-                      }`}
-                    />
-                    <span className={`absolute top-2 right-2 px-2 py-0.5 rounded-md ${
-                      licenseExpired ? 'bg-red-600 text-white' : 'bg-emerald-500 text-slate-950'
-                    } text-[10px] font-black shadow`}>
-                      {licenseExpired ? 'منتهية ✕' : 'تم الالتقاط ✓'}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5 p-2">
-                    <Camera size={26} className="text-emerald-400 mb-1" />
-                    <span className="text-[11px] text-slate-300 font-bold">الوجه الأمامي</span>
-                    <span className="text-[9px] text-amber-400 mt-1 font-semibold leading-tight">
-                      كاميرا حية فقط • ممنوع رفع صور من المعرض
-                    </span>
-                  </div>
-                )}
-                <div className="w-full">
-                  <button
-                    type="button"
-                    onClick={() => openLicenseLiveScanner('front')}
-                    className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
-                  >
-                    <Camera size={14} />
-                    <span>{licenseFront ? 'إعادة التقاط الوجه الأمامي (كاميرا حية)' : 'التقاط الوجه الأمامي (كاميرا حية)'}</span>
-                  </button>
-                  <p className="text-[9px] text-slate-500 text-center mt-1">
-                    التقاط فوري عبر الكاميرا لمنع التزوير
-                  </p>
-                </div>
-              </div>
-
-              {/* Back Side */}
-              <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center flex flex-col justify-between">
-                <span className="text-[11px] font-bold text-slate-200 block mb-2">
-                  {t.licenseBackPhoto}
-                </span>
-                {licenseBack ? (
-                  <div className="relative mb-2.5">
-                    <img
-                      src={licenseBack}
-                      alt="License Back"
-                      className="w-full h-28 object-cover rounded-xl border border-emerald-500/40 mb-2.5"
-                    />
-                    <span className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-emerald-500 text-slate-950 text-[10px] font-black shadow">
-                      تم الالتقاط ✓
-                    </span>
-                  </div>
-                ) : (
-                  <div className="w-full h-28 rounded-xl border-2 border-dashed border-slate-800 bg-slate-900/50 flex flex-col items-center justify-center text-slate-500 mb-2.5 p-2">
-                    <Camera size={26} className="text-slate-500 mb-1" />
-                    <span className="text-[11px] text-slate-400 font-semibold">الوجه الخلفي</span>
-                    <span className="text-[9px] text-slate-500 mt-1">(اختياري • كاميرا حية فقط)</span>
-                  </div>
-                )}
-                <div className="w-full">
-                  <button
-                    type="button"
-                    onClick={() => openLicenseLiveScanner('back')}
-                    className="w-full py-2.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/40 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
-                  >
-                    <Camera size={14} />
-                    <span>{licenseBack ? 'إعادة التقاط الوجه الخلفي (كاميرا حية)' : 'التقاط الوجه الخلفي (كاميرا حية)'}</span>
-                  </button>
-                  <p className="text-[9px] text-slate-500 text-center mt-1">
-                    كاميرا حية فقط • لا يُقبل المعرض
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -1831,7 +2102,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   />
                 </div>
                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                  يتم استخراج رقم لوحة الترقيم (Matricule) والعلامة والموديل آلياً من البطاقة الرمادية وتأمينها كحقول للقراءة فقط لمنع التلاعب. في حال رغبتك بتغيير البيانات، قم برفع صورة بطاقة رمادية جديدة.
+                  يتم استخراج رقم لوحة الترقيم (Matricule) والعلامة والموديل آلياً من البطاقة الرمادية وتأمينها كحقول للقراءة فقط لمنع التلاعب. في حال رغبتك بتغيير البيانات، قم بالتقاط صورة بطاقة رمادية جديدة عبر الكاميرا الحية.
                 </p>
               </div>
             </div>
@@ -1972,73 +2243,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             <ArrowRight size={16} />
           </button>
         </div>
-
-        {/* Dedicated Anti-Fraud Live License Camera Scanner Overlay Modal */}
-        {isLicenseScannerOpen && (
-          <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-between p-4 animate-in fade-in duration-200">
-            {/* Scanner Top Bar */}
-            <div className="w-full max-w-md flex items-center justify-between text-white pt-2">
-              <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                <ScanLine size={16} />
-                <span>
-                  ماسح رخصة السياقة: {licenseScanSide === 'front' ? 'الوجه الأمامي' : 'الوجه الخلفي'}
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  if (licenseStreamRef.current) {
-                    licenseStreamRef.current.getTracks().forEach((t) => t.stop());
-                    licenseStreamRef.current = null;
-                  }
-                  setIsLicenseScannerOpen(false);
-                }}
-                className="px-3 py-1 rounded-lg bg-slate-800 text-slate-300 text-xs font-bold"
-              >
-                إغلاق
-              </button>
-            </div>
-
-            {/* Live Camera Viewport with HUD Alignment Box */}
-            <div className="relative w-full max-w-md aspect-[16/10] rounded-2xl overflow-hidden border-2 border-emerald-500 bg-slate-950 my-auto flex items-center justify-center">
-              <video
-                ref={licenseVideoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover"
-              />
-
-              {/* Card Alignment Overlay Frame */}
-              <div className="absolute inset-4 border-2 border-dashed border-emerald-400/80 rounded-xl pointer-events-none flex flex-col justify-between p-3">
-                <div className="flex justify-between text-[10px] text-emerald-300 font-bold bg-black/40 px-2 py-0.5 rounded">
-                  <span>ضع حواف رخصة السياقة داخل الإطار</span>
-                  <span>{licenseScanSide === 'front' ? 'وجه أمامي' : 'وجه خلفي'}</span>
-                </div>
-                <div className="flex items-center justify-center">
-                  <span className="text-xs text-white font-black bg-emerald-950/80 px-3 py-1 rounded-full border border-emerald-500/50">
-                    ☀️ إضاءة واضحة • الاسم واللقب مقروءين
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Scanner Action Controls */}
-            <div className="w-full max-w-md flex flex-col items-center gap-3 pb-4">
-              <button
-                type="button"
-                onClick={captureLicenseFromVideo}
-                className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm shadow-xl shadow-emerald-500/30 transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Camera size={18} />
-                <span>{t.captureNow}</span>
-              </button>
-              <p className="text-[11px] text-slate-400 text-center">
-                منعاً للتزوير: يتم التحقق من وضوح الصورة وتطابق البيانات فورياً
-              </p>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

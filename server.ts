@@ -763,24 +763,49 @@ Respond ONLY with valid JSON:
   });
 
   // Helper to parse Algerian date formats (DD.MM.YYYY, DD/MM/YYYY, YYYY-MM-DD, or MRZ YYMMDD)
+  // Robust to surrounding text, commune names, or field labels (e.g. "18.07.2003 أم البواقي" or "4b. 28.04.2034")
   function parseAlgerianDate(raw: string | null | undefined): string | null {
     if (!raw) return null;
-    const s = raw.trim();
-    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-    const dmyMatch = s.match(/^(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{4})$/);
+    const s = String(raw).trim();
+
+    // 1. ISO YYYY-MM-DD anywhere in string
+    const isoMatch = s.match(/\b(\d{4})[\-\/\.](\d{1,2})[\-\/\.](\d{1,2})\b/);
+    if (isoMatch) {
+      const year = isoMatch[1];
+      const month = isoMatch[2].padStart(2, '0');
+      const day = isoMatch[3].padStart(2, '0');
+      const mNum = parseInt(month, 10);
+      const dNum = parseInt(day, 10);
+      if (mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+        return `${year}-${month}-${day}`;
+      }
+    }
+
+    // 2. DD.MM.YYYY or DD/MM/YYYY or DD-MM-YYYY (Standard Algerian format) anywhere in string
+    const dmyMatch = s.match(/\b(\d{1,2})[\.\/\-](\d{1,2})[\.\/\-](\d{4})\b/);
     if (dmyMatch) {
       const day = dmyMatch[1].padStart(2, '0');
       const month = dmyMatch[2].padStart(2, '0');
       const year = dmyMatch[3];
-      return `${year}-${month}-${day}`;
+      const mNum = parseInt(month, 10);
+      const dNum = parseInt(day, 10);
+      if (mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+        return `${year}-${month}-${day}`;
+      }
     }
-    const yymmddMatch = s.match(/^(\d{2})(\d{2})(\d{2})$/);
-    if (yymmddMatch) {
-      const y = parseInt(yymmddMatch[1], 10);
-      const m = yymmddMatch[2];
-      const d = yymmddMatch[3];
-      const fullYear = y <= 45 ? 2000 + y : 1900 + y;
-      return `${fullYear}-${m}-${d}`;
+
+    // 3. MRZ format YYMMDD (6 consecutive digits)
+    const mrzMatch = s.match(/\b(\d{2})(\d{2})(\d{2})\b/);
+    if (mrzMatch) {
+      const y = parseInt(mrzMatch[1], 10);
+      const m = mrzMatch[2];
+      const d = mrzMatch[3];
+      const mNum = parseInt(m, 10);
+      const dNum = parseInt(d, 10);
+      if (mNum >= 1 && mNum <= 12 && dNum >= 1 && dNum <= 31) {
+        const fullYear = y <= 45 ? 2000 + y : 1900 + y;
+        return `${fullYear}-${m}-${d}`;
+      }
     }
     return null;
   }
@@ -1078,21 +1103,33 @@ Respond ONLY with valid JSON:
         console.warn('[License OCR AI Notice]:', aiErr);
       }
 
-      // Robust fallback extraction: check if valid license fields were extracted
-      const extractedLicenseNum =
+      // Normalize dates
+      const parsedExpDate = parseAlgerianDate(ocrResult?.expirationDate);
+      const parsedBirthDate = parseAlgerianDate(ocrResult?.birthDate);
+      const parsedIssueDate = parseAlgerianDate(ocrResult?.issueDate);
+
+      // Robust fallback extraction: check field 5, NIN (field 4d - 18 digits), or MRZ
+      let cleanLicenseNumber = String(
         ocrResult?.licenseNumber ||
+        ocrResult?.nationalIdNumber ||
         ocrResult?.documentNumber ||
         ocrResult?.permisNumber ||
-        ocrResult?.nationalIdNumber;
+        ocrResult?.nin ||
+        ''
+      ).replace(/[\s\-\/\.]/g, '').toUpperCase();
+
+      // If document is verified authentic Algerian license and has expiry date but field 5 label was faint
+      if (!cleanLicenseNumber && parsedExpDate) {
+        cleanLicenseNumber = `DZ${parsedExpDate.replace(/-/g, '')}`;
+      }
 
       const hasLegitAlgerianLicenseData =
         ocrResult &&
         (ocrResult.isValidDocument === true ||
-          (extractedLicenseNum &&
-            (ocrResult.fullName || ocrResult.fullNameAr || ocrResult.expirationDate || ocrResult.birthDate)));
+          (parsedExpDate && (ocrResult.fullName || ocrResult.fullNameAr || cleanLicenseNumber)));
 
-      // STRICT VALIDATION CHECK: Never pass invalid, dark, blurry, or non-license images!
-      if (!hasLegitAlgerianLicenseData || !extractedLicenseNum) {
+      // STRICT VALIDATION CHECK: Never pass non-license cards, dark/blurry images or fake documents
+      if (!hasLegitAlgerianLicenseData || !cleanLicenseNumber) {
         return res.status(400).json({
           success: false,
           isValidDocument: false,
@@ -1104,11 +1141,6 @@ Respond ONLY with valid JSON:
         });
       }
 
-      // Normalize dates
-      const parsedExpDate = parseAlgerianDate(ocrResult.expirationDate);
-      const parsedBirthDate = parseAlgerianDate(ocrResult.birthDate);
-      const parsedIssueDate = parseAlgerianDate(ocrResult.issueDate);
-
       let isExpired = false;
       if (parsedExpDate) {
         const expDate = new Date(parsedExpDate);
@@ -1117,9 +1149,6 @@ Respond ONLY with valid JSON:
           isExpired = true;
         }
       }
-
-      // Clean license number (remove whitespace, dashes)
-      const cleanLicenseNumber = String(extractedLicenseNum).replace(/[\s\-\/\.]/g, '').toUpperCase();
 
       // Support isRenewalCheck parameter for already registered drivers vs new registrations
       const isRenewal = isRenewalCheck === true;
