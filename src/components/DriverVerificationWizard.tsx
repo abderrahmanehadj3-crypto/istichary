@@ -366,49 +366,28 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      const isHardReject =
-        data?.rejectionReason === 'national_id_card' ||
-        data?.rejectionReason === 'passport' ||
-        data?.rejectionReason === 'carte_grise';
-
-      if (!res.ok || !data?.success) {
-        if (isHardReject) {
-          setOcrDocumentValid(false);
-          const err = data?.error || 'الوثيقة المرفوعة لا تمثل رخصة قيادة معتمدة.';
-          setOcrError(err);
-          setErrorMsg(err);
-          return;
+      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber || !data?.expirationDate) {
+        setOcrDocumentValid(false);
+        const err =
+          data?.error ||
+          'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة أو غير مقروءة (تم رصد جسم غير مطابق). يرجى وضع رخصة السياقة داخل الإطار.';
+        setOcrError(err);
+        setErrorMsg(err);
+        if (data?.isExpired) {
+          setLicenseExpired(true);
         }
-
-        // FALLBACK MANUAL OVERRIDE: Do not hard block valid captures!
-        console.warn('[scanLicenseOcr] Low-confidence capture: enabling manual override');
-        setOcrDocumentValid(true);
-        setOcrError(null);
-        setErrorMsg(null);
-        setOcrConfidenceLow(true);
-        setIsManualOverrideEnabled(true);
-        setLicenseExpired(false);
-        const fbNum = data?.licenseNumber || licenseNumber || 'DZ04201870';
-        const fbExp = data?.expirationDate || licenseExpiration || '2034-04-28';
-        setOcrDetectedNumber(fbNum);
-        setOcrDetectedExpiration(fbExp);
-        setLicenseNumber(fbNum);
-        setLicenseExpiration(fbExp);
-        soundNotifier.playBidSound();
         return;
       }
 
-      // Valid genuine document with matching legal credentials
+      // Valid genuine document strictly verified by OCR
       setOcrDocumentValid(true);
       setOcrError(null);
       setErrorMsg(null);
       setLicenseExpired(false);
-      if (data?.lowConfidence) {
-        setOcrConfidenceLow(true);
-        setIsManualOverrideEnabled(true);
-      }
-      setOcrDetectedNumber(data.licenseNumber || null);
-      setOcrDetectedExpiration(data.expirationDate || null);
+      setOcrDetectedNumber(data.licenseNumber);
+      setOcrDetectedExpiration(data.expirationDate);
+      setLicenseNumber(data.licenseNumber);
+      setLicenseExpiration(data.expirationDate);
       setOcrDetectedName(data.fullName || null);
       setOcrDetectedNameAr(data.fullNameAr || null);
       setOcrDetectedFirstName(data.firstName || null);
@@ -731,69 +710,29 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      const isHardReject =
-        data?.rejectionReason === 'national_id_card' ||
-        data?.rejectionReason === 'passport' ||
-        data?.rejectionReason === 'carte_grise';
-
-      if (!res.ok || !data?.success) {
-        if (isHardReject) {
-          // RED FRAME: Strictly for non-license documents (passport, national ID, carte grise)
-          setLicenseFrameBorderState('rejected');
-          setOcrDocumentValid(false);
-          const errMsg = data?.error || 'الوثيقة الممسوحة لا تمثل رخصة قيادة بيومترية.';
-          setOcrError(errMsg);
-          setErrorMsg(errMsg);
-          setFrameFeedbackMessage(errMsg);
-          return;
+      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber || !data?.expirationDate) {
+        // STRICT RED FRAME: Any unreadable image, wall, hand, random object, or missing critical fields
+        setLicenseFrameBorderState('rejected');
+        setOcrDocumentValid(false);
+        const errMsg =
+          data?.error ||
+          'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة أو غير مقروءة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة.';
+        setOcrError(errMsg);
+        setErrorMsg(errMsg);
+        setFrameFeedbackMessage(errMsg);
+        if (data?.isExpired) {
+          setLicenseExpired(true);
         }
-
-        // FALLBACK MANUAL OVERRIDE:
-        // Do not hard-block the user with a false "unreadable" error!
-        console.warn('[License OCR Fallback Activated]: Permitting manual review of captured frame.');
-        setLicenseFrameBorderState('valid');
-        setOcrDocumentValid(true);
-        setOcrError(null);
-        setErrorMsg(null);
-        setOcrConfidenceLow(true);
-        setIsManualOverrideEnabled(true);
-        setLicenseExpired(false);
-
-        if (licenseScanSide === 'front') {
-          setLicenseFront(dataUrl);
-        } else {
-          setLicenseBack(dataUrl);
-        }
-
-        const fallbackNum = data?.licenseNumber || licenseNumber || 'DZ04201870';
-        const fallbackExp = data?.expirationDate || licenseExpiration || '2034-04-28';
-        setOcrDetectedNumber(fallbackNum);
-        setOcrDetectedExpiration(fallbackExp);
-        setLicenseNumber(fallbackNum);
-        setLicenseExpiration(fallbackExp);
-        setFrameFeedbackMessage('تم حفظ صورة الوثيقة وتفعيل التعديل اليدوي لتأكيد البيانات.');
-        soundNotifier.playBidSound();
-
-        setTimeout(() => {
-          stopEmbeddedLicenseCamera();
-        }, 1000);
         return;
       }
 
-      // GREEN FRAME: Success!
+      // GREEN FRAME: GATED STRICTLY BEHIND SUCCESSFUL OCR EXTRACTION & VALID PATTERNS!
       setLicenseFrameBorderState('valid');
       setOcrDocumentValid(true);
       setOcrError(null);
       setErrorMsg(null);
       setLicenseExpired(false);
-
-      if (data?.lowConfidence) {
-        setOcrConfidenceLow(true);
-        setIsManualOverrideEnabled(true);
-        setFrameFeedbackMessage('تم التقاط وقراءة الوثيقة. يمكنك مراجعة وتعديل رقم الرخصة وتاريخ الصلاحية يدوياً للتأكيد.');
-      } else {
-        setFrameFeedbackMessage('✓ تم التحقق الأمني: رخصة سياقة بيومترية معتمدة 100%');
-      }
+      setFrameFeedbackMessage('✓ تم التحقق الأمني: رخصة سياقة بيومترية جزائرية معتمدة ومطابقة 100%');
 
       if (licenseScanSide === 'front') {
         setLicenseFront(dataUrl);
@@ -802,8 +741,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
 
       // Auto-fill & lock extracted data
-      setOcrDetectedNumber(data.licenseNumber || null);
-      setOcrDetectedExpiration(data.expirationDate || null);
+      setOcrDetectedNumber(data.licenseNumber);
+      setOcrDetectedExpiration(data.expirationDate);
+      setLicenseNumber(data.licenseNumber);
+      setLicenseExpiration(data.expirationDate);
       setOcrDetectedName(data.fullName || null);
       setOcrDetectedNameAr(data.fullNameAr || null);
       setOcrDetectedFirstName(data.firstName || null);
@@ -815,13 +756,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       setOcrDetectedCategory(data.category || null);
       setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
 
-      if (data.licenseNumber) {
-        setLicenseNumber(data.licenseNumber);
-      }
-      if (data.expirationDate) {
-        setLicenseExpiration(data.expirationDate);
-      }
-
       soundNotifier.playBidSound();
 
       // Cleanly stop video stream after success celebration
@@ -830,26 +764,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }, 1000);
 
     } catch (err: any) {
-      console.warn('[handleProcessLicenseCapture notice]:', err);
-      // Even on network glitch, provide fallback override instead of dead-end
-      setLicenseFrameBorderState('valid');
-      setOcrDocumentValid(true);
-      setOcrError(null);
-      setErrorMsg(null);
-      setOcrConfidenceLow(true);
-      setIsManualOverrideEnabled(true);
-      if (licenseScanSide === 'front') {
-        setLicenseFront(dataUrl);
-      } else {
-        setLicenseBack(dataUrl);
-      }
-      if (!licenseNumber) setLicenseNumber('DZ04201870');
-      if (!licenseExpiration) setLicenseExpiration('2034-04-28');
-      setFrameFeedbackMessage('تم التقاط صورة الوثيقة وتفعيل التعديل اليدوي لتأكيد البيانات.');
-      soundNotifier.playBidSound();
-      setTimeout(() => {
-        stopEmbeddedLicenseCamera();
-      }, 1000);
+      console.warn('[handleProcessLicenseCapture error]:', err);
+      // STRICT RED FRAME: Network error or processing crash keeps frame RED
+      setLicenseFrameBorderState('rejected');
+      setOcrDocumentValid(false);
+      const errMsg = 'تعذر فحص رخصة القيادة. يرجى التأكد من وضوح الصورة وتوجيه الكاميرا نحو الوثيقة في إضاءة جيدة.';
+      setOcrError(errMsg);
+      setErrorMsg(errMsg);
+      setFrameFeedbackMessage(errMsg);
     } finally {
       setIsScanningLicense(false);
     }
@@ -1876,24 +1798,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     >
                       <RefreshCw size={12} />
                       <span>إعادة تشغيل الكاميرا والمحاولة بوضوح</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOcrDocumentValid(true);
-                        setLicenseFrameBorderState('valid');
-                        setIsManualOverrideEnabled(true);
-                        setOcrConfidenceLow(true);
-                        setOcrError(null);
-                        setErrorMsg(null);
-                        if (!licenseNumber) setLicenseNumber('DZ04201870');
-                        if (!licenseExpiration) setLicenseExpiration('2034-04-28');
-                        setFrameFeedbackMessage('تم تفعيل التعديل اليدوي. يرجى تأكيد رقم الرخصة وتاريخ الصلاحية أدناه للمتابعة.');
-                      }}
-                      className="px-3.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black transition flex items-center gap-1.5 cursor-pointer shadow active:scale-95"
-                    >
-                      <Edit3 size={12} />
-                      <span>المتابعة مع التصحيح اليدوي للبيانات</span>
                     </button>
                   </div>
                 </div>

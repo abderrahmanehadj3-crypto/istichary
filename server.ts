@@ -1321,40 +1321,98 @@ Output line by line.`;
         ''
       ).replace(/[\s\-\/\.]/g, '').toUpperCase();
 
-      // Check for hard rejections (clearly not a driver's license)
-      const isHardReject =
+      // -----------------------------------------------------------------------
+      // STRICT SECURITY GATEKEEPER: MANDATORY KEYWORDS & PATTERN VERIFICATION
+      // -----------------------------------------------------------------------
+      const ALGERIAN_LICENSE_KEYWORDS = [
+        /رخصة\s*السياقة/i,
+        /رخصة\s*سياقة/i,
+        /الجمهورية\s*الجزائرية/i,
+        /PERMIS\s*DE\s*CONDUIRE/i,
+        /R[EÉ]PUBLIQUE\s*ALG[EÉ]RIENNE/i,
+        /DLDZA/i,
+        /D[EÉ]MOCRATIQUE\s*ET\s*POPULAIRE/i,
+        /الديمقراطية\s*الشعبية/i,
+        /وزارة\s*الداخلية/i,
+        /MINIST[EÈ]RE\s*DE\s*L['’]INT[EÉ]RIEUR/i,
+        /N[°o]\s*du\s*permis/i,
+        /الرقم\s*التعريفي\s*الوطني/i,
+        /Cat[eé]gorie/i,
+        /الصنف/i,
+      ];
+
+      // Formats for Algerian driver's licenses:
+      // Letter + 7-9 digits (e.g. A04201870) OR Wilaya slash (16/04201870) OR 7-12 digits (04201870) OR DLDZA MRZ OR 18-digit NIN
+      const ALGERIAN_LICENSE_NUMBER_REGEX = /^(?:[A-Z][0-9]{7,9}|[0-9]{1,2}\/[0-9]{4,10}|[0-9]{7,12}|DLDZA[A-Z0-9]{8,10}|[0-9]{18})$/i;
+
+      const combinedTranscribedText = `${rawVisionText} ${ocrResult?.fullName || ''} ${ocrResult?.fullNameAr || ''} ${ocrResult?.licenseNumber || ''}`.trim();
+      const containsAlgerianKeywords = ALGERIAN_LICENSE_KEYWORDS.some((rgx) => rgx.test(combinedTranscribedText));
+
+      const isExplicitNonLicense =
+        ocrResult?.isValidDocument === false ||
+        ocrResult?.rejectionReason === 'not_a_license' ||
         ocrResult?.rejectionReason === 'national_id_card' ||
         ocrResult?.rejectionReason === 'passport' ||
-        ocrResult?.rejectionReason === 'carte_grise';
+        ocrResult?.rejectionReason === 'carte_grise' ||
+        ocrResult?.rejectionReason === 'unreadable';
 
-      if (isHardReject) {
+      // 1. REJECT if the model detected a non-license object or explicit foreign document
+      if (isExplicitNonLicense) {
         return res.status(400).json({
           success: false,
           isValidDocument: false,
           isExpired: false,
           debugRawText: rawVisionText,
-          rejectionReason: ocrResult.rejectionReason,
-          error: ocrResult.rejectionMessage,
+          rejectionReason: ocrResult?.rejectionReason || 'not_a_license',
+          error:
+            ocrResult?.rejectionMessage ||
+            'الصورة الملتقطة لا تمثل رخصة قيادة معتمدة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة.',
         });
       }
 
-      // -----------------------------------------------------------------------
-      // FALLBACK MANUAL OVERRIDE MANDATE:
-      // If the OCR confidence is low, DO NOT hard-block the driver!
-      // Provide auto-filled numbers if recognized, and allow manual confirmation/correction.
-      // -----------------------------------------------------------------------
-      const lowConfidence = !cleanLicenseNumber || !parsedExpDate;
-      if (!cleanLicenseNumber) {
-        cleanLicenseNumber = parsedExpDate ? `DZ${parsedExpDate.replace(/-/g, '')}` : 'DZ04201870';
-        passType = 'manual_fallback';
+      // 2. REJECT RANDOM OBJECTS (Walls, tables, hands, random papers)
+      if (!containsAlgerianKeywords) {
+        console.warn('[SECURITY GATEKEEPER] Rejected: No Algerian license keywords detected.');
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          isExpired: false,
+          rejectionReason: 'not_a_license',
+          error: 'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة (تم رصد جدار أو طاولة أو يد أو جسم غير مطابق). يرجى وضع رخصة السياقة داخل الإطار.',
+          debugRawText: rawVisionText,
+        });
       }
+
+      // 3. REJECT IF LICENSE NUMBER DOES NOT MATCH OFFICIAL PATTERN
+      const hasValidNumberFormat = ALGERIAN_LICENSE_NUMBER_REGEX.test(cleanLicenseNumber);
+      if (!cleanLicenseNumber || !hasValidNumberFormat) {
+        console.warn('[SECURITY GATEKEEPER] Rejected: Missing or invalid license number pattern:', cleanLicenseNumber);
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          isExpired: false,
+          rejectionReason: 'invalid_license_number',
+          error: 'تعذر قراءة رقم رخصة القيادة بنمط معتمد. يرجى التأكد من وضوح الحقل 5 وأرقام الرخصة داخل الإطار.',
+          debugRawText: rawVisionText,
+        });
+      }
+
+      // 4. REJECT IF EXPIRY DATE IS MISSING OR INVALID
       if (!parsedExpDate) {
-        parsedExpDate = '2034-04-28'; // Future date fallback enabling manual confirmation
-        passType = 'manual_fallback';
+        console.warn('[SECURITY GATEKEEPER] Rejected: Missing or invalid expiry date.');
+        return res.status(400).json({
+          success: false,
+          isValidDocument: false,
+          isExpired: false,
+          rejectionReason: 'invalid_expiration_date',
+          error: 'تعذر قراءة تاريخ انتهاء صلاحية رخصة القيادة (الحقل 4b). يرجى توجيه الكاميرا بدقة وتثبيت الهاتف.',
+          debugRawText: rawVisionText,
+        });
       }
 
       const finalFullName = ocrResult?.fullName || `${ocrResult?.firstName || ''} ${ocrResult?.lastName || ''}`.trim();
       const finalFullNameAr = ocrResult?.fullNameAr || `${ocrResult?.lastNameAr || ''} ${ocrResult?.firstNameAr || ''}`.trim();
+      const lowConfidence = false;
 
       // -----------------------------------------------------------------------
       // 4. DEVELOPER OVERRIDE / DEBUG MODE: Log exact raw vision text to console
