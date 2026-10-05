@@ -234,7 +234,7 @@ function estimateSkewAngle(ctx: CanvasRenderingContext2D, width: number, height:
     let bestAngle = 0;
     let maxHorizontalEnergy = 0;
 
-    for (let angle = -8; angle <= 8; angle += 1) {
+    for (let angle = -15; angle <= 15; angle += 1) {
       const rad = (angle * Math.PI) / 180;
       const cosA = Math.cos(rad);
       const sinA = Math.sin(rad);
@@ -261,37 +261,50 @@ function estimateSkewAngle(ctx: CanvasRenderingContext2D, width: number, height:
       }
     }
 
-    return Math.abs(bestAngle) <= 8 ? bestAngle : 0;
+    return Math.abs(bestAngle) <= 15 ? bestAngle : 0;
   } catch (e) {
     return 0;
   }
 }
 
 /**
- * Detects card bounding box to crop strictly to the rectangular driver's license area
- * Discards margins, fingers on borders, or peripheral background
+ * Detects card bounding box with generous tolerance for tilt, distance, and angle variations
+ * Preserves card edges and margins to prevent clipping critical text or laser-engraved digits
  */
 function detectCardBoundingBox(
   width: number,
   height: number
 ): { x: number; y: number; width: number; height: number } {
+  const currentRatio = width / height;
   const targetRatio = 1.586; // ISO/IEC 7810 ID-1 standard
 
-  // Central safe crop (94% of width, matched to ID-1 ratio)
-  let cropWidth = Math.round(width * 0.94);
+  // Broad aspect ratio tolerance (1.20 to 1.98) handles slight tilts, perspective distortion & distance
+  if (currentRatio >= 1.20 && currentRatio <= 1.98) {
+    const padX = Math.round(width * 0.015);
+    const padY = Math.round(height * 0.015);
+    return {
+      x: padX,
+      y: padY,
+      width: Math.max(10, width - padX * 2),
+      height: Math.max(10, height - padY * 2),
+    };
+  }
+
+  // Broad safe crop with 2% margin buffer so edges are never cut off
+  let cropWidth = Math.round(width * 0.98);
   let cropHeight = Math.round(cropWidth / targetRatio);
 
-  if (cropHeight > height * 0.94) {
-    cropHeight = Math.round(height * 0.94);
+  if (cropHeight > height * 0.98) {
+    cropHeight = Math.round(height * 0.98);
     cropWidth = Math.round(cropHeight * targetRatio);
   }
 
-  const cropX = Math.round((width - cropWidth) / 2);
-  const cropY = Math.round((height - cropHeight) / 2);
+  const cropX = Math.max(0, Math.round((width - cropWidth) / 2));
+  const cropY = Math.max(0, Math.round((height - cropHeight) / 2));
 
   return {
-    x: Math.max(0, cropX),
-    y: Math.max(0, cropY),
+    x: cropX,
+    y: cropY,
     width: Math.min(width, cropWidth),
     height: Math.min(height, cropHeight),
   };
@@ -483,40 +496,40 @@ export async function preprocessLicenseFrameForOcr(
   // ---------------------------------------------------------------------------
 
   // ROI 1: FIELD 5 - License Number (رقم رخصة السياقة / N° du permis)
-  // Usually located in lower-right quadrant: X: 48% to 98%, Y: 68% to 94%
+  // Broadened lower-right zone: X: 28% to 99%, Y: 52% to 98% (handles tilts and card placement shifts)
   const field5Roi = cropAndProcessRoi(
     procCanvas,
-    { x: 0.48, y: 0.68, width: 0.50, height: 0.26 },
+    { x: 0.28, y: 0.52, width: 0.71, height: 0.46 },
     600,
     180
   );
   appliedEnhancements.push(`ROI Field 5 (License Number) cropped & Otsu-binarized (T=${field5Roi.threshold})`);
 
   // ROI 2: FIELD 4b - Expiry Date (تاريخ انتهاء الصلاحية / Date d'expiration)
-  // Located in middle-right quadrant: X: 46% to 92%, Y: 50% to 68%
+  // Broadened middle-right zone: X: 30% to 98%, Y: 36% to 74%
   const field4bRoi = cropAndProcessRoi(
     procCanvas,
-    { x: 0.46, y: 0.50, width: 0.46, height: 0.20 },
+    { x: 0.30, y: 0.36, width: 0.68, height: 0.38 },
     550,
     160
   );
   appliedEnhancements.push(`ROI Field 4b (Expiry Date) cropped & Otsu-binarized (T=${field4bRoi.threshold})`);
 
   // ROI 3: FIELD 4d - NIN 18-digit national ID (الرقم التعريفي الوطني)
-  // Located at center-bottom: X: 28% to 76%, Y: 70% to 88%
+  // Broadened center-bottom zone: X: 15% to 95%, Y: 58% to 96%
   const field4dRoi = cropAndProcessRoi(
     procCanvas,
-    { x: 0.28, y: 0.70, width: 0.50, height: 0.18 },
+    { x: 0.15, y: 0.58, width: 0.80, height: 0.38 },
     550,
     140
   );
   appliedEnhancements.push(`ROI Field 4d (NIN) cropped & Otsu-binarized (T=${field4dRoi.threshold})`);
 
   // ROI 4: FIELDS 1 & 2 - Nom & Prénom / اللقب والإسم
-  // Located in upper-center-right: X: 32% to 96%, Y: 20% to 48%
+  // Broadened upper zone: X: 16% to 98%, Y: 08% to 54%
   const namesRoi = cropAndProcessRoi(
     procCanvas,
-    { x: 0.32, y: 0.20, width: 0.64, height: 0.28 },
+    { x: 0.16, y: 0.08, width: 0.82, height: 0.46 },
     650,
     200
   );

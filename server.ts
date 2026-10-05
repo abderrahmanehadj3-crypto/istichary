@@ -1120,6 +1120,87 @@ Respond ONLY with valid JSON:
   }
 
   // -------------------------------------------------------------------------
+  // FUZZY & PARTIAL ALGERIAN LICENSE KEYWORD CHECKER
+  // Tolerates glare, holographic layers, and minor OCR character misreads (1-2 chars)
+  // -------------------------------------------------------------------------
+  function checkAlgerianLicenseKeywords(text: string): { hasKeywords: boolean; matchedKeywords: string[]; score: number } {
+    if (!text) return { hasKeywords: false, matchedKeywords: [], score: 0 };
+
+    const normAr = normalizeArabicText(text);
+    const normLat = normalizeLatinText(text);
+
+    const matchedKeywords: string[] = [];
+
+    // 1. Primary multi-word patterns (high confidence)
+    const primaryKeywords = [
+      { id: 'رخصة_سياقة', regex: /(?:رخص[ةه]|رخص)\s*(?:السياق[ةه]|سياق[ةه]|سياقه|السياقه|سياف)/i },
+      { id: 'permis_conduire', regex: /PERMI[S]?\s*(?:DE\s*)?CONDUI/i },
+      { id: 'الجمهورية_الجزائرية', regex: /(?:جمهوري[ةه]|الجمهوري[ةه])\s*(?:جزائر|الجزائر|جزاير)/i },
+      { id: 'republique_algerienne', regex: /REPUB?LI?Q?U?E?\s*ALG[EÉ]R/i },
+      { id: 'dldza_mrz', regex: /DLDZA|DZA\b/i },
+      { id: 'رقم_الرخصة', regex: /(?:رقم|N[°o])\s*(?:الرخص[ةه]|du\s*permis)/i },
+      { id: 'الرقم_التعريفي_الوطني', regex: /(?:تعريفي|وطني|NIN)\b/i },
+      { id: 'صنف_الرخصة', regex: /(?:صنف|cat[eé]gorie)\b/i },
+    ];
+
+    for (const kw of primaryKeywords) {
+      if (kw.regex.test(text) || kw.regex.test(normAr) || kw.regex.test(normLat)) {
+        matchedKeywords.push(kw.id);
+      }
+    }
+
+    // 2. Individual partial/fuzzy tokens (handles glare, holographic distortion, 1-2 char misreads)
+    const partialTokens = [
+      { id: 'رخصة', pattern: /رخص/i },
+      { id: 'سياقة', pattern: /سياق|سياف/i },
+      { id: 'جزائرية', pattern: /جزائر|جزاير/i },
+      { id: 'جمهورية', pattern: /جمهور/i },
+      { id: 'ديمقراطية', pattern: /ديمقراط/i },
+      { id: 'شعبية', pattern: /شعب/i },
+      { id: 'وزارة', pattern: /وزار/i },
+      { id: 'داخلية', pattern: /داخل/i },
+      { id: 'ولاية', pattern: /ولاي/i },
+      { id: 'دائرة', pattern: /دائر/i },
+      { id: 'ازدياد', pattern: /ازدياد|ميلاد/i },
+      { id: 'انتهاء', pattern: /انتهاء|صلاحي/i },
+      { id: 'اصدار', pattern: /اصدار|دليفرانس/i },
+      { id: 'permis', pattern: /PERMI|PRMIS/i },
+      { id: 'conduire', pattern: /CONDUI/i },
+      { id: 'algerie', pattern: /ALGER/i },
+      { id: 'wilaya', pattern: /WILAYA|DAIRA/i },
+      { id: 'categorie', pattern: /CATEG/i },
+      { id: 'expiration', pattern: /EXPIR/i },
+      { id: 'delivrance', pattern: /DELIV/i },
+    ];
+
+    for (const tok of partialTokens) {
+      if (!matchedKeywords.includes(tok.id)) {
+        if (tok.pattern.test(text) || tok.pattern.test(normAr) || tok.pattern.test(normLat)) {
+          matchedKeywords.push(tok.id);
+        }
+      }
+    }
+
+    // 3. Fallback fuzzy check: Levenshtein phrase distance (relaxed similarity >= 0.50)
+    const anchors = ['PERMIS DE CONDUIRE', 'REPUBLIQUE ALGERIENNE', 'رخصة السياقة', 'الجمهورية الجزائرية'];
+    for (const anchor of anchors) {
+      if (calculateStringSimilarity(normLat, normalizeLatinText(anchor)) >= 0.50 ||
+          calculateStringSimilarity(normAr, normalizeArabicText(anchor)) >= 0.50) {
+        matchedKeywords.push(`fuzzy_${anchor}`);
+      }
+    }
+
+    // Consider valid if at least 1 keyword or partial token is detected
+    const hasKeywords = matchedKeywords.length >= 1;
+
+    return {
+      hasKeywords,
+      matchedKeywords,
+      score: matchedKeywords.length,
+    };
+  }
+
+  // -------------------------------------------------------------------------
   // 6. API: DRIVER LICENSE OCR & REAL DOCUMENT FORENSICS WITH OPENCV ROI CROPPING
   // -------------------------------------------------------------------------
   app.post('/api/driver/ocr-license', async (req: Request, res: Response) => {
@@ -1168,9 +1249,9 @@ ${ninRoi?.data ? '4. NIN 18-digit ROI (Field 4d): Cropped and Otsu-binarized.' :
 TARGETED COORDINATES & FIELDS:
 - FIELD 5 (License Number / رقم الرخصة):
   Usually engraved in the lower-right area. Formats:
-  * Alphanumeric letter + 8 digits (e.g. "A04201870")
+  * Alphanumeric letter + digits (e.g. "A04201870", "B123456")
   * Wilaya code format (e.g. "16/04201870" or "09/123456")
-  * Pure numeric (8 to 12 digits, e.g. "04201870")
+  * Pure numeric (6 to 12 digits, e.g. "04201870")
 - FIELD 4b (Date of Expiry / تاريخ انتهاء الصلاحية):
   Format: "DD.MM.YYYY" (e.g. "28.04.2034") or "DD/MM/YYYY" or "DD-MM-YYYY".
 - FIELD 4d (NIN / 18 digits):
@@ -1184,17 +1265,11 @@ TARGETED COORDINATES & FIELDS:
 - FIELD 4c (Autorité de délivrance / سلطة الإصدار / مكان الإصدار):
   e.g. "Wilaya d'Alger" or "دائرة بئر مراد رايس" or "09 - Blida"
 
-STRICT REJECTION RULES (MANDATORY):
-1. REJECT RANDOM OBJECTS:
-   If the image is a wall, table, hand, floor, furniture, person's face, or ANY non-license object:
-   -> Return isValidDocument: false, rejectionReason: "not_a_license", rejectionMessage: "الصورة الملتقطة لا تمثل رخصة سياقة جزائرية معتمدة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة داخل الإطار."
-2. REJECT NON-LICENSE OFFICIAL DOCUMENTS:
-   - National ID Card (CNI / بطاقة التعريف الوطنية) -> rejectionReason: "national_id_card", rejectionMessage: "الوثيقة الممسوحة هي بطاقة تعريف وطنية وليست رخصة سياقة."
-   - Passport (جواز السفر) -> rejectionReason: "passport", rejectionMessage: "الوثيقة الممسوحة هي جواز سفر وليست رخصة سياقة."
-   - Vehicle Gray Card (البطاقة الرمادية Carte Grise) -> rejectionReason: "carte_grise", rejectionMessage: "الوثيقة الممسوحة هي بطاقة رمادية للمركبة وليست رخصة سياقة."
-3. REJECT UNREADABLE / BLURRY IMAGES:
-   If the image is too blurry, dark, or distorted to read the license number or expiry date:
-   -> Return isValidDocument: false, rejectionReason: "unreadable", rejectionMessage: "الصورة الملتقطة غير مقروءة بوضوح. يرجى تثبيت الهاتف والتصوير في إضاءة جيدة."
+REAL-WORLD LIVE CAPTURE TOLERANCE (CRITICAL):
+- The driver captures this live with their mobile camera. Glare, reflections from polycarbonate holographic laminate, slight tilts, or minor compression are EXPECTED and NORMAL.
+- DO NOT FALSELY REJECT VALID LICENSES: If you can discern the card structure, text, license number or dates, return isValidDocument: true.
+- Even if some characters have glare or partial blur, extract whatever text is readable.
+- ONLY return isValidDocument: false if the image is NOT a driver's license (e.g. wall, table, hand, face, passport, carte grise, or blank).
 
 Respond ONLY with valid JSON:
 {
@@ -1384,62 +1459,75 @@ Output line by line.`;
       // Clean license number extracted strictly from OCR
       let cleanLicenseNumber = extractedRawLicNum.replace(/[\s\-\/\.]/g, '').toUpperCase();
 
+      // Combined transcribed text for keyword analysis
+      const combinedTranscribedText = `${rawVisionText} ${ocrResult?.fullName || ''} ${ocrResult?.fullNameAr || ''} ${ocrResult?.licenseNumber || ''} ${extractedRawLicNum}`.trim();
+
       // -----------------------------------------------------------------------
-      // STRICT SECURITY GATEKEEPER: MANDATORY KEYWORDS & PATTERN VERIFICATION
+      // 1. RELAXED FUZZY & PARTIAL KEYWORD MATCHING
+      // Tolerates glare, holographic distortion, and compression (1-2 misread chars)
       // -----------------------------------------------------------------------
-      const ALGERIAN_LICENSE_KEYWORDS = [
-        /رخصة\s*السياقة/i,
-        /رخصة\s*سياقة/i,
-        /الجمهورية\s*الجزائرية/i,
-        /PERMIS\s*DE\s*CONDUIRE/i,
-        /R[EÉ]PUBLIQUE\s*ALG[EÉ]RIENNE/i,
-        /DLDZA/i,
-        /D[EÉ]MOCRATIQUE\s*ET\s*POPULAIRE/i,
-        /الديمقراطية\s*الشعبية/i,
-        /وزارة\s*الداخلية/i,
-        /MINIST[EÈ]RE\s*DE\s*L['’]INT[EÉ]RIEUR/i,
-        /N[°o]\s*du\s*permis/i,
-        /الرقم\s*التعريفي\s*الوطني/i,
-        /Cat[eé]gorie/i,
-        /الصنف/i,
-      ];
+      const keywordCheck = checkAlgerianLicenseKeywords(combinedTranscribedText);
+      const containsAlgerianKeywords = keywordCheck.hasKeywords || ocrResult?.isValidDocument === true;
 
-      // Formats for Algerian driver's licenses:
-      // Letter + 7-9 digits (e.g. A04201870) OR Wilaya slash (16/04201870) OR 7-12 digits (04201870) OR DLDZA MRZ OR 18-digit NIN
-      const ALGERIAN_LICENSE_NUMBER_REGEX = /^(?:[A-Z][0-9]{7,9}|[0-9]{1,2}\/[0-9]{4,10}|[0-9]{7,12}|DLDZA[A-Z0-9]{8,10}|[0-9]{18})$/i;
+      // Extract raw text lines array for debugging
+      const rawLines = (rawVisionText || '')
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
 
-      const combinedTranscribedText = `${rawVisionText} ${ocrResult?.fullName || ''} ${ocrResult?.fullNameAr || ''} ${ocrResult?.licenseNumber || ''}`.trim();
-      const containsAlgerianKeywords = ALGERIAN_LICENSE_KEYWORDS.some((rgx) => rgx.test(combinedTranscribedText));
+      // Fallback search in raw OCR text if structured pass missed or format varied
+      if (!cleanLicenseNumber && rawVisionText) {
+        const licTextMatch = rawVisionText.match(/(?:5[\.\:\-]?\s*|رقم الرخصة[\.\:\-]?\s*|N°[\.\:\-]?\s*|DLDZA\s*)?([A-Z]?[0-9]{5,18})/i);
+        if (licTextMatch) {
+          cleanLicenseNumber = licTextMatch[1].replace(/[\s\-\/\.]/g, '').toUpperCase();
+          extractedRawLicNum = licTextMatch[1];
+        }
+      }
 
-      const isExplicitNonLicense =
-        ocrResult?.isValidDocument === false ||
-        ocrResult?.rejectionReason === 'not_a_license' ||
+      if (!parsedExpDate && rawVisionText) {
+        const expTextMatch = rawVisionText.match(/(?:4b[\.\:\-]?\s*|expiration|انتهاء|صلاحية)?\s*[:\.\-]?\s*([0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{2,4})/i);
+        if (expTextMatch) {
+          parsedExpDate = parseAlgerianDate(expTextMatch[1]);
+        }
+      }
+
+      // Broadened formats for Algerian driver's licenses (5 to 18 digits or alphanumeric)
+      const ALGERIAN_LICENSE_NUMBER_REGEX = /^(?:[A-Z]{1,3}[0-9]{4,12}|[0-9]{1,2}[\/\-\.\s][0-9]{4,10}|[0-9]{5,18}|DLDZA[A-Z0-9]{6,12}|DZ[A-Z0-9]{5,12})$/i;
+      const hasValidNumberFormat =
+        ALGERIAN_LICENSE_NUMBER_REGEX.test(cleanLicenseNumber) ||
+        ALGERIAN_LICENSE_NUMBER_REGEX.test(extractedRawLicNum) ||
+        (cleanLicenseNumber.length >= 5 && cleanLicenseNumber.length <= 18 && /[0-9]/.test(cleanLicenseNumber));
+
+      // 1. REJECT if user captured a clearly foreign official document (e.g. passport or gray card)
+      const isExplicitForeignDocument =
         ocrResult?.rejectionReason === 'national_id_card' ||
         ocrResult?.rejectionReason === 'passport' ||
-        ocrResult?.rejectionReason === 'carte_grise' ||
-        ocrResult?.rejectionReason === 'unreadable';
+        ocrResult?.rejectionReason === 'carte_grise';
 
-      // 1. REJECT if the model detected a non-license object or explicit foreign document
-      if (isExplicitNonLicense) {
+      if (isExplicitForeignDocument && !containsAlgerianKeywords) {
+        console.warn('[SECURITY GATEKEEPER] Rejected: Foreign document detected:', ocrResult?.rejectionReason);
         return res.status(400).json({
           success: false,
           isValidDocument: false,
           isExpired: false,
           debugRawText: rawVisionText,
-          rejectionReason: ocrResult?.rejectionReason || 'not_a_license',
+          rawLines,
+          rejectionReason: ocrResult?.rejectionReason,
           error:
             ocrResult?.rejectionMessage ||
-            'الصورة الملتقطة لا تمثل رخصة قيادة معتمدة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة داخل الإطار.',
+            'الوثيقة الممسوحة هي وثيقة أخرى وليست رخصة سياقة. يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة.',
         });
       }
 
-      // 2. REJECT RANDOM OBJECTS (Walls, tables, hands, random papers)
-      if (!containsAlgerianKeywords) {
-        console.warn('[SECURITY GATEKEEPER] Rejected: No Algerian license keywords detected.');
+      // 2. REJECT RANDOM NON-DOCUMENT OBJECTS (Walls, tables, hands, random papers)
+      // Only reject if NEITHER keywords NOR a license number was found on the image!
+      if (!containsAlgerianKeywords && !cleanLicenseNumber) {
+        console.warn('[SECURITY GATEKEEPER] Rejected: No Algerian license keywords or numbers detected.');
         return res.status(400).json({
           success: false,
           isValidDocument: false,
           isExpired: false,
+          rawLines,
           rejectionReason: 'not_a_license',
           error: 'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة (تم رصد جدار أو طاولة أو يد أو جسم غير مطابق). يرجى وضع رخصة السياقة داخل الإطار.',
           debugRawText: rawVisionText,
@@ -1447,13 +1535,13 @@ Output line by line.`;
       }
 
       // 3. REJECT IF LICENSE NUMBER DOES NOT MATCH OFFICIAL PATTERN
-      const hasValidNumberFormat = ALGERIAN_LICENSE_NUMBER_REGEX.test(cleanLicenseNumber);
       if (!cleanLicenseNumber || !hasValidNumberFormat) {
         console.warn('[SECURITY GATEKEEPER] Rejected: Missing or invalid license number pattern:', cleanLicenseNumber);
         return res.status(400).json({
           success: false,
           isValidDocument: false,
           isExpired: false,
+          rawLines,
           rejectionReason: 'invalid_license_number',
           error: 'تعذر قراءة رقم رخصة القيادة بنمط معتمد. يرجى التأكد من وضوح الحقل 5 وأرقام الرخصة داخل الإطار.',
           debugRawText: rawVisionText,
@@ -1467,6 +1555,7 @@ Output line by line.`;
           success: false,
           isValidDocument: false,
           isExpired: false,
+          rawLines,
           rejectionReason: 'invalid_expiration_date',
           error: 'تعذر قراءة تاريخ انتهاء صلاحية رخصة القيادة (الحقل 4b). يرجى توجيه الكاميرا بدقة وتثبيت الهاتف.',
           debugRawText: rawVisionText,
@@ -1478,16 +1567,21 @@ Output line by line.`;
       const lowConfidence = false;
 
       // -----------------------------------------------------------------------
-      // 4. DEVELOPER OVERRIDE / DEBUG MODE: Log exact raw vision text to console
+      // 3. LOG RAW OCR OUTPUT FOR DEBUGGING (Printed to server console)
       // -----------------------------------------------------------------------
       console.log('================================================================');
-      console.log('[OCR DEBUG LOG] --- SARI3 ALGERIAN LICENSE OCR PIPELINE ---');
+      console.log('[OCR DEBUG LOG] --- EXACT EXTRACTED TEXT ARRAY (RAW OCR) ---');
       console.log('[OCR DEBUG LOG] Timestamp:', new Date().toISOString());
       console.log('[OCR DEBUG LOG] Multi-Pass Level:', passType);
-      console.log('[OCR DEBUG LOG] Had OpenCV ROIs:', !!licRoi, !!expRoi);
-      console.log('[OCR DEBUG LOG] Raw Vision Model Text:\n' + (rawVisionText || '(empty)'));
-      console.log('[OCR DEBUG LOG] Parsed License Number:', cleanLicenseNumber);
+      console.log('[OCR DEBUG LOG] Total Extracted Lines:', rawLines.length);
+      console.log('[OCR DEBUG LOG] Text Array:\n', JSON.stringify(rawLines, null, 2));
+      console.log('[OCR DEBUG LOG] Keyword Matches:', keywordCheck.matchedKeywords, '(Score:', keywordCheck.score, ')');
+      console.log('[OCR DEBUG LOG] Parsed License Number:', cleanLicenseNumber, '| Format Valid:', hasValidNumberFormat);
       console.log('[OCR DEBUG LOG] Parsed Expiration Date:', parsedExpDate);
+      console.log('[OCR DEBUG LOG] Parsed Birth Date:', parsedBirthDate);
+      console.log('[OCR DEBUG LOG] Parsed Full Name (Latin):', finalFullName);
+      console.log('[OCR DEBUG LOG] Parsed Full Name (Arabic):', finalFullNameAr);
+      console.log('================================================================');
       console.log('[OCR DEBUG LOG] Parsed Birth Date:', parsedBirthDate);
       console.log('[OCR DEBUG LOG] Parsed Full Name (Latin):', finalFullName);
       console.log('[OCR DEBUG LOG] Parsed Full Name (Arabic):', finalFullNameAr);
