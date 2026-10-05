@@ -1172,6 +1172,12 @@ Respond ONLY with valid JSON:
 }`;
 
       let ocrResult: any = null;
+      let rawVisionText: string = '';
+      let passType: 'structured_json' | 'raw_text_multipass' | 'heuristic_fallback' = 'structured_json';
+
+      // -----------------------------------------------------------------------
+      // PASS 1: Advanced Bilingual Structured JSON Vision Extraction
+      // -----------------------------------------------------------------------
       try {
         const response = await ai.models.generateContent({
           model: 'gemini-3.8-flash',
@@ -1190,15 +1196,107 @@ Respond ONLY with valid JSON:
         });
 
         if (response.text) {
-          const rawText = response.text.trim();
-          const cleanJson = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
+          rawVisionText = response.text.trim();
+          const cleanJson = rawVisionText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
           ocrResult = JSON.parse(cleanJson);
         }
       } catch (aiErr) {
-        console.warn('[License OCR AI Notice]:', aiErr);
+        console.warn('[License OCR Pass 1 Notice]:', aiErr);
       }
 
-      // Normalize dates
+      // -----------------------------------------------------------------------
+      // PASS 2: Multi-Pass Raw Text Transcription Fallback (If Pass 1 failed or incomplete)
+      // -----------------------------------------------------------------------
+      if (!ocrResult || !ocrResult.isValidDocument || (!ocrResult.licenseNumber && !ocrResult.expirationDate)) {
+        try {
+          passType = 'raw_text_multipass';
+          const rawOcrPrompt = `You are an expert Computer Vision OCR transcriber specialized in Algerian IDs.
+Transcribe EVERY word, character, and number visible on this Algerian driver's license (both Arabic and French).
+Focus strictly on:
+- Header: الجمهورية الجزائرية الديمقراطية الشعبية / RÉPUBLIQUE ALGÉRIENNE / رخصة السياقة / PERMIS DE CONDUIRE
+- 1. Nom / اللقب
+- 2. Prénom / الإسم
+- 3. Date et lieu de naissance / تاريخ ومكان الازدياد
+- 4a. Date de délivrance / تاريخ الإصدار
+- 4b. Date d'expiration / تاريخ انتهاء الصلاحية
+- 4d. NIN / الرقم التعريفي الوطني (18 digits)
+- 5. N° du permis / رقم الرخصة
+- Bottom MRZ (DLDZA...) if back side.
+Output the raw transcribed lines clearly.`;
+
+          const rawResponse = await ai.models.generateContent({
+            model: 'gemini-3.8-flash',
+            contents: [
+              {
+                inlineData: {
+                  mimeType,
+                  data,
+                },
+              },
+              rawOcrPrompt,
+            ],
+          });
+
+          if (rawResponse.text) {
+            const secondaryRawText = rawResponse.text.trim();
+            rawVisionText = rawVisionText
+              ? `${rawVisionText}\n--- PASS 2 RAW TRANSCRIPTION ---\n${secondaryRawText}`
+              : secondaryRawText;
+
+            // Flexible parser on raw text
+            if (!ocrResult) ocrResult = {};
+
+            // 1. Flexible Algerian License Number regexes
+            // Format A: Letter + 8 digits (e.g. A04201870)
+            const licMatchLetter = secondaryRawText.match(/(?:5[\.\:\-]?\s*|رقم الرخصة[\.\:\-]?\s*|N°[\.\:\-]?\s*)?([A-Z]\s*[0-9]{7,9})/i);
+            // Format B: Wilaya slash format (e.g. 16/04201870 or 09/123456)
+            const licMatchSlash = secondaryRawText.match(/([0-9]{1,2})\s*[\/\-\.\s]\s*([0-9]{4,10})/);
+            // Format C: Standard 6-12 consecutive digits
+            const licMatchDigits = secondaryRawText.match(/(?:5[\.\:\-]?\s*|رخصة[\.\:\-]?\s*)?([0-9]{6,12})/);
+            // Format D: 18-digit NIN (Field 4d)
+            const ninMatch = secondaryRawText.match(/(?:4d[\.\:\-]?\s*|NIN[\.\:\-]?\s*|التعريفي[\.\:\-]?\s*)?([0-9]{18})/i);
+            // Format E: MRZ Line 1: DLDZA...
+            const mrzLicMatch = secondaryRawText.match(/DLDZA\s*([A-Z0-9]{8,10})/i);
+
+            if (!ocrResult.licenseNumber) {
+              if (licMatchLetter) ocrResult.licenseNumber = licMatchLetter[1].replace(/\s+/g, '');
+              else if (licMatchSlash) ocrResult.licenseNumber = `${licMatchSlash[1]}/${licMatchSlash[2]}`;
+              else if (mrzLicMatch) ocrResult.licenseNumber = mrzLicMatch[1].replace(/\s+/g, '');
+              else if (licMatchDigits) ocrResult.licenseNumber = licMatchDigits[1];
+              else if (ninMatch) ocrResult.licenseNumber = ninMatch[1];
+            }
+
+            if (!ocrResult.nationalIdNumber && ninMatch) {
+              ocrResult.nationalIdNumber = ninMatch[1];
+            }
+
+            // 2. Flexible Date extraction for Expiry (Field 4b or Valable jusqu'au)
+            const expMatch = secondaryRawText.match(/(?:4b[\.\:\-]?\s*|expiration[\.\:\-]?\s*|انتهاء[\.\:\-]?\s*|صلاحية[\.\:\-]?\s*)([0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{2,4})/i)
+              || secondaryRawText.match(/([0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{4})/);
+            if (!ocrResult.expirationDate && expMatch) {
+              ocrResult.expirationDate = expMatch[1];
+            }
+
+            // 3. Flexible Date extraction for Birth Date (Field 3)
+            const dobMatch = secondaryRawText.match(/(?:3[\.\:\-]?\s*|naissance[\.\:\-]?\s*|الازدياد[\.\:\-]?\s*|ميلاد[\.\:\-]?\s*)([0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{2,4})/i);
+            if (!ocrResult.birthDate && dobMatch) {
+              ocrResult.birthDate = dobMatch[1];
+            }
+
+            // 4. Document Recognition check
+            const hasLicenseKeywords = /(?:رخصة|السياقة|PERMIS|CONDUIRE|الجزائرية|ALGERIENNE|DLDZA|الجمهورية)/i.test(secondaryRawText);
+            if (hasLicenseKeywords) {
+              ocrResult.isValidDocument = true;
+            }
+          }
+        } catch (rawErr) {
+          console.warn('[License OCR Pass 2 Notice]:', rawErr);
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // Normalize dates with flexible parser (handles Eastern Arabic digits & variations)
+      // -----------------------------------------------------------------------
       const parsedExpDate = parseAlgerianDate(ocrResult?.expirationDate);
       const parsedBirthDate = parseAlgerianDate(ocrResult?.birthDate);
       const parsedIssueDate = parseAlgerianDate(ocrResult?.issueDate);
@@ -1222,14 +1320,36 @@ Respond ONLY with valid JSON:
       // If document is verified authentic Algerian license and has expiry date but field 5 label was faint
       if (!cleanLicenseNumber && parsedExpDate) {
         cleanLicenseNumber = `DZ${parsedExpDate.replace(/-/g, '')}`;
+        passType = 'heuristic_fallback';
       }
 
       // RELAXED CONFIDENCE THRESHOLD FOR ALGERIAN BIOMETRIC LICENSES:
       // If the model identified it as an authentic license OR if it extracted valid Algerian license data:
-      // (expiry date + [name OR license number OR NIN OR category])
+      // (expiry date + [name OR license number OR NIN OR category OR Algerian keywords])
+      const hasAlgerianKeywords = /(?:رخصة|السياقة|PERMIS|CONDUIRE|الجزائرية|ALGERIENNE|DLDZA)/i.test(rawVisionText);
       const isRecognizedAlgerianLicense =
         ocrResult?.isValidDocument === true ||
+        hasAlgerianKeywords ||
         (parsedExpDate && (ocrResult?.fullName || ocrResult?.fullNameAr || cleanLicenseNumber || ocrResult?.nationalIdNumber || ocrResult?.category === 'B'));
+
+      const finalFullName = ocrResult?.fullName || `${ocrResult?.firstName || ''} ${ocrResult?.lastName || ''}`.trim();
+      const finalFullNameAr = ocrResult?.fullNameAr || `${ocrResult?.lastNameAr || ''} ${ocrResult?.firstNameAr || ''}`.trim();
+
+      // -----------------------------------------------------------------------
+      // 4. DEVELOPER OVERRIDE / DEBUG MODE: Log exact raw vision text to console
+      // -----------------------------------------------------------------------
+      console.log('================================================================');
+      console.log('[OCR DEBUG LOG] --- SARI3 ALGERIAN LICENSE OCR PIPELINE ---');
+      console.log('[OCR DEBUG LOG] Timestamp:', new Date().toISOString());
+      console.log('[OCR DEBUG LOG] Multi-Pass Level:', passType);
+      console.log('[OCR DEBUG LOG] Raw Vision Model Text:\n' + (rawVisionText || '(empty)'));
+      console.log('[OCR DEBUG LOG] Parsed License Number:', cleanLicenseNumber);
+      console.log('[OCR DEBUG LOG] Parsed Expiration Date:', parsedExpDate);
+      console.log('[OCR DEBUG LOG] Parsed Birth Date:', parsedBirthDate);
+      console.log('[OCR DEBUG LOG] Parsed Full Name (Latin):', finalFullName);
+      console.log('[OCR DEBUG LOG] Parsed Full Name (Arabic):', finalFullNameAr);
+      console.log('[OCR DEBUG LOG] Is Recognized Algerian License:', isRecognizedAlgerianLicense);
+      console.log('================================================================');
 
       // STRICT VALIDATION CHECK: Never pass non-license cards, dark/blurry images or fake documents
       if (!isRecognizedAlgerianLicense || (!cleanLicenseNumber && !parsedExpDate)) {
@@ -1237,6 +1357,7 @@ Respond ONLY with valid JSON:
           success: false,
           isValidDocument: false,
           isExpired: false,
+          debugRawText: rawVisionText,
           rejectionReason: ocrResult?.rejectionReason || 'not_a_license',
           error:
             ocrResult?.rejectionMessage ||
@@ -1268,8 +1389,6 @@ Respond ONLY with valid JSON:
         });
       }
 
-      const finalFullName = ocrResult.fullName || `${ocrResult.firstName || ''} ${ocrResult.lastName || ''}`.trim();
-      const finalFullNameAr = ocrResult.fullNameAr || `${ocrResult.lastNameAr || ''} ${ocrResult.firstNameAr || ''}`.trim();
       const calculatedAge = calculateDriverAge(parsedBirthDate, currentDateStr);
 
       // -----------------------------------------------------------------------
@@ -1342,6 +1461,8 @@ Respond ONLY with valid JSON:
           nameMatched: true,
           dobMatched: true,
         },
+        debugRawText: rawVisionText,
+        multiPassLevel: passType,
         message: 'تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%',
       });
     } catch (err: any) {

@@ -32,10 +32,12 @@ import {
   Lock,
   Volume2,
   VolumeX,
+  Trophy,
 } from 'lucide-react';
 import { soundNotifier, calculateHaversineDistanceKm } from '../utils/audioNotification';
 import { launchNativeDeviceCamera } from '../utils/nativeCameraBridge';
 import { preprocessLicenseFrameForOcr } from '../utils/imagePreprocessingCV';
+import { TopDriversSection } from './TopDriversSection';
 
 interface DriverHomeProps {
   currentUser: UserProfile;
@@ -218,6 +220,7 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
   // 5. PROXIMITY-BASED AUDIO ORDER ALERTS (VOICE NOTIFICATION)
   // When a new delivery order is placed, calculate proximity and trigger audio alert + voice prompt
   const [audioAlertsEnabled, setAudioAlertsEnabled] = useState<boolean>(true);
+  const [dashboardTab, setDashboardTab] = useState<'orders' | 'top_drivers'>('orders');
   const alertedOrdersRef = React.useRef<Set<string>>(new Set());
 
   React.useEffect(() => {
@@ -516,8 +519,48 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
         </div>
       </div>
 
+      {/* Dashboard Sub-navigation Tabs: Orders & Top Drivers */}
+      <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-slate-900 border border-slate-800 text-xs font-bold shadow-md">
+        <button
+          type="button"
+          onClick={() => setDashboardTab('orders')}
+          className={`flex-1 py-2.5 px-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer ${
+            dashboardTab === 'orders'
+              ? 'bg-emerald-500 text-slate-950 shadow-md font-black'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Radio size={15} className={dashboardTab === 'orders' ? 'animate-pulse' : ''} />
+          <span>طلبات التوصيل ({availableOrders.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setDashboardTab('top_drivers')}
+          className={`flex-1 py-2.5 px-3 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer ${
+            dashboardTab === 'top_drivers'
+              ? 'bg-amber-500 text-slate-950 shadow-md font-black'
+              : 'text-slate-400 hover:text-white'
+          }`}
+        >
+          <Trophy size={15} />
+          <span>أفضل 10 كباتن (Top Drivers) 🏆</span>
+        </button>
+      </div>
+
+      {/* VIEW: TOP DRIVERS LEADERBOARD */}
+      {dashboardTab === 'top_drivers' && (
+        <TopDriversSection
+          currentUser={currentUser}
+          selectedWilaya={selectedWilaya}
+          lang={lang}
+        />
+      )}
+
       {/* Available Orders Section */}
-      <div className="space-y-3">
+      {dashboardTab === 'orders' && (
+        <div className="space-y-4">
+          <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="font-black text-sm text-white flex items-center gap-2">
             <Radio size={16} className="text-emerald-400 animate-pulse" />
@@ -664,7 +707,18 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
             );
           })
         )}
-      </div>
+          </div>
+
+          {/* Top Drivers Leaderboard Section */}
+          <div className="pt-2">
+            <TopDriversSection
+              currentUser={currentUser}
+              selectedWilaya={selectedWilaya}
+              lang={lang}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Smart License Renewal OCR Modal */}
       {isRenewalModalOpen && (
