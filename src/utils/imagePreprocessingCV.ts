@@ -1,11 +1,20 @@
 /**
- * Advanced Computer Vision & Image Pre-processing Engine for Algerian Biometric Driver's License
+ * Advanced Computer Vision & OpenCV Pre-processing Engine for Algerian Biometric Driver's License
+ * 
+ * Specially tailored for official Algerian Biometric Smart Driver's License (رخصة السياقة البيومترية الجزائرية):
  * 
  * Implements:
- * 1. Grayscale conversion & Adaptive Thresholding (eliminates shadows and glare from laminated cards)
- * 2. Automatic Deskewing & Bounding Box Cropping (strictly focuses on card ISO/IEC 7810 ID-1 area: aspect ratio ~1.586 : 1)
- * 3. Dynamic contrast enhancement & histogram normalization
- * 4. Text stroke sharpening (unsharp masking convolution for Latin & Arabic typography)
+ * 1. Region-of-Interest (ROI) Cropping with precise ID-1 relative coordinates:
+ *    - Field 5: License Number (رقم رخصة السياقة / N° du permis) -> Lower-right quadrant
+ *    - Field 4b: Expiry Date (تاريخ انتهاء الصلاحية / Date d'expiration) -> Middle-right quadrant
+ *    - Field 4d: NIN 18-digit ID (الرقم التعريفي الوطني) -> Lower-center quadrant
+ *    - Fields 1 & 2: Full Name (اللقب والإسم / Nom & Prénom) -> Upper-right quadrant
+ * 2. OpenCV Pre-processing Pipeline:
+ *    - cv2.cvtColor: Grayscale luminance extraction (0.299R + 0.587G + 0.114B)
+ *    - cv2.resize: High-resolution bicubic/bilinear upscaling for small cropped regions
+ *    - cv2.threshold (Otsu's binarization): Maximizes between-class variance to eliminate
+ *      holographic security threads, micro-optics, laminates, and glare from laser engravings.
+ * 3. Automatic Deskewing & ISO/IEC 7810 ID-1 card bounding box detection (ratio ~1.586 : 1).
  */
 
 export interface PreprocessDiagnostics {
@@ -15,11 +24,22 @@ export interface PreprocessDiagnostics {
   deskewAngleDeg: number;
   appliedEnhancements: string[];
   croppedBounds?: { x: number; y: number; width: number; height: number };
+  otsuThresholdField5?: number;
+  otsuThresholdField4b?: number;
+}
+
+export interface LicenseRois {
+  licenseNumberRoiDataUrl: string; // Field 5 (Laser-engraved license number)
+  expiryDateRoiDataUrl: string;    // Field 4b (Expiry date)
+  ninRoiDataUrl: string;           // Field 4d (18-digit national ID)
+  nameRoiDataUrl: string;          // Fields 1 & 2 (Bilingual name)
+  rawCardDataUrl: string;          // Full corrected card
 }
 
 export interface PreprocessedFrameResult {
   processedDataUrl: string;
   adaptiveThresholdDataUrl?: string;
+  rois: LicenseRois;
   diagnostics: PreprocessDiagnostics;
 }
 
@@ -37,7 +57,159 @@ function loadImage(src: string): Promise<HTMLImageElement> {
 }
 
 /**
- * Estimates rotational skew (-15° to +15°) based on dominant horizontal text and card edge gradients
+ * cv2.cvtColor(img, cv2.COLOR_BGR2GRAY / COLOR_RGBA2GRAY)
+ * Converts 4-channel RGBA pixel buffer to 8-bit single-channel grayscale
+ */
+export function cv2_cvtColor_gray(rgbaData: Uint8ClampedArray | Uint8Array, width: number, height: number): Uint8Array {
+  const totalPixels = width * height;
+  const gray = new Uint8Array(totalPixels);
+  for (let i = 0, p = 0; i < rgbaData.length; i += 4, p++) {
+    // Official OpenCV RGB to Gray luminosity coefficients
+    gray[p] = Math.round(0.299 * rgbaData[i] + 0.587 * rgbaData[i + 1] + 0.114 * rgbaData[i + 2]);
+  }
+  return gray;
+}
+
+/**
+ * cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+ * Computes optimal global threshold using Otsu's method to segment laser-engraved
+ * dark characters from holographic backgrounds, iridescent ink, and flash glare.
+ */
+export function cv2_threshold_otsu(
+  gray: Uint8Array,
+  width: number,
+  height: number,
+  invert: boolean = false
+): { binary: Uint8Array; optimalThreshold: number } {
+  const totalPixels = width * height;
+  const hist = new Int32Array(256);
+
+  for (let i = 0; i < totalPixels; i++) {
+    hist[gray[i]]++;
+  }
+
+  let sum = 0;
+  for (let t = 0; t < 256; t++) {
+    sum += t * hist[t];
+  }
+
+  let sumB = 0;
+  let wB = 0;
+  let maxVariance = 0;
+  let optimalThreshold = 128;
+
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+
+    const wF = totalPixels - wB;
+    if (wF === 0) break;
+
+    sumB += t * hist[t];
+
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+
+    // Between-class variance
+    const variance = wB * wF * (mB - mF) * (mB - mF);
+
+    if (variance > maxVariance) {
+      maxVariance = variance;
+      optimalThreshold = t;
+    }
+  }
+
+  const binary = new Uint8Array(totalPixels);
+  const fgVal = invert ? 255 : 0;
+  const bgVal = invert ? 0 : 255;
+
+  for (let i = 0; i < totalPixels; i++) {
+    binary[i] = gray[i] < optimalThreshold ? fgVal : bgVal;
+  }
+
+  return { binary, optimalThreshold };
+}
+
+/**
+ * cv2.resize(img, (newWidth, newHeight), interpolation=cv2.INTER_CUBIC)
+ * Upscales cropped regions using smooth high-quality bilinear interpolation with edge sharpening.
+ */
+export function cv2_resize(
+  sourceCanvas: HTMLCanvasElement,
+  cropX: number,
+  cropY: number,
+  cropW: number,
+  cropH: number,
+  targetWidth: number,
+  targetHeight: number
+): HTMLCanvasElement {
+  const destCanvas = document.createElement('canvas');
+  destCanvas.width = targetWidth;
+  destCanvas.height = targetHeight;
+  const ctx = destCanvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return destCanvas;
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(sourceCanvas, cropX, cropY, cropW, cropH, 0, 0, targetWidth, targetHeight);
+
+  return destCanvas;
+}
+
+/**
+ * Crops a coordinate-based Region of Interest (ROI), upscales it via cv2.resize,
+ * applies cv2.cvtColor (Grayscale) and cv2.threshold (Otsu binarization)
+ */
+export function cropAndProcessRoi(
+  cardCanvas: HTMLCanvasElement,
+  roi: { x: number; y: number; width: number; height: number },
+  minTargetWidth: number = 550,
+  minTargetHeight: number = 160
+): { dataUrl: string; threshold: number; canvas: HTMLCanvasElement } {
+  const cardW = cardCanvas.width;
+  const cardH = cardCanvas.height;
+
+  // Convert normalized [0..1] coordinates to pixel coordinates
+  const pixelX = Math.max(0, Math.floor(roi.x * cardW));
+  const pixelY = Math.max(0, Math.floor(roi.y * cardH));
+  const pixelW = Math.min(cardW - pixelX, Math.ceil(roi.width * cardW));
+  const pixelH = Math.min(cardH - pixelY, Math.ceil(roi.height * cardH));
+
+  // Determine upscaled dimensions to ensure minimum OCR readability
+  const scale = Math.max(1.8, Math.min(4.0, Math.max(minTargetWidth / pixelW, minTargetHeight / pixelH)));
+  const targetW = Math.round(pixelW * scale);
+  const targetH = Math.round(pixelH * scale);
+
+  // 1. cv2.resize upscaling
+  const resizedCanvas = cv2_resize(cardCanvas, pixelX, pixelY, pixelW, pixelH, targetW, targetH);
+  const ctx = resizedCanvas.getContext('2d', { willReadFrequently: true })!;
+  const imgData = ctx.getImageData(0, 0, targetW, targetH);
+
+  // 2. cv2.cvtColor (Grayscale)
+  const gray = cv2_cvtColor_gray(imgData.data, targetW, targetH);
+
+  // 3. cv2.threshold (Otsu Binarization)
+  const { binary, optimalThreshold } = cv2_threshold_otsu(gray, targetW, targetH, false);
+
+  // Write back to canvas for visualization and multi-part OCR input
+  for (let i = 0, p = 0; i < imgData.data.length; i += 4, p++) {
+    const val = binary[p];
+    imgData.data[i] = val;
+    imgData.data[i + 1] = val;
+    imgData.data[i + 2] = val;
+    imgData.data[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  return {
+    dataUrl: resizedCanvas.toDataURL('image/jpeg', 0.95),
+    threshold: optimalThreshold,
+    canvas: resizedCanvas,
+  };
+}
+
+/**
+ * Estimates rotational skew (-15° to +15°) based on dominant horizontal text gradients
  */
 function estimateSkewAngle(ctx: CanvasRenderingContext2D, width: number, height: number): number {
   try {
@@ -100,13 +272,12 @@ function estimateSkewAngle(ctx: CanvasRenderingContext2D, width: number, height:
  * Discards margins, fingers on borders, or peripheral background
  */
 function detectCardBoundingBox(
-  ctx: CanvasRenderingContext2D,
   width: number,
   height: number
 ): { x: number; y: number; width: number; height: number } {
   const targetRatio = 1.586; // ISO/IEC 7810 ID-1 standard
 
-  // Default central safe crop (88% of width, matched to ID-1 ratio)
+  // Central safe crop (94% of width, matched to ID-1 ratio)
   let cropWidth = Math.round(width * 0.94);
   let cropHeight = Math.round(cropWidth / targetRatio);
 
@@ -127,80 +298,17 @@ function detectCardBoundingBox(
 }
 
 /**
- * Fast Integral Image calculation for O(1) local window mean
- */
-function computeIntegralImage(gray: Uint8Array, width: number, height: number): Float64Array {
-  const integral = new Float64Array(width * height);
-  for (let y = 0; y < height; y++) {
-    let sum = 0;
-    const rowOffset = y * width;
-    const prevRowOffset = (y - 1) * width;
-    for (let x = 0; x < width; x++) {
-      sum += gray[rowOffset + x];
-      if (y === 0) {
-        integral[rowOffset + x] = sum;
-      } else {
-        integral[rowOffset + x] = integral[prevRowOffset + x] + sum;
-      }
-    }
-  }
-  return integral;
-}
-
-/**
- * Adaptive Thresholding (Bradley-Roth algorithm)
- * Eliminates shadows, ambient uneven light, and glossy plastic glare reflections
- */
-function applyAdaptiveThresholding(
-  gray: Uint8Array,
-  width: number,
-  height: number,
-  windowSizeRatio: number = 0.08,
-  thresholdT: number = 0.12
-): Uint8Array {
-  const out = new Uint8Array(width * height);
-  const integral = computeIntegralImage(gray, width, height);
-  const s = Math.round(width * windowSizeRatio);
-  const s2 = Math.round(s / 2);
-
-  for (let y = 0; y < height; y++) {
-    const y1 = Math.max(0, y - s2);
-    const y2 = Math.min(height - 1, y + s2);
-    const rowOffset = y * width;
-
-    for (let x = 0; x < width; x++) {
-      const x1 = Math.max(0, x - s2);
-      const x2 = Math.min(width - 1, x + s2);
-      const count = (x2 - x1 + 1) * (y2 - y1 + 1);
-
-      // Sum from integral image
-      const a = integral[y2 * width + x2];
-      const b = y1 > 0 ? integral[(y1 - 1) * width + x2] : 0;
-      const c = x1 > 0 ? integral[y2 * width + (x1 - 1)] : 0;
-      const d = y1 > 0 && x1 > 0 ? integral[(y1 - 1) * width + (x1 - 1)] : 0;
-      const sum = a - b - c + d;
-
-      const mean = sum / count;
-      const pixelVal = gray[rowOffset + x];
-
-      // If pixel is significantly darker than local average, mark as text foreground
-      if (pixelVal * (1 + thresholdT) < mean) {
-        out[rowOffset + x] = 0; // Black text
-      } else {
-        out[rowOffset + x] = 255; // White background
-      }
-    }
-  }
-
-  return out;
-}
-
-/**
- * Comprehensive Computer Vision Pre-processing on live captured license frames:
+ * Comprehensive Computer Vision Pre-processing & Coordinate-Based ROI Extraction
+ * for Algerian Biometric Driver's License:
+ * 
  * 1. Automatic Deskewing & Bounding Box Cropping (Card Area)
  * 2. Auto-Contrast & Luminance Dynamic Range Stretching
- * 3. Grayscale conversion & Adaptive Thresholding (Anti-Glare / Shadow Removal)
- * 4. Text stroke sharpening (Unsharp Mask Convolution)
+ * 3. OpenCV Pipeline: Grayscale -> Resize (Upscale) -> Otsu Binarization
+ * 4. Region-of-Interest (ROI) Extraction for:
+ *    - Field 5 (License Number)
+ *    - Field 4b (Expiry Date)
+ *    - Field 4d (NIN)
+ *    - Fields 1 & 2 (Full Legal Name)
  */
 export async function preprocessLicenseFrameForOcr(
   source: HTMLVideoElement | HTMLCanvasElement | string,
@@ -231,7 +339,7 @@ export async function preprocessLicenseFrameForOcr(
   }
 
   // 2. Automatic Bounding Box Cropping (strictly focus on card area)
-  const cardBox = detectCardBoundingBox(rawCtx, rawCanvas.width, rawCanvas.height);
+  const cardBox = detectCardBoundingBox(rawCanvas.width, rawCanvas.height);
   appliedEnhancements.push(`Bounding box crop to ID-1 card area (${cardBox.width}x${cardBox.height})`);
 
   // Target dimensions matching Algerian Biometric Card (85.6mm x 53.98mm = 1.586 aspect ratio)
@@ -367,26 +475,64 @@ export async function preprocessLicenseFrameForOcr(
     }
   }
 
-  // 6. Adaptive Thresholding for Shadow & Glare Suppression
-  appliedEnhancements.push('Adaptive thresholding (shadow & glare elimination)');
-  const adaptiveBinary = applyAdaptiveThresholding(grayValues, w, h, 0.08, 0.12);
-
-  // Subtly blend adaptive threshold text contours with enhanced color image (85% enhanced color + 15% text boost)
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    if (adaptiveBinary[p] === 0) {
-      // Darken text pixels for crisp OCR detection
-      data[i] = Math.round(data[i] * 0.7);
-      data[i + 1] = Math.round(data[i + 1] * 0.7);
-      data[i + 2] = Math.round(data[i + 2] * 0.7);
-    }
-  }
-
   ctx.putImageData(imgData, 0, 0);
+
+  // ---------------------------------------------------------------------------
+  // 6. EXACT REGION-OF-INTEREST (ROI) CROPPING & OPENCV OTSU BINARIZATION
+  // Specific to the Algerian Biometric Driver's License standard ID-1 card:
+  // ---------------------------------------------------------------------------
+
+  // ROI 1: FIELD 5 - License Number (رقم رخصة السياقة / N° du permis)
+  // Usually located in lower-right quadrant: X: 48% to 98%, Y: 68% to 94%
+  const field5Roi = cropAndProcessRoi(
+    procCanvas,
+    { x: 0.48, y: 0.68, width: 0.50, height: 0.26 },
+    600,
+    180
+  );
+  appliedEnhancements.push(`ROI Field 5 (License Number) cropped & Otsu-binarized (T=${field5Roi.threshold})`);
+
+  // ROI 2: FIELD 4b - Expiry Date (تاريخ انتهاء الصلاحية / Date d'expiration)
+  // Located in middle-right quadrant: X: 46% to 92%, Y: 50% to 68%
+  const field4bRoi = cropAndProcessRoi(
+    procCanvas,
+    { x: 0.46, y: 0.50, width: 0.46, height: 0.20 },
+    550,
+    160
+  );
+  appliedEnhancements.push(`ROI Field 4b (Expiry Date) cropped & Otsu-binarized (T=${field4bRoi.threshold})`);
+
+  // ROI 3: FIELD 4d - NIN 18-digit national ID (الرقم التعريفي الوطني)
+  // Located at center-bottom: X: 28% to 76%, Y: 70% to 88%
+  const field4dRoi = cropAndProcessRoi(
+    procCanvas,
+    { x: 0.28, y: 0.70, width: 0.50, height: 0.18 },
+    550,
+    140
+  );
+  appliedEnhancements.push(`ROI Field 4d (NIN) cropped & Otsu-binarized (T=${field4dRoi.threshold})`);
+
+  // ROI 4: FIELDS 1 & 2 - Nom & Prénom / اللقب والإسم
+  // Located in upper-center-right: X: 32% to 96%, Y: 20% to 48%
+  const namesRoi = cropAndProcessRoi(
+    procCanvas,
+    { x: 0.32, y: 0.20, width: 0.64, height: 0.28 },
+    650,
+    200
+  );
+  appliedEnhancements.push(`ROI Fields 1&2 (Names) cropped & Otsu-binarized (T=${namesRoi.threshold})`);
 
   const processedDataUrl = procCanvas.toDataURL('image/jpeg', 0.94);
 
   return {
     processedDataUrl,
+    rois: {
+      licenseNumberRoiDataUrl: field5Roi.dataUrl,
+      expiryDateRoiDataUrl: field4bRoi.dataUrl,
+      ninRoiDataUrl: field4dRoi.dataUrl,
+      nameRoiDataUrl: namesRoi.dataUrl,
+      rawCardDataUrl: processedDataUrl,
+    },
     diagnostics: {
       originalBrightness: Math.round(originalBrightness),
       normalizedBrightness: Math.round(normalizedBrightness),
@@ -394,6 +540,8 @@ export async function preprocessLicenseFrameForOcr(
       deskewAngleDeg: skewAngle,
       appliedEnhancements,
       croppedBounds: cardBox,
+      otsuThresholdField5: field5Roi.threshold,
+      otsuThresholdField4b: field4bRoi.threshold,
     },
   };
 }

@@ -108,9 +108,11 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
 
     try {
       let processedDataUrl = photoDataUrl;
+      let rois: any = null;
       try {
         const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
         processedDataUrl = prep.processedDataUrl;
+        rois = prep.rois;
       } catch (cvErr) {
         console.warn('[CV Preprocessing fallback in DriverHome]:', cvErr);
       }
@@ -120,6 +122,9 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           image: processedDataUrl,
+          licenseNumberRoiImage: rois?.licenseNumberRoiDataUrl,
+          expiryDateRoiImage: rois?.expiryDateRoiDataUrl,
+          ninRoiImage: rois?.ninRoiDataUrl,
           expectedFirstName: driver?.firstName,
           expectedLastName: driver?.lastName,
           expectedBirthDate: driver?.birthDate,
@@ -127,6 +132,11 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
         }),
       });
       const data = await res.json().catch(() => null);
+
+      console.log('[DriverHome handleRenewalOcr DEBUG]:', data);
+      if (data?.debugRawText) {
+        console.log('[DriverHome Raw Vision Text]:\n', data.debugRawText);
+      }
 
       if (!res.ok || !data?.success || !data?.expirationDate) {
         setRenewalError(

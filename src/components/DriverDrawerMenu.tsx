@@ -153,9 +153,11 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
 
     try {
       let processedDataUrl = photoDataUrl;
+      let rois: any = null;
       try {
         const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
         processedDataUrl = prep.processedDataUrl;
+        rois = prep.rois;
       } catch (cvErr) {
         console.warn('[CV Preprocessing fallback in DriverDrawerMenu]:', cvErr);
       }
@@ -165,10 +167,18 @@ export const DriverDrawerMenu: React.FC<DriverDrawerMenuProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           image: processedDataUrl,
+          licenseNumberRoiImage: rois?.licenseNumberRoiDataUrl,
+          expiryDateRoiImage: rois?.expiryDateRoiDataUrl,
+          ninRoiImage: rois?.ninRoiDataUrl,
           isRenewalCheck: true, // Allows inspecting new expiry date
         }),
       });
       const data = await res.json().catch(() => null);
+
+      console.log('[DriverDrawerMenu handleRenewalOcr DEBUG]:', data);
+      if (data?.debugRawText) {
+        console.log('[DriverDrawerMenu Raw Vision Text]:\n', data.debugRawText);
+      }
 
       if (!res.ok || !data?.success || !data?.expirationDate) {
         setRenewalError(data?.error || 'الصورة الملتقطة غير مقروءة أو لا تمثل رخصة قيادة صالحة. يرجى إعادة التصوير بوضوح.');
