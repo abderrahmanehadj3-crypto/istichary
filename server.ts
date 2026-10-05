@@ -953,7 +953,7 @@ Respond ONLY with valid JSON:
     return false;
   }
 
-  // Comprehensive cross-matcher for legal driver name against OCR license data with relaxed transliteration
+  // Comprehensive cross-matcher for legal driver name against OCR license data with strict token verification
   function crossMatchDriverLegalName(
     profileFirst: string,
     profileLast: string,
@@ -986,86 +986,136 @@ Respond ONLY with valid JSON:
       `${ocrResult.firstNameAr || ''} ${ocrResult.lastNameAr || ''}`.trim(),
     ].filter(Boolean) as string[];
 
-    // 1. Direct token matches
-    const firstMatches = ocrFirstNames.some((oFirst) => isNameTokenMatch(pFirst, oFirst));
-    const lastMatches = ocrLastNames.some((oLast) => isNameTokenMatch(pLast, oLast));
-    if (firstMatches && lastMatches) {
-      return { matched: true };
-    }
-
-    // 2. Inverted order match (French licenses often list Surname 1st, Given Name 2nd)
-    const invertedFirstMatches = ocrLastNames.some((oLast) => isNameTokenMatch(pFirst, oLast));
-    const invertedLastMatches = ocrFirstNames.some((oFirst) => isNameTokenMatch(pLast, oFirst));
-    if (invertedFirstMatches && invertedLastMatches) {
-      return { matched: true };
-    }
-
-    // 3. Full name containment check (handles compound names, e.g. "Abderrahmane Benali" vs "Abderrahmane Ben Ali")
-    const fullMatch = ocrFullNames.some((oFull) => {
-      return isNameTokenMatch(pFull, oFull) || (isNameTokenMatch(pFirst, oFull) && isNameTokenMatch(pLast, oFull));
-    });
-    if (fullMatch) {
-      return { matched: true };
-    }
-
-    // 4. Single name partial match if only one name part is provided or one part matched with high confidence
-    if (pFirst && !pLast && (firstMatches || invertedFirstMatches)) return { matched: true };
-    if (!pFirst && pLast && (lastMatches || invertedLastMatches)) return { matched: true };
-    if (firstMatches || lastMatches || invertedFirstMatches || invertedLastMatches) {
-      // One strong component matches (e.g. surname matches exactly or given name matches)
-      return { matched: true };
-    }
-
-    // 5. Fallback relaxed match: if full name has partial overlap
-    for (const oName of ocrFullNames) {
-      if (calculateStringSimilarity(normalizeLatinText(pFull), normalizeLatinText(oName)) >= 0.55 ||
-          calculateStringSimilarity(normalizeArabicText(pFull), normalizeArabicText(oName)) >= 0.55) {
-        return { matched: true };
-      }
-    }
-
     const licenseDisplayName =
       ocrResult.fullNameAr ||
       ocrResult.fullName ||
       `${ocrResult.lastName || ''} ${ocrResult.firstName || ''}`.trim() ||
-      'غير محدد';
+      'غير متوفر';
 
-    return {
-      matched: false,
-      reason: `الاسم القانوني المسجل في الحساب (${pFull}) لا يتطابق مع الاسم المدون على رخصة القيادة (${licenseDisplayName}). يشترط نظام الأمان تطابق هوية صاحب الحساب بنسبة عالية مع الوثيقة الرسمية.`,
-    };
+    if (ocrFirstNames.length === 0 && ocrLastNames.length === 0 && ocrFullNames.length === 0) {
+      return {
+        matched: false,
+        reason: `تعذر قراءة الاسم من رخصة القيادة لمطابقته مع اسمك المسجل (${pFull}). يرجى التأكد من وضوح الحقلين 1 و 2 (اللقب والإسم).`,
+      };
+    }
+
+    // Strict Component-wise Check: BOTH First Name AND Last Name must be confirmed
+    // A: First name check
+    const firstMatchesInFirst = ocrFirstNames.some((oFirst) => isNameTokenMatch(pFirst, oFirst));
+    const firstMatchesInLast = ocrLastNames.some((oLast) => isNameTokenMatch(pFirst, oLast)); // inverted order
+    const firstMatchesInFull = ocrFullNames.some((oFull) => isNameTokenMatch(pFirst, oFull));
+    const firstMatches = firstMatchesInFirst || firstMatchesInLast || firstMatchesInFull;
+
+    // B: Last name check
+    const lastMatchesInLast = ocrLastNames.some((oLast) => isNameTokenMatch(pLast, oLast));
+    const lastMatchesInFirst = ocrFirstNames.some((oFirst) => isNameTokenMatch(pLast, oFirst)); // inverted order
+    const lastMatchesInFull = ocrFullNames.some((oFull) => isNameTokenMatch(pLast, oFull));
+    const lastMatches = lastMatchesInLast || lastMatchesInFirst || lastMatchesInFull;
+
+    // Both parts MUST match if both were provided by user
+    if (pFirst && pLast) {
+      if (!firstMatches && !lastMatches) {
+        return {
+          matched: false,
+          reason: `الاسم الكامل المسجل (${pFull}) لا يتطابق إطلاقاً مع الاسم المستخرج من رخصة القيادة (${licenseDisplayName}). يشترط نظام الأمان تطابق هوية صاحب الحساب لمنع انتحال الشخصية.`,
+        };
+      }
+      if (!firstMatches) {
+        return {
+          matched: false,
+          reason: `الاسم الأول المسجل (${pFirst}) لا يتطابق مع الاسم المدون على رخصة القيادة (${ocrResult.firstNameAr || ocrResult.firstName || licenseDisplayName}). يرجى تصحيح بيانات الحساب لتطابق وثيقتك الرسمية.`,
+        };
+      }
+      if (!lastMatches) {
+        return {
+          matched: false,
+          reason: `اللقب المسجل (${pLast}) لا يتطابق مع اللقب المدون على رخصة القيادة (${ocrResult.lastNameAr || ocrResult.lastName || licenseDisplayName}). يرجى تصحيح بيانات الحساب لتطابق وثيقتك الرسمية.`,
+        };
+      }
+      return { matched: true };
+    }
+
+    if (pFirst && !firstMatches) {
+      return {
+        matched: false,
+        reason: `الاسم المسجل (${pFirst}) لا يتطابق مع الاسم المدون على رخصة القيادة (${licenseDisplayName}).`,
+      };
+    }
+
+    if (pLast && !lastMatches) {
+      return {
+        matched: false,
+        reason: `اللقب المسجل (${pLast}) لا يتطابق مع اللقب المدون على رخصة القيادة (${licenseDisplayName}).`,
+      };
+    }
+
+    return { matched: true };
   }
 
-  // Cross-match driver date of birth
+  // Cross-match driver date of birth with strict verification
   function crossMatchDriverBirthDate(
     profileBirthDate: string,
     ocrBirthDate: string | null | undefined
   ): { matched: boolean; reason?: string } {
-    if (!profileBirthDate || !ocrBirthDate) return { matched: true };
-    const cleanProfileDob = profileBirthDate.trim();
-    const cleanOcrDob = ocrBirthDate.trim();
+    if (!profileBirthDate) return { matched: true };
 
-    if (cleanProfileDob === cleanOcrDob) return { matched: true };
+    if (!ocrBirthDate) {
+      return {
+        matched: false,
+        reason: `تعذر قراءة تاريخ الميلاد من رخصة القيادة لمطابقته مع تاريخ ميلادك المسجل (${profileBirthDate}). يرجى التأكد من وضوح الحقل 3 (تاريخ ومكان الازدياد).`,
+      };
+    }
 
-    const pDate = new Date(cleanProfileDob);
-    const oDate = new Date(cleanOcrDob);
+    const pNorm = parseAlgerianDate(profileBirthDate);
+    const oNorm = parseAlgerianDate(ocrBirthDate);
+
+    if (!pNorm || !oNorm) {
+      return {
+        matched: false,
+        reason: `تنسيق تاريخ الميلاد غير صالح للمقارنة (${profileBirthDate} مقابل ${ocrBirthDate}). يرجى التأكد من كتابة التاريخ بصيغة صحيحة.`,
+      };
+    }
+
+    if (pNorm === oNorm) return { matched: true };
+
+    const pDate = new Date(pNorm);
+    const oDate = new Date(oNorm);
 
     if (isNaN(pDate.getTime()) || isNaN(oDate.getTime())) {
-      return { matched: true };
+      return {
+        matched: false,
+        reason: `تعذر معالجة تاريخ الميلاد للتحقق (${profileBirthDate} مقابل ${ocrBirthDate}).`,
+      };
     }
 
     const pYear = pDate.getFullYear();
     const oYear = oDate.getFullYear();
+    const pMonth = pDate.getMonth() + 1;
+    const oMonth = oDate.getMonth() + 1;
     const diffDays = Math.abs(pDate.getTime() - oDate.getTime()) / (1000 * 60 * 60 * 24);
 
-    // If birth years match and within 2 days (timezone/format), treat as matched
-    if (pYear === oYear && diffDays <= 2) {
+    if (pYear !== oYear) {
+      return {
+        matched: false,
+        reason: `سنة ميلاد السائق المسجلة (${pYear}) لا تتطابق مع سنة الميلاد المستخرجة من رخصة القيادة (${oYear}). يشترط التطابق الكامل لتأكيد الهوية.`,
+      };
+    }
+
+    if (pMonth !== oMonth && diffDays > 1) {
+      return {
+        matched: false,
+        reason: `شهر ميلاد السائق المسجل (${pMonth}) لا يتطابق مع شهر الميلاد المستخرج من رخصة القيادة (${oMonth}). يرجى التحقق من مطابقة بيانات حسابك مع وثائقك الرسمية.`,
+      };
+    }
+
+    // Allow at most 1-day variance for UTC / local timezone boundary shifts
+    if (diffDays <= 1.5) {
       return { matched: true };
     }
 
     return {
       matched: false,
-      reason: `تاريخ ميلاد السائق المسجل (${cleanProfileDob}) لا يتطابق مع تاريخ الميلاد المستخرج من رخصة القيادة (${cleanOcrDob}). يرجى التحقق من مطابقة بيانات حسابك مع وثائقك الرسمية.`,
+      reason: `تاريخ ميلاد السائق المسجل (${pNorm}) لا يتطابق مع تاريخ الميلاد المستخرج من رخصة القيادة (${oNorm}). يرجى التحقق من مطابقة بيانات حسابك مع وثائقك الرسمية.`,
     };
   }
 
@@ -1127,17 +1177,24 @@ TARGETED COORDINATES & FIELDS:
   e.g. "100030088009650000".
 - FIELD 1 & 2 (Nom & Prénom / اللقب والإسم):
   Latin and Arabic names (e.g. "HADJADJ ABDERRAHMANE" / "حجاج عبد الرحمان").
-- FIELD 3 (Date of Birth / تاريخ الازدياد):
-  e.g. "18.07.2003 أم البواقي".
+- FIELD 3 (Date & Lieu de Naissance / تاريخ ومكان الازدياد):
+  Format: "DD.MM.YYYY Place" (e.g. "18.07.2003 أم البواقي" or "18.07.2003 Oum El Bouaghi")
+- FIELD 4a (Date de délivrance / تاريخ الإصدار):
+  Format: "DD.MM.YYYY" (e.g. "28.04.2024")
+- FIELD 4c (Autorité de délivrance / سلطة الإصدار / مكان الإصدار):
+  e.g. "Wilaya d'Alger" or "دائرة بئر مراد رايس" or "09 - Blida"
 
-RELAXED TOLERANCE & NEVER-FALSELY-REJECT:
-- Any authentic Algerian driver's license (front or back, biometric card or classic pink paper) MUST BE ACCEPTED (isValidDocument: true).
-- If field 5 is slightly faint, inspect the License Number ROI or Field 4d (NIN) or MRZ Line 1 ("DLDZA...").
-- Only reject if clearly another document:
-  * National ID Card (بطاقة التعريف الوطنية CNI) -> rejectionReason: "national_id_card"
-  * Passport (جواز السفر) -> rejectionReason: "passport"
-  * Vehicle Gray Card (البطاقة الرمادية Carte Grise) -> rejectionReason: "carte_grise"
-  * Dark black image or unrelated object -> rejectionReason: "not_a_license"
+STRICT REJECTION RULES (MANDATORY):
+1. REJECT RANDOM OBJECTS:
+   If the image is a wall, table, hand, floor, furniture, person's face, or ANY non-license object:
+   -> Return isValidDocument: false, rejectionReason: "not_a_license", rejectionMessage: "الصورة الملتقطة لا تمثل رخصة سياقة جزائرية معتمدة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة داخل الإطار."
+2. REJECT NON-LICENSE OFFICIAL DOCUMENTS:
+   - National ID Card (CNI / بطاقة التعريف الوطنية) -> rejectionReason: "national_id_card", rejectionMessage: "الوثيقة الممسوحة هي بطاقة تعريف وطنية وليست رخصة سياقة."
+   - Passport (جواز السفر) -> rejectionReason: "passport", rejectionMessage: "الوثيقة الممسوحة هي جواز سفر وليست رخصة سياقة."
+   - Vehicle Gray Card (البطاقة الرمادية Carte Grise) -> rejectionReason: "carte_grise", rejectionMessage: "الوثيقة الممسوحة هي بطاقة رمادية للمركبة وليست رخصة سياقة."
+3. REJECT UNREADABLE / BLURRY IMAGES:
+   If the image is too blurry, dark, or distorted to read the license number or expiry date:
+   -> Return isValidDocument: false, rejectionReason: "unreadable", rejectionMessage: "الصورة الملتقطة غير مقروءة بوضوح. يرجى تثبيت الهاتف والتصوير في إضاءة جيدة."
 
 Respond ONLY with valid JSON:
 {
@@ -1148,7 +1205,9 @@ Respond ONLY with valid JSON:
   "licenseNumber": string | null,
   "expirationDate": string | null,
   "birthDate": string | null,
+  "birthPlace": string | null,
   "issueDate": string | null,
+  "issueAuthority": string | null,
   "fullName": string | null,
   "fullNameAr": string | null,
   "firstName": string | null,
@@ -1304,22 +1363,26 @@ Output line by line.`;
       }
 
       // -----------------------------------------------------------------------
-      // Normalize dates with flexible parser (handles Eastern Arabic digits & variations)
+      // Extract dates and license number STRICTLY from OCR Vision results
+      // (NO manual input fallback here: this guarantees empty captures/walls are blocked!)
       // -----------------------------------------------------------------------
-      let parsedExpDate = parseAlgerianDate(ocrResult?.expirationDate) || parseAlgerianDate(manualExpirationDate);
+      const extractedRawLicNum = String(
+        ocrResult?.licenseNumber ||
+        ocrResult?.documentNumber ||
+        ocrResult?.permisNumber ||
+        ocrResult?.nationalIdNumber ||
+        ocrResult?.nin ||
+        ''
+      ).trim();
+
+      const extractedRawExpDate = ocrResult?.expirationDate ? String(ocrResult.expirationDate).trim() : '';
+
+      let parsedExpDate = parseAlgerianDate(extractedRawExpDate);
       let parsedBirthDate = parseAlgerianDate(ocrResult?.birthDate);
       let parsedIssueDate = parseAlgerianDate(ocrResult?.issueDate);
 
-      // Clean license number
-      let cleanLicenseNumber = String(
-        ocrResult?.licenseNumber ||
-        ocrResult?.nationalIdNumber ||
-        manualLicenseNumber ||
-        ocrResult?.documentNumber ||
-        ocrResult?.permisNumber ||
-        ocrResult?.nin ||
-        ''
-      ).replace(/[\s\-\/\.]/g, '').toUpperCase();
+      // Clean license number extracted strictly from OCR
+      let cleanLicenseNumber = extractedRawLicNum.replace(/[\s\-\/\.]/g, '').toUpperCase();
 
       // -----------------------------------------------------------------------
       // STRICT SECURITY GATEKEEPER: MANDATORY KEYWORDS & PATTERN VERIFICATION
@@ -1366,7 +1429,7 @@ Output line by line.`;
           rejectionReason: ocrResult?.rejectionReason || 'not_a_license',
           error:
             ocrResult?.rejectionMessage ||
-            'الصورة الملتقطة لا تمثل رخصة قيادة معتمدة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة.',
+            'الصورة الملتقطة لا تمثل رخصة قيادة معتمدة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة داخل الإطار.',
         });
       }
 
@@ -1454,15 +1517,87 @@ Output line by line.`;
 
       const calculatedAge = calculateDriverAge(parsedBirthDate, currentDateStr);
 
-      // Relaxed legal name matching: only reject if name is totally discordant
-      if (expectedFirstName && expectedLastName && ocrResult && (ocrResult.fullName || ocrResult.fullNameAr)) {
+      // -----------------------------------------------------------------------
+      // STRICT ANTI-FRAUD CROSS-MATCHING: Legal Name & Date of Birth
+      // -----------------------------------------------------------------------
+      let nameMatched = true;
+      let dobMatched = true;
+
+      // 1. Strict Name Verification
+      if (expectedFirstName && expectedLastName) {
         const nameMatchResult = crossMatchDriverLegalName(
-          expectedFirstName || '',
-          expectedLastName || '',
-          ocrResult
+          expectedFirstName,
+          expectedLastName,
+          ocrResult || {}
         );
-        if (!nameMatchResult.matched) {
-          console.warn('[OCR Notice] Name mismatch detected, allowing review:', nameMatchResult.reason);
+        nameMatched = nameMatchResult.matched;
+        if (!nameMatched) {
+          console.warn('[SECURITY GATEKEEPER] Strict Name Mismatch rejected:', nameMatchResult.reason);
+          return res.status(400).json({
+            success: false,
+            isValidDocument: true,
+            mismatchType: 'name_mismatch',
+            error: nameMatchResult.reason || `الاسم المسجل في الحساب (${expectedFirstName} ${expectedLastName}) لا يتطابق مع الاسم المستخرج من رخصة القيادة (${finalFullNameAr || finalFullName}). يشترط تطابق الهوية لمنع انتحال الشخصية.`,
+            debugRawText: rawVisionText,
+          });
+        }
+      }
+
+      // 2. Strict DOB Verification
+      if (expectedBirthDate) {
+        if (!parsedBirthDate) {
+          console.warn('[SECURITY GATEKEEPER] Strict DOB Missing on document rejected');
+          return res.status(400).json({
+            success: false,
+            isValidDocument: true,
+            mismatchType: 'dob_mismatch',
+            error: `تعذر استخراج تاريخ الميلاد من رخصة القيادة لمطابقته مع تاريخ ميلادك المسجل (${expectedBirthDate}). يرجى التأكد من وضوح الحقل 3 (Date de naissance / تاريخ الازدياد).`,
+            debugRawText: rawVisionText,
+          });
+        }
+        const dobMatchResult = crossMatchDriverBirthDate(
+          expectedBirthDate,
+          parsedBirthDate
+        );
+        dobMatched = dobMatchResult.matched;
+        if (!dobMatched) {
+          console.warn('[SECURITY GATEKEEPER] Strict DOB Mismatch rejected:', dobMatchResult.reason);
+          return res.status(400).json({
+            success: false,
+            isValidDocument: true,
+            mismatchType: 'dob_mismatch',
+            error: dobMatchResult.reason || `تاريخ ميلاد السائق المسجل (${expectedBirthDate}) لا يتطابق مع تاريخ الميلاد المستخرج من رخصة القيادة (${parsedBirthDate}). يرجى التحقق من مطابقة بيانات حسابك مع وثائقك الرسمية.`,
+            debugRawText: rawVisionText,
+          });
+        }
+      }
+
+      // 3. Strict License Number & Expiry Cross-Check against user manual input if already typed
+      if (manualLicenseNumber && manualLicenseNumber.trim().length > 3) {
+        const cleanManualNum = manualLicenseNumber.replace(/[\s\-\/\.]/g, '').toUpperCase();
+        if (cleanManualNum !== cleanLicenseNumber && !cleanLicenseNumber.includes(cleanManualNum) && !cleanManualNum.includes(cleanLicenseNumber)) {
+          console.warn('[SECURITY GATEKEEPER] Manual license number mismatch:', cleanManualNum, 'vs', cleanLicenseNumber);
+          return res.status(400).json({
+            success: false,
+            isValidDocument: true,
+            mismatchType: 'number_mismatch',
+            error: `رقم رخصة القيادة المدخل يدوياً (${manualLicenseNumber}) لا يتطابق مع الرقم المستخرج آلياً من الوثيقة (${cleanLicenseNumber}). يرجى تصحيح الرقم ليطابق رخصة السياقة تماماً.`,
+            debugRawText: rawVisionText,
+          });
+        }
+      }
+
+      if (manualExpirationDate && manualExpirationDate.trim()) {
+        const parsedManualExp = parseAlgerianDate(manualExpirationDate);
+        if (parsedManualExp && parsedExpDate && parsedManualExp !== parsedExpDate) {
+          console.warn('[SECURITY GATEKEEPER] Manual expiry date mismatch:', parsedManualExp, 'vs', parsedExpDate);
+          return res.status(400).json({
+            success: false,
+            isValidDocument: true,
+            mismatchType: 'expiry_mismatch',
+            error: `تاريخ انتهاء الصلاحية المدخل يدوياً (${manualExpirationDate}) لا يتطابق مع التاريخ المقروء من الوثيقة (${parsedExpDate}). يرجى تصحيح التاريخ.`,
+            debugRawText: rawVisionText,
+          });
         }
       }
 
@@ -1470,17 +1605,17 @@ Output line by line.`;
         success: true,
         isValidDocument: true,
         isExpired,
-        manualOverrideAllowed: true,
-        lowConfidence,
         licenseNumber: cleanLicenseNumber,
         expirationDate: parsedExpDate,
         birthDate: parsedBirthDate,
+        birthPlace: ocrResult?.birthPlace || null,
         issueDate: parsedIssueDate,
+        issueAuthority: ocrResult?.issueAuthority || null,
         calculatedAge,
         fullName: finalFullName,
         fullNameAr: finalFullNameAr,
-        firstName: ocrResult?.firstName || '',
-        lastName: ocrResult?.lastName || '',
+        firstName: ocrResult?.firstNameAr || ocrResult?.firstName || '',
+        lastName: ocrResult?.lastNameAr || ocrResult?.lastName || '',
         firstNameAr: ocrResult?.firstNameAr || '',
         lastNameAr: ocrResult?.lastNameAr || '',
         nationalIdNumber: ocrResult?.nationalIdNumber || null,
@@ -1489,12 +1624,10 @@ Output line by line.`;
         debugRawText: rawVisionText,
         multiPassLevel: passType,
         crossMatchStatus: {
-          nameMatched: true,
-          dobMatched: true,
+          nameMatched,
+          dobMatched,
         },
-        message: lowConfidence
-          ? 'تم فحص رخصة القيادة. يمكنك مراجعة وتعديل رقم الرخصة وتاريخ الصلاحية يدوياً للتأكيد.'
-          : 'تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%',
+        message: 'تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%',
       });
     } catch (err: any) {
       console.error('[API /api/driver/ocr-license] Error:', err);
