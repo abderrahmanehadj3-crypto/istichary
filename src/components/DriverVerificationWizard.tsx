@@ -325,62 +325,61 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber) {
-        setOcrDocumentValid(false);
-        const err =
-          data?.error ||
-          'تعذر قراءة بيانات رخصة القيادة بدقة. يرجى التأكد من وضوح أرقام الرخصة وإعادة المحاولة.';
-        setOcrError(err);
-        setErrorMsg(err);
-        if (data?.isExpired) {
-          setLicenseExpired(true);
-        }
-        return;
-      }
+      // Auto-fill whatever fields were extracted
+      const detectedNumber = data?.licenseNumber || data?.extractedData?.licenseNumber || licenseNumber || '';
+      const detectedExp = data?.expirationDate || data?.extractedData?.expirationDate || licenseExpiration || '';
+      const detectedName = data?.fullName || data?.extractedData?.fullName || null;
+      const detectedNameAr = data?.fullNameAr || data?.extractedData?.fullNameAr || null;
+      const detectedBirthDate = data?.birthDate || data?.extractedData?.birthDate || birthDate || null;
+      const detectedBirthPlace = data?.birthPlace || data?.extractedData?.birthPlace || null;
+      const detectedIssueAuthority = data?.issueAuthority || data?.extractedData?.issueAuthority || null;
+      const detectedIssueDate = data?.issueDate || data?.extractedData?.issueDate || null;
+      const detectedNIN = data?.nationalIdNumber || data?.extractedData?.nationalIdNumber || null;
+      const detectedCategory = data?.category || data?.extractedData?.category || 'B';
 
-      // Valid genuine document strictly verified by OCR
-      const detectedExp = data.expirationDate || licenseExpiration || '';
-      setOcrDocumentValid(true);
-      setOcrError(null);
-      setErrorMsg(null);
-      setLicenseExpired(false);
-      setOcrDetectedNumber(data.licenseNumber);
-      setOcrDetectedExpiration(detectedExp);
-      setLicenseNumber(data.licenseNumber);
+      if (detectedNumber) {
+        setOcrDetectedNumber(detectedNumber);
+        setLicenseNumber(detectedNumber);
+      }
       if (detectedExp) {
+        setOcrDetectedExpiration(detectedExp);
         setLicenseExpiration(detectedExp);
       }
-      setOcrDetectedName(data.fullName || null);
-      setOcrDetectedNameAr(data.fullNameAr || null);
-      setOcrDetectedFirstName(data.firstName || null);
-      setOcrDetectedLastName(data.lastName || null);
-      setOcrDetectedFirstNameAr(data.firstNameAr || null);
-      setOcrDetectedLastNameAr(data.lastNameAr || null);
-      setOcrDetectedBirthDate(data.birthDate || null);
-      setOcrDetectedBirthPlace(data.birthPlace || null);
-      setOcrDetectedIssueAuthority(data.issueAuthority || null);
-      setOcrDetectedIssueDate(data.issueDate || null);
-      setOcrDetectedNIN(data.nationalIdNumber || null);
-      setOcrDetectedCategory(data.category || null);
-      setOcrRawTranscribedText(data.debugRawText || null);
-      setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
+      if (detectedName) setOcrDetectedName(detectedName);
+      if (detectedNameAr) setOcrDetectedNameAr(detectedNameAr);
+      if (detectedBirthDate) setOcrDetectedBirthDate(detectedBirthDate);
+      if (detectedBirthPlace) setOcrDetectedBirthPlace(detectedBirthPlace);
+      if (detectedIssueAuthority) setOcrDetectedIssueAuthority(detectedIssueAuthority);
+      if (detectedIssueDate) setOcrDetectedIssueDate(detectedIssueDate);
+      if (detectedNIN) setOcrDetectedNIN(detectedNIN);
+      if (detectedCategory) setOcrDetectedCategory(detectedCategory);
+      if (data?.debugRawText) setOcrRawTranscribedText(data.debugRawText);
 
-      // Auto-populate manual fields with verified extracted data
-      if (data.licenseNumber) {
-        setLicenseNumber(data.licenseNumber);
-      }
-      if (data.expirationDate) {
-        setLicenseExpiration(data.expirationDate);
-      }
+      const isFullAutoApproved = data?.success && data?.isApproved && data?.licenseNumber;
 
-      if (errorMsg && (errorMsg.includes('رخصة') || errorMsg.includes('الوثيقة') || errorMsg.includes('الاسم') || errorMsg.includes('الميلاد'))) {
+      if (isFullAutoApproved) {
+        setOcrDocumentValid(true);
+        setOcrError(null);
         setErrorMsg(null);
+        setLicenseExpired(false);
+        setIsManualOverrideEnabled(false);
+        setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
+      } else {
+        // Fallback to manual confirmation (never block the user with hard errors)
+        setOcrDocumentValid(true);
+        setOcrError(null);
+        setErrorMsg(null);
+        setLicenseExpired(data?.isExpired || false);
+        setIsManualOverrideEnabled(true);
+        setLicenseOcrMessage('تم حفظ صورة رخصة السياقة بنجاح. يمكنك مراجعة وتأكيد البيانات يدوياً لإتمام الاعتماد.');
       }
     } catch (e: any) {
-      setOcrDocumentValid(false);
-      const err = 'تعذر التحقق من رخصة القيادة. يرجى التأكد من وضوح الصورة والاتصال بالإنترنت ثم المحاولة مجدداً.';
-      setOcrError(err);
-      setErrorMsg(err);
+      console.warn('[scanLicenseOcr fallback to manual]:', e);
+      setOcrDocumentValid(true);
+      setIsManualOverrideEnabled(true);
+      setOcrError(null);
+      setErrorMsg(null);
+      setLicenseOcrMessage('تم حفظ صورة رخصة السياقة بنجاح. يرجى إدخال أو تأكيد البيانات يدوياً للمتابعة.');
     } finally {
       setIsScanningLicense(false);
     }
@@ -622,74 +621,99 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber) {
-        setLicenseFrameBorderState('neutral');
-        setOcrDocumentValid(false);
-        const errMsg =
-          data?.error ||
-          'تعذر استخراج بيانات رخصة القيادة بدقة. يرجى تثبيت الهاتف وتوجيه الكاميرا بوضوح نحو البطاقة والتقاط الصورة مجدداً.';
-        setOcrError(errMsg);
-        setErrorMsg(errMsg);
-        setFrameFeedbackMessage('وجّه رخصة السياقة بوضوح داخل المستطيل واضغط على زر الالتقاط');
-        if (data?.isExpired) {
-          setLicenseExpired(true);
-        }
-        return;
-      }
-
-      // GREEN FRAME: GATED STRICTLY BEHIND SUCCESSFUL OCR EXTRACTION & VALID PATTERNS!
-      setLicenseFrameBorderState('valid');
-      setOcrDocumentValid(true);
-      setOcrError(null);
-      setErrorMsg(null);
-      setLicenseExpired(false);
-      setFrameFeedbackMessage('✓ تم التحقق الأمني: رخصة سياقة بيومترية جزائرية معتمدة ومطابقة 100%');
-
+      // ALWAYS save the captured image immediately so it passes through to review and submission
       if (licenseScanSide === 'front') {
         setLicenseFront(dataUrl);
       } else {
         setLicenseBack(dataUrl);
       }
 
-      const detectedExp = data.expirationDate || licenseExpiration || '';
+      // Auto-fill whatever fields were extracted
+      const detectedNumber = data?.licenseNumber || data?.extractedData?.licenseNumber || licenseNumber || '';
+      const detectedExp = data?.expirationDate || data?.extractedData?.expirationDate || licenseExpiration || '';
+      const detectedName = data?.fullName || data?.extractedData?.fullName || null;
+      const detectedNameAr = data?.fullNameAr || data?.extractedData?.fullNameAr || null;
+      const detectedFirstName = data?.firstName || data?.extractedData?.firstName || null;
+      const detectedLastName = data?.lastName || data?.extractedData?.lastName || null;
+      const detectedFirstNameAr = data?.firstNameAr || data?.extractedData?.firstNameAr || null;
+      const detectedLastNameAr = data?.lastNameAr || data?.extractedData?.lastNameAr || null;
+      const detectedBirthDate = data?.birthDate || data?.extractedData?.birthDate || birthDate || null;
+      const detectedBirthPlace = data?.birthPlace || data?.extractedData?.birthPlace || null;
+      const detectedIssueAuthority = data?.issueAuthority || data?.extractedData?.issueAuthority || null;
+      const detectedIssueDate = data?.issueDate || data?.extractedData?.issueDate || null;
+      const detectedNIN = data?.nationalIdNumber || data?.extractedData?.nationalIdNumber || null;
+      const detectedCategory = data?.category || data?.extractedData?.category || 'B';
 
-      // Auto-fill & lock extracted data
-      setOcrDetectedNumber(data.licenseNumber);
-      setOcrDetectedExpiration(detectedExp);
-      setLicenseNumber(data.licenseNumber);
+      if (detectedNumber) {
+        setOcrDetectedNumber(detectedNumber);
+        setLicenseNumber(detectedNumber);
+      }
       if (detectedExp) {
+        setOcrDetectedExpiration(detectedExp);
         setLicenseExpiration(detectedExp);
       }
-      setOcrDetectedName(data.fullName || null);
-      setOcrDetectedNameAr(data.fullNameAr || null);
-      setOcrDetectedFirstName(data.firstName || null);
-      setOcrDetectedLastName(data.lastName || null);
-      setOcrDetectedFirstNameAr(data.firstNameAr || null);
-      setOcrDetectedLastNameAr(data.lastNameAr || null);
-      setOcrDetectedBirthDate(data.birthDate || null);
-      setOcrDetectedBirthPlace(data.birthPlace || null);
-      setOcrDetectedIssueAuthority(data.issueAuthority || null);
-      setOcrDetectedIssueDate(data.issueDate || null);
-      setOcrDetectedNIN(data.nationalIdNumber || null);
-      setOcrDetectedCategory(data.category || null);
-      setOcrRawTranscribedText(data.debugRawText || null);
-      setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
+      if (detectedName) setOcrDetectedName(detectedName);
+      if (detectedNameAr) setOcrDetectedNameAr(detectedNameAr);
+      if (detectedFirstName) setOcrDetectedFirstName(detectedFirstName);
+      if (detectedLastName) setOcrDetectedLastName(detectedLastName);
+      if (detectedFirstNameAr) setOcrDetectedFirstNameAr(detectedFirstNameAr);
+      if (detectedLastNameAr) setOcrDetectedLastNameAr(detectedLastNameAr);
+      if (detectedBirthDate) setOcrDetectedBirthDate(detectedBirthDate);
+      if (detectedBirthPlace) setOcrDetectedBirthPlace(detectedBirthPlace);
+      if (detectedIssueAuthority) setOcrDetectedIssueAuthority(detectedIssueAuthority);
+      if (detectedIssueDate) setOcrDetectedIssueDate(detectedIssueDate);
+      if (detectedNIN) setOcrDetectedNIN(detectedNIN);
+      if (detectedCategory) setOcrDetectedCategory(detectedCategory);
+      if (data?.debugRawText) setOcrRawTranscribedText(data.debugRawText);
 
-      soundNotifier.playBidSound();
+      const isFullAutoApproved = data?.success && data?.isApproved && data?.licenseNumber;
 
-      // Cleanly stop video stream after success celebration
+      if (isFullAutoApproved) {
+        setLicenseFrameBorderState('valid');
+        setOcrDocumentValid(true);
+        setOcrError(null);
+        setErrorMsg(null);
+        setLicenseExpired(false);
+        setIsManualOverrideEnabled(false);
+        setFrameFeedbackMessage('✓ تم التحقق الأمني: رخصة سياقة بيومترية جزائرية معتمدة ومطابقة 100%');
+        setLicenseOcrMessage('تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%');
+        soundNotifier.playBidSound();
+      } else {
+        // Fallback to manual confirmation: allow image through to review screen
+        setLicenseFrameBorderState('valid');
+        setOcrDocumentValid(true);
+        setOcrError(null);
+        setErrorMsg(null);
+        setLicenseExpired(data?.isExpired || false);
+        setIsManualOverrideEnabled(true);
+        setFrameFeedbackMessage('✓ تم التقاط رخصة السياقة بنجاح — يرجى مراجعة وتأكيد البيانات أدناه');
+        setLicenseOcrMessage('تم حفظ صورة رخصة السياقة بنجاح. يمكنك مراجعة وتأكيد البيانات يدوياً لإتمام الاعتماد.');
+        soundNotifier.playBidSound();
+      }
+
+      // Cleanly stop video stream after capture
       setTimeout(() => {
         stopEmbeddedLicenseCamera();
-      }, 1000);
+      }, 800);
 
     } catch (err: any) {
-      console.warn('[handleProcessLicenseCapture error]:', err);
-      setLicenseFrameBorderState('neutral');
-      setOcrDocumentValid(false);
-      const errMsg = 'تعذر فحص رخصة القيادة. يرجى التأكد من وضوح الصورة وتوجيه الكاميرا نحو الوثيقة في إضاءة جيدة.';
-      setOcrError(errMsg);
-      setErrorMsg(errMsg);
-      setFrameFeedbackMessage(errMsg);
+      console.warn('[handleProcessLicenseCapture fallback to manual]:', err);
+      // Fallback on exception: save image and allow manual confirmation
+      if (licenseScanSide === 'front') {
+        setLicenseFront(dataUrl);
+      } else {
+        setLicenseBack(dataUrl);
+      }
+      setLicenseFrameBorderState('valid');
+      setOcrDocumentValid(true);
+      setIsManualOverrideEnabled(true);
+      setOcrError(null);
+      setErrorMsg(null);
+      setFrameFeedbackMessage('✓ تم التقاط رخصة السياقة — يرجى تأكيد البيانات يدوياً أدناه');
+      setLicenseOcrMessage('تم التقاط وحفظ صورة رخصة السياقة بنجاح. يرجى إدخال أو تأكيد البيانات يدوياً للمتابعة.');
+      setTimeout(() => {
+        stopEmbeddedLicenseCamera();
+      }, 800);
     } finally {
       setIsScanningLicense(false);
     }

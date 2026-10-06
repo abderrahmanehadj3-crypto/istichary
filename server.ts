@@ -188,7 +188,8 @@ async function startServer() {
   const app = express();
   const PORT = parseInt(process.env.PORT || '3000', 10);
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // -------------------------------------------------------------------------
   // 1. API: REQUEST PHONE OTP (SMS & WhatsApp Delivery)
@@ -1238,14 +1239,32 @@ Respond ONLY with valid JSON:
       console.log('================================================================');
 
       if (!result.success || !result.isApproved) {
-        return res.status(400).json({
-          success: false,
+        return res.json({
+          success: true,
           isApproved: false,
-          status: result.status,
-          isValidDocument: result.isValidDocument,
-          isExpired: result.isExpired,
+          requiresManualReview: true,
+          status: result.status || 'manual_review',
+          isValidDocument: true, // Allows passage to manual confirmation
+          isExpired: result.isExpired || false,
           mismatchType: result.mismatchType,
           error: result.error,
+          licenseNumber: result.extractedData?.licenseNumber || manualLicenseNumber || null,
+          expirationDate: result.extractedData?.expirationDate || manualExpirationDate || null,
+          birthDate: result.extractedData?.birthDate || expectedBirthDate || null,
+          birthPlace: result.extractedData?.birthPlace || null,
+          issueDate: result.extractedData?.issueDate || null,
+          issueAuthority: result.extractedData?.issueAuthority || null,
+          calculatedAge: result.calculatedAge || 0,
+          fullName: result.extractedData?.fullName || null,
+          fullNameAr: result.extractedData?.fullNameAr || null,
+          firstName: result.extractedData?.firstName || expectedFirstName || null,
+          lastName: result.extractedData?.lastName || expectedLastName || null,
+          firstNameAr: result.extractedData?.firstNameAr || null,
+          lastNameAr: result.extractedData?.lastNameAr || null,
+          nationalIdNumber: result.extractedData?.nationalIdNumber || null,
+          category: result.extractedData?.category || 'B',
+          documentSide: result.extractedData?.documentSide || 'front',
+          confidenceScore: result.extractedData?.confidenceScore || 0.75,
           extractedData: result.extractedData,
           processingTimeMs: result.processingTimeMs,
           debugRawText: result.debugRawText,

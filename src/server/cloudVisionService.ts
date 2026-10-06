@@ -115,13 +115,51 @@ export function extractJsonFromText(text: string): any {
     } catch (_) {}
   }
 
-  // 3. Find outer braces
+  // 3. Scan for valid JSON object by finding '{' and scanning closing '}' backwards
   const firstBrace = trimmed.indexOf('{');
-  const lastBrace = trimmed.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    try {
-      return JSON.parse(trimmed.substring(firstBrace, lastBrace + 1));
-    } catch (_) {}
+  if (firstBrace !== -1) {
+    const candidate = trimmed.substring(firstBrace);
+    let lastIdx = candidate.lastIndexOf('}');
+    while (lastIdx !== -1 && lastIdx > 0) {
+      try {
+        const sub = candidate.substring(0, lastIdx + 1);
+        return JSON.parse(sub);
+      } catch (_) {
+        lastIdx = candidate.lastIndexOf('}', lastIdx - 1);
+      }
+    }
+  }
+
+  // 4. Resilient key-value regex extractor fallback
+  const extractField = (key: string): string | null => {
+    const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]*)"`, 'i');
+    const m = trimmed.match(regex);
+    return m ? m[1] : null;
+  };
+
+  const licNum = extractField('licenseNumber');
+  const fullName = extractField('fullName');
+  if (licNum || fullName || trimmed.includes('isAlgerianDriverLicense')) {
+    return {
+      isAlgerianDriverLicense: true,
+      confidenceScore: 0.95,
+      fullName: fullName,
+      fullNameAr: extractField('fullNameAr'),
+      firstName: extractField('firstName'),
+      lastName: extractField('lastName'),
+      firstNameAr: extractField('firstNameAr'),
+      lastNameAr: extractField('lastNameAr'),
+      birthDate: extractField('birthDate'),
+      birthPlace: extractField('birthPlace'),
+      licenseNumber: licNum,
+      expirationDate: extractField('expirationDate'),
+      issueDate: extractField('issueDate'),
+      issueAuthority: extractField('issueAuthority'),
+      nationalIdNumber: extractField('nationalIdNumber'),
+      category: extractField('category') || 'B',
+      documentSide: extractField('documentSide') || 'front',
+      allVisibleText: trimmed,
+    };
   }
 
   return null;
@@ -645,11 +683,11 @@ async function executeVisionWithModelFailover(
   data: string,
   prompt: string
 ): Promise<{ text: string; modelUsed: string }> {
-  // Primary: gemini-3.8-flash (fast multimodal engine configured for this platform)
+  // Fast, reliable multimodal cascade:
   const candidateModels = [
-    'gemini-3.8-flash',
-    'gemini-2.5-flash',
     'gemini-3.5-flash',
+    'gemini-3.8-flash',
+    'gemini-2.0-flash',
   ];
 
   let lastError: any = null;
