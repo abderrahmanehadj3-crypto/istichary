@@ -918,71 +918,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         }
       }
 
-      // 4. STRICT ANTI-FRAUD CROSS-MATCH: License Legal Name vs Driver's Official Profile Name
-      if (ocrDetectedName || ocrDetectedNameAr || ocrDetectedFirstName || ocrDetectedLastName || ocrDetectedFirstNameAr || ocrDetectedLastNameAr) {
-        const profileFirst = firstName.trim();
-        const profileLast = lastName.trim();
-        const profileFull = `${profileFirst} ${profileLast}`.trim();
-
-        // Helper for normalization
-        const norm = (s: string | null | undefined): string => {
-          if (!s) return '';
-          return s
-            .toLowerCase()
-            .replace(/[\u064B-\u065F\u0670]/g, '')
-            .replace(/ـ/g, '')
-            .replace(/[أإآٱ]/g, 'ا')
-            .replace(/ة/g, 'ه')
-            .replace(/ى/g, 'ي')
-            .replace(/[ؤئء]/g, '')
-            .replace(/[\s\-\_\.\,]/g, '');
-        };
-
-        const isMatch = (t1: string, t2: string): boolean => {
-          const n1 = norm(t1);
-          const n2 = norm(t2);
-          if (!n1 || !n2) return false;
-          return n1 === n2 || n1.includes(n2) || n2.includes(n1);
-        };
-
-        const matchLatinFirst = isMatch(profileFirst, ocrDetectedFirstName || '') || isMatch(profileFirst, ocrDetectedName || '');
-        const matchLatinLast = isMatch(profileLast, ocrDetectedLastName || '') || isMatch(profileLast, ocrDetectedName || '');
-        const matchLatinFull = isMatch(profileFull, ocrDetectedName || '');
-
-        const matchArFirst = isMatch(profileFirst, ocrDetectedFirstNameAr || '') || isMatch(profileFirst, ocrDetectedNameAr || '');
-        const matchArLast = isMatch(profileLast, ocrDetectedLastNameAr || '') || isMatch(profileLast, ocrDetectedNameAr || '');
-        const matchArFull = isMatch(profileFull, ocrDetectedNameAr || '');
-
-        const isNameVerified =
-          (matchLatinFirst && matchLatinLast) ||
-          (matchArFirst && matchArLast) ||
-          ((matchLatinFirst || matchArFirst) && (matchLatinLast || matchArLast)) ||
-          matchLatinFull ||
-          matchArFull;
-
-        if (!isNameVerified) {
-          const docDisplayName = ocrDetectedNameAr || ocrDetectedName || `${ocrDetectedLastName || ''} ${ocrDetectedFirstName || ''}`.trim();
-          setErrorMsg(
-            `فشل التحقق الأمني (مكافحة التزوير والاحتيال): الاسم القانوني المسجل في الحساب (${profileFull}) لا يتطابق مع الاسم المدون على رخصة السياقة (${docDisplayName}). يجب أن يتطابق الحساب 100% مع وثيقة الهوية الرسمية.`
-          );
-          return;
-        }
-      }
-
-      // 5. STRICT ANTI-FRAUD CROSS-MATCH: License Date of Birth vs Driver's Official Profile Date of Birth
-      if (ocrDetectedBirthDate && birthDate) {
-        const cleanProfileDob = birthDate.trim();
-        const cleanOcrDob = ocrDetectedBirthDate.trim();
-        if (cleanProfileDob !== cleanOcrDob) {
-          const profileYear = new Date(cleanProfileDob).getFullYear();
-          const ocrYear = new Date(cleanOcrDob).getFullYear();
-          if (profileYear !== ocrYear || Math.abs(new Date(cleanProfileDob).getTime() - new Date(cleanOcrDob).getTime()) > 86400000 * 2) {
-            setErrorMsg(
-              `فشل التحقق الأمني: تاريخ ميلاد السائق المسجل (${birthDate}) لا يتطابق مع تاريخ الميلاد المطبوع على رخصة القيادة (${ocrDetectedBirthDate}). يرجى التأكد من مطابقة بيانات حسابك مع وثائقك الرسمية.`
-            );
-            return;
-          }
-        }
+      // 4. ANTI-FRAUD VERIFICATION: Document must be verified by Cloud Vision AI
+      if (ocrDocumentValid !== true) {
+        setErrorMsg('يرجى التقاط صورة واضحة لرخصة السياقة والانتظار حتى اكتمال التحقق الآلي والاعتماد الأخضر.');
+        return;
       }
     }
 
