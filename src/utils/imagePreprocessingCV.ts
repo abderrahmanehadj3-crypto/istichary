@@ -268,45 +268,18 @@ function estimateSkewAngle(ctx: CanvasRenderingContext2D, width: number, height:
 }
 
 /**
- * Detects card bounding box with generous tolerance for tilt, distance, and angle variations
- * Preserves card edges and margins to prevent clipping critical text or laser-engraved digits
+ * Detects card bounding box - preserves 100% full frame to ensure zero clipping
+ * of critical text, numbers, Wilaya codes, or laser-engraved digits
  */
 function detectCardBoundingBox(
   width: number,
   height: number
 ): { x: number; y: number; width: number; height: number } {
-  const currentRatio = width / height;
-  const targetRatio = 1.586; // ISO/IEC 7810 ID-1 standard
-
-  // Broad aspect ratio tolerance (1.20 to 1.98) handles slight tilts, perspective distortion & distance
-  if (currentRatio >= 1.20 && currentRatio <= 1.98) {
-    const padX = Math.round(width * 0.015);
-    const padY = Math.round(height * 0.015);
-    return {
-      x: padX,
-      y: padY,
-      width: Math.max(10, width - padX * 2),
-      height: Math.max(10, height - padY * 2),
-    };
-  }
-
-  // Broad safe crop with 2% margin buffer so edges are never cut off
-  let cropWidth = Math.round(width * 0.98);
-  let cropHeight = Math.round(cropWidth / targetRatio);
-
-  if (cropHeight > height * 0.98) {
-    cropHeight = Math.round(height * 0.98);
-    cropWidth = Math.round(cropHeight * targetRatio);
-  }
-
-  const cropX = Math.max(0, Math.round((width - cropWidth) / 2));
-  const cropY = Math.max(0, Math.round((height - cropHeight) / 2));
-
   return {
-    x: cropX,
-    y: cropY,
-    width: Math.min(width, cropWidth),
-    height: Math.min(height, cropHeight),
+    x: 0,
+    y: 0,
+    width,
+    height,
   };
 }
 

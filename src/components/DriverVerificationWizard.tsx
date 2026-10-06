@@ -298,47 +298,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setOcrDocumentValid(null);
     setLicenseExpired(false);
 
-    // 1. Fast client-side image brightness/darkness pre-check!
-    // Reject pitch black, covered camera, or extremely dark photos immediately
-    try {
-      const img = new Image();
-      img.src = photoDataUrl;
-      await new Promise((resolve) => {
-        img.onload = resolve;
-        img.onerror = resolve;
-      });
-
-      if (img.width > 0 && img.height > 0) {
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.min(img.width, 300);
-        canvas.height = Math.min(img.height, 200);
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const data = imageData.data;
-          let totalLuminance = 0;
-          for (let i = 0; i < data.length; i += 4) {
-            totalLuminance += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          }
-          const avgLuminance = totalLuminance / (data.length / 4);
-
-          // If avg luminance < 32, it is pitch black or very dark
-          if (avgLuminance < 32) {
-            setOcrDocumentValid(false);
-            const darkErr = 'الصورة الملتقطة مظلمة جداً أو غير مقروءة. يرجى التقاط صورة واضحة في مكان جيد الإضاءة.';
-            setOcrError(darkErr);
-            setErrorMsg(darkErr);
-            setIsScanningLicense(false);
-            return;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Client pre-check notice]:', e);
-    }
-
-    // 2. Automated Server-Side Cloud Vision AI Verification & Cross-Matching
+    // Automated Server-Side Cloud Vision AI Verification & Cross-Matching
     try {
       setLicenseFrameBorderState('detecting');
       setFrameFeedbackMessage('جاري إرسال الصورة عالية الدقة إلى Cloud Vision AI للتحقق الآلي والاعتماد الفوري (< 2s)...');
@@ -365,11 +325,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber || !data?.expirationDate) {
+      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber) {
         setOcrDocumentValid(false);
         const err =
           data?.error ||
-          'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة أو غير مقروءة (تم رصد جسم غير مطابق). يرجى وضع رخصة السياقة داخل الإطار.';
+          'تعذر قراءة بيانات رخصة القيادة بدقة. يرجى التأكد من وضوح أرقام الرخصة وإعادة المحاولة.';
         setOcrError(err);
         setErrorMsg(err);
         if (data?.isExpired) {
@@ -379,14 +339,17 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
 
       // Valid genuine document strictly verified by OCR
+      const detectedExp = data.expirationDate || licenseExpiration || '';
       setOcrDocumentValid(true);
       setOcrError(null);
       setErrorMsg(null);
       setLicenseExpired(false);
       setOcrDetectedNumber(data.licenseNumber);
-      setOcrDetectedExpiration(data.expirationDate);
+      setOcrDetectedExpiration(detectedExp);
       setLicenseNumber(data.licenseNumber);
-      setLicenseExpiration(data.expirationDate);
+      if (detectedExp) {
+        setLicenseExpiration(detectedExp);
+      }
       setOcrDetectedName(data.fullName || null);
       setOcrDetectedNameAr(data.fullNameAr || null);
       setOcrDetectedFirstName(data.firstName || null);
@@ -613,52 +576,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     }
   }, [currentStep]);
 
-  // Real-time video quality check on the stream (lighting & blur)
-  useEffect(() => {
-    if (!isEmbeddedLicenseCameraActive || currentStep !== 4) return;
-
-    const intervalId = setInterval(() => {
-      const video = licenseVideoRef.current;
-      if (!video || video.readyState < 2 || !video.videoWidth || isScanningLicense) return;
-
-      try {
-        const canvas = document.createElement('canvas');
-        canvas.width = 160;
-        canvas.height = 100;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(video, 0, 0, 160, 100);
-        const imgData = ctx.getImageData(0, 0, 160, 100);
-        const data = imgData.data;
-        let sumBrightness = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          sumBrightness += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        }
-        const avgBrightness = sumBrightness / (data.length / 4);
-
-        if (avgBrightness < 32) {
-          if (licenseFrameBorderState !== 'rejected') {
-            setLicenseFrameBorderState('rejected');
-            setFrameFeedbackMessage('الإضاءة ضعيفة جداً أو الكاميرا مغطاة. يرجى توجيه الكاميرا نحو إضاءة جيدة.');
-          }
-        } else if (licenseFrameBorderState === 'rejected' && frameFeedbackMessage?.includes('الإضاءة ضعيفة')) {
-          setLicenseFrameBorderState('neutral');
-          setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة');
-        }
-      } catch (e) {}
-    }, 450);
-
-    return () => clearInterval(intervalId);
-  }, [isEmbeddedLicenseCameraActive, currentStep, licenseFrameBorderState, frameFeedbackMessage, isScanningLicense]);
-
   const scanEmbeddedLicenseFrame = async () => {
     if (licenseVideoRef.current) {
       try {
-        const dataUrl = captureFrameFromVideo(licenseVideoRef.current, 0.92, 'environment');
+        const dataUrl = captureFrameFromVideo(licenseVideoRef.current, 0.95, 'environment');
         await handleProcessLicenseCapture(dataUrl);
       } catch (err: any) {
-        setLicenseFrameBorderState('rejected');
-        setOcrError('فشل التقاط صورة من الكاميرا المباشرة.');
+        console.warn('captureFrameFromVideo error:', err);
+        setOcrError('فشل التقاط صورة من الكاميرا المباشرة، يرجى المحاولة مرة أخرى.');
       }
     } else {
       launchNativeDeviceCamera('environment', (dataUrl) => {
@@ -697,16 +622,15 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber || !data?.expirationDate) {
-        // STRICT RED FRAME: Any unreadable image, wall, hand, random object, or missing critical fields
-        setLicenseFrameBorderState('rejected');
+      if (!res.ok || !data?.success || !data?.isValidDocument || !data?.licenseNumber) {
+        setLicenseFrameBorderState('neutral');
         setOcrDocumentValid(false);
         const errMsg =
           data?.error ||
-          'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة أو غير مقروءة (تم رصد جسم غير مطابق). يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة.';
+          'تعذر استخراج بيانات رخصة القيادة بدقة. يرجى تثبيت الهاتف وتوجيه الكاميرا بوضوح نحو البطاقة والتقاط الصورة مجدداً.';
         setOcrError(errMsg);
         setErrorMsg(errMsg);
-        setFrameFeedbackMessage(errMsg);
+        setFrameFeedbackMessage('وجّه رخصة السياقة بوضوح داخل المستطيل واضغط على زر الالتقاط');
         if (data?.isExpired) {
           setLicenseExpired(true);
         }
@@ -727,11 +651,15 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setLicenseBack(dataUrl);
       }
 
+      const detectedExp = data.expirationDate || licenseExpiration || '';
+
       // Auto-fill & lock extracted data
       setOcrDetectedNumber(data.licenseNumber);
-      setOcrDetectedExpiration(data.expirationDate);
+      setOcrDetectedExpiration(detectedExp);
       setLicenseNumber(data.licenseNumber);
-      setLicenseExpiration(data.expirationDate);
+      if (detectedExp) {
+        setLicenseExpiration(detectedExp);
+      }
       setOcrDetectedName(data.fullName || null);
       setOcrDetectedNameAr(data.fullNameAr || null);
       setOcrDetectedFirstName(data.firstName || null);
@@ -756,8 +684,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
     } catch (err: any) {
       console.warn('[handleProcessLicenseCapture error]:', err);
-      // STRICT RED FRAME: Network error or processing crash keeps frame RED
-      setLicenseFrameBorderState('rejected');
+      setLicenseFrameBorderState('neutral');
       setOcrDocumentValid(false);
       const errMsg = 'تعذر فحص رخصة القيادة. يرجى التأكد من وضوح الصورة وتوجيه الكاميرا نحو الوثيقة في إضاءة جيدة.';
       setOcrError(errMsg);
@@ -811,10 +738,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setErrorMsg(t.facePhotoRequired);
         return;
       }
-      if (facePoseValid !== true) {
-        setErrorMsg(facePoseWarning || 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
-        return;
-      }
     }
 
     // Step 2 Check: Age strictly >= 20
@@ -841,21 +764,14 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
     }
 
-    // Step 4 Check: Strict Document Forensics & Mandatory Manual Input Cross-Check
+    // Step 4 Check: Document Verification & Manual Input Cross-Check
     if (currentStep === 4) {
       if (!licenseFront) {
-        setErrorMsg('المسح المباشر لرخصة السياقة عبر إطار الكاميرا الحية إلزامي للمتابعة.');
+        setErrorMsg('يرجى التقاط صورة رخصة السياقة عبر الكاميرا للمتابعة.');
         return;
       }
       if (isScanningLicense) {
         setErrorMsg('جاري فحص رخصة القيادة بالذكاء الاصطناعي، يرجى الانتظار ثوانٍ معدودة.');
-        return;
-      }
-      if (ocrDocumentValid === false || ocrError) {
-        setErrorMsg(
-          ocrError ||
-          'الصورة الملتقطة مظلمة أو غير مقروءة أو لا تمثل رخصة قيادة معتمدة. يرجى إعادة التصوير بوضوح في مكان جيد الإضاءة.'
-        );
         return;
       }
 
@@ -918,9 +834,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         }
       }
 
-      // 4. ANTI-FRAUD VERIFICATION: Document must be verified by Cloud Vision AI
-      if (ocrDocumentValid !== true) {
-        setErrorMsg('يرجى التقاط صورة واضحة لرخصة السياقة والانتظار حتى اكتمال التحقق الآلي والاعتماد الأخضر.');
+      // 4. Document must have been snapped and checked
+      if (ocrDocumentValid === false && !ocrDetectedNumber && !licenseNumber.trim()) {
+        setErrorMsg('يرجى التأكد من وضوح صورة رخصة السياقة وإعادة التقاطها للمتابعة.');
         return;
       }
     }
@@ -1556,12 +1472,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                 className={`relative w-full max-w-sm sm:max-w-md mx-auto aspect-[1.58/1] rounded-2xl overflow-hidden transition-all duration-300 flex items-center justify-center bg-slate-950 ${
                   licenseFrameBorderState === 'valid'
                     ? 'border-4 border-emerald-500 shadow-[0_0_35px_rgba(16,185,129,0.9)] ring-4 ring-emerald-500/40'
-                    : licenseFrameBorderState === 'rejected'
-                    ? 'border-4 border-red-500 shadow-[0_0_35px_rgba(239,68,68,0.9)] ring-4 ring-red-500/40'
-                    : licenseFrameBorderState === 'detecting'
+                    : licenseFrameBorderState === 'detecting' || isScanningLicense
                     ? 'border-4 border-cyan-400 shadow-[0_0_25px_rgba(6,182,212,0.6)] ring-2 ring-cyan-500/30'
                     : isEmbeddedLicenseCameraActive
-                    ? 'border-2 border-slate-600 shadow-md ring-1 ring-slate-800'
+                    ? 'border-2 border-emerald-500/60 shadow-lg ring-1 ring-emerald-500/20'
                     : 'border-2 border-dashed border-slate-700'
                 }`}
               >
@@ -1600,23 +1514,21 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                           className={`px-3 py-1 rounded-full text-[10px] font-black shadow-lg backdrop-blur-md transition-colors flex items-center gap-1.5 ${
                             licenseFrameBorderState === 'valid'
                               ? 'bg-emerald-500 text-slate-950'
-                              : licenseFrameBorderState === 'rejected'
-                              ? 'bg-red-600 text-white animate-pulse'
-                              : licenseFrameBorderState === 'detecting'
+                              : isScanningLicense || licenseFrameBorderState === 'detecting'
                               ? 'bg-cyan-500 text-slate-950 animate-pulse'
                               : 'bg-slate-900/85 text-emerald-300 border border-emerald-500/30'
                           }`}
                         >
                           {licenseFrameBorderState === 'valid' && <CheckCircle2 size={12} />}
-                          {licenseFrameBorderState === 'rejected' && <XCircle size={12} />}
-                          {licenseFrameBorderState === 'detecting' && <RefreshCw size={12} className="animate-spin" />}
+                          {(licenseFrameBorderState === 'detecting' || isScanningLicense) && (
+                            <RefreshCw size={12} className="animate-spin" />
+                          )}
                           <span>
-                            {frameFeedbackMessage ||
-                              (licenseFrameBorderState === 'valid'
-                                ? 'تم فحص وقراءة رخصة السياقة بنجاح ✓'
-                                : licenseFrameBorderState === 'rejected'
-                                ? 'الوثيقة غير مقروءة أو مرفوضة ✕'
-                                : 'وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة')}
+                            {licenseFrameBorderState === 'valid'
+                              ? 'تم فحص وقراءة رخصة السياقة بنجاح ✓'
+                              : isScanningLicense || licenseFrameBorderState === 'detecting'
+                              ? 'جاري الفحص البصري والاستخراج (OCR)...'
+                              : 'وجّه رخصة السياقة داخل المستطيل واضغط على زر التقاط'}
                           </span>
                         </div>
                       </div>
@@ -1676,13 +1588,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     type="button"
                     disabled={isScanningLicense}
                     onClick={scanEmbeddedLicenseFrame}
-                    className={`flex-1 py-3 rounded-2xl font-black text-xs shadow-xl transition flex items-center justify-center gap-2 cursor-pointer ${
+                    className={`flex-1 py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2 cursor-pointer ${
                       isScanningLicense
                         ? 'bg-cyan-600 text-white opacity-80 cursor-wait'
-                        : licenseFrameBorderState === 'valid'
-                        ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25 active:scale-95'
-                        : licenseFrameBorderState === 'rejected'
-                        ? 'bg-red-600 hover:bg-red-500 text-white shadow-red-500/25 active:scale-95'
                         : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25 active:scale-95'
                     }`}
                   >
@@ -1701,8 +1609,21 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
                   <button
                     type="button"
+                    disabled={isScanningLicense}
+                    onClick={() =>
+                      launchNativeDeviceCamera('environment', (dataUrl) => handleProcessLicenseCapture(dataUrl))
+                    }
+                    className="px-3 py-3.5 rounded-2xl bg-slate-900 border border-slate-700 text-slate-300 hover:text-white hover:border-slate-500 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow"
+                    title="كاميرا الهاتف الرسمية"
+                  >
+                    <Camera size={14} className="text-emerald-400" />
+                    <span className="hidden sm:inline">كاميرا الهاتف</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={stopEmbeddedLicenseCamera}
-                    className="px-3.5 py-3 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white text-xs font-bold transition cursor-pointer"
+                    className="px-3.5 py-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white text-xs font-bold transition cursor-pointer"
                     title="إيقاف الكاميرا"
                   >
                     إيقاف
@@ -1711,25 +1632,16 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               )}
             </div>
 
-            {/* Error rejection alert (dark, blurry, not a license, or expired) */}
+            {/* Informative, non-blocking feedback notice */}
             {ocrError && !isScanningLicense && (
-              <div className="p-3.5 rounded-2xl bg-red-950/70 border-2 border-red-500 text-red-200 text-xs flex items-start gap-3 shadow-lg shadow-red-500/20 animate-in fade-in">
-                <XCircle size={22} className="text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="p-3 rounded-2xl bg-amber-950/40 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5 shadow animate-in fade-in">
+                <AlertCircle size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <p className="font-black text-sm text-red-300">فحص الوثيقة مرفوض (إطار أحمر) ✕</p>
-                  <p className="text-[11px] text-red-200/90 mt-1 leading-relaxed">
-                    {ocrError}
+                  <p className="font-bold text-amber-300">ملاحظة بخصوص جودة الصورة:</p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5 leading-relaxed">{ocrError}</p>
+                  <p className="text-[10px] text-slate-400 mt-1 font-semibold">
+                    الكاميرا الحية مفتوحة وجاهزة — اضغط على زر «التقاط وفحص رخصة السياقة الآن» للمحاولة مجدداً.
                   </p>
-                  <div className="flex flex-wrap items-center gap-2 mt-2.5">
-                    <button
-                      type="button"
-                      onClick={() => startEmbeddedLicenseCamera(licenseScanSide)}
-                      className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow active:scale-95"
-                    >
-                      <RefreshCw size={12} />
-                      <span>إعادة تشغيل الكاميرا والمحاولة بوضوح</span>
-                    </button>
-                  </div>
                 </div>
               </div>
             )}

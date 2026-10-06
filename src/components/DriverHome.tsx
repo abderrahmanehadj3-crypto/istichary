@@ -107,24 +107,11 @@ export const DriverHome: React.FC<DriverHomeProps> = ({
     setRenewalError(null);
 
     try {
-      let processedDataUrl = photoDataUrl;
-      let rois: any = null;
-      try {
-        const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
-        processedDataUrl = prep.processedDataUrl;
-        rois = prep.rois;
-      } catch (cvErr) {
-        console.warn('[CV Preprocessing fallback in DriverHome]:', cvErr);
-      }
-
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: processedDataUrl,
-          licenseNumberRoiImage: rois?.licenseNumberRoiDataUrl,
-          expiryDateRoiImage: rois?.expiryDateRoiDataUrl,
-          ninRoiImage: rois?.ninRoiDataUrl,
+          image: photoDataUrl,
           expectedFirstName: driver?.firstName,
           expectedLastName: driver?.lastName,
           expectedBirthDate: driver?.birthDate,

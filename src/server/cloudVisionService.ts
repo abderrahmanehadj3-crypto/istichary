@@ -645,12 +645,11 @@ async function executeVisionWithModelFailover(
   data: string,
   prompt: string
 ): Promise<{ text: string; modelUsed: string }> {
-  // Fast, reliable cascade: gemini-3.1-flash-lite (fastest, highly available) -> gemini-3.5-flash -> gemini-3.7-flash -> gemini-3.8-flash
+  // Primary: gemini-3.8-flash (fast multimodal engine configured for this platform)
   const candidateModels = [
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
-    'gemini-3.7-flash',
     'gemini-3.8-flash',
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
   ];
 
   let lastError: any = null;
@@ -901,7 +900,7 @@ Respond ONLY with valid JSON matching this schema:
       mismatchType: 'not_a_license',
       error:
         visionResult?.rejectionMessage ||
-        'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة (تم رصد جدار أو طاولة أو يد أو جسم غير مطابق). يرجى وضع رخصة السياقة داخل الإطار.',
+        'يرجى توجيه الكاميرا مباشرة نحو رخصة السياقة البيومترية الجزائرية والتقاط الصورة في إضاءة واضحة.',
       processingTimeMs: Date.now() - startTime,
       debugRawText: rawVisionText,
       rawLines,
@@ -943,9 +942,17 @@ Respond ONLY with valid JSON matching this schema:
   }
 
   // ---------------------------------------------------------------------------
-  // STEP 3: STRICT EXPIRY DATE VERIFICATION & AUTOMATED EXPIRATION CHECK
+  // STEP 3: EXPIRY DATE VERIFICATION (WITH MANUAL FALLBACK TOLERANCE)
   // ---------------------------------------------------------------------------
-  if (!parsedExpDate) {
+  let effectiveExpDate = parsedExpDate;
+  if (!effectiveExpDate && manualExpirationDate) {
+    effectiveExpDate = parseAlgerianDate(manualExpirationDate);
+  }
+  if (effectiveExpDate) {
+    extractedData.expirationDate = effectiveExpDate;
+  }
+
+  if (!effectiveExpDate) {
     return {
       success: false,
       isApproved: false,
@@ -955,7 +962,7 @@ Respond ONLY with valid JSON matching this schema:
       calculatedAge: 0,
       extractedData,
       mismatchType: 'invalid_expiration_date',
-      error: 'تعذر قراءة تاريخ انتهاء صلاحية رخصة القيادة (الحقل 4b). يرجى توجيه الكاميرا بدقة وتثبيت الهاتف.',
+      error: 'تعذر قراءة تاريخ انتهاء صلاحية رخصة القيادة (الحقل 4b). يرجى التأكد من وضوح البطاقة أو إدخال التاريخ يدوياً.',
       processingTimeMs: Date.now() - startTime,
       debugRawText: rawVisionText,
       rawLines,
@@ -970,7 +977,7 @@ Respond ONLY with valid JSON matching this schema:
   }
 
   let isExpired = false;
-  const expDateObj = new Date(parsedExpDate);
+  const expDateObj = new Date(effectiveExpDate);
   const curDateObj = new Date(currentDateStr);
   if (!isNaN(expDateObj.getTime()) && expDateObj < curDateObj) {
     isExpired = true;
@@ -986,7 +993,7 @@ Respond ONLY with valid JSON matching this schema:
       calculatedAge,
       extractedData,
       mismatchType: 'expired_license',
-      error: `رخصة القيادة منتهية الصلاحية (${parsedExpDate}). يرجى تقديم وثيقة سارية المفعول لتفعيل حساب السائق.`,
+      error: `رخصة القيادة منتهية الصلاحية (${effectiveExpDate}). يرجى تقديم وثيقة سارية المفعول لتفعيل حساب السائق.`,
       processingTimeMs: Date.now() - startTime,
       debugRawText: rawVisionText,
       rawLines,
