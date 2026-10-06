@@ -17,6 +17,7 @@ import {
 } from 'firebase/firestore';
 import { sendRealSmsMessage } from './src/server/smsGateway';
 import { sendAutomatedWhatsAppOtp } from './src/server/whatsappGateway';
+import { verifyDriverLicenseCloudVision } from './src/server/cloudVisionService';
 import { GoogleGenAI } from '@google/genai';
 
 dotenv.config();
@@ -1201,15 +1202,12 @@ Respond ONLY with valid JSON:
   }
 
   // -------------------------------------------------------------------------
-  // 6. API: DRIVER LICENSE OCR & REAL DOCUMENT FORENSICS WITH OPENCV ROI CROPPING
+  // 6. API: DRIVER LICENSE CLOUD VISION AI VERIFICATION & AUTOMATED GATEKEEPER
   // -------------------------------------------------------------------------
   app.post('/api/driver/ocr-license', async (req: Request, res: Response) => {
     try {
       const {
         image,
-        licenseNumberRoiImage,
-        expiryDateRoiImage,
-        ninRoiImage,
         manualLicenseNumber,
         manualExpirationDate,
         expectedFirstName,
@@ -1219,513 +1217,76 @@ Respond ONLY with valid JSON:
       } = req.body;
 
       if (!image) {
-        return res.status(400).json({ error: 'صورة رخصة السياقة مطلوبة' });
+        return res.status(400).json({ error: 'صورة رخصة السياقة مطلوبة للتحقق الأمني' });
       }
 
-      const { mimeType, data } = parseBase64(image);
-      const licRoi = licenseNumberRoiImage ? parseBase64(licenseNumberRoiImage) : null;
-      const expRoi = expiryDateRoiImage ? parseBase64(expiryDateRoiImage) : null;
-      const ninRoi = ninRoiImage ? parseBase64(ninRoiImage) : null;
-      const currentDateStr = new Date().toISOString().split('T')[0];
+      // Execute Automated Cloud Vision AI Pipeline
+      const result = await verifyDriverLicenseCloudVision({
+        image,
+        expectedFirstName,
+        expectedLastName,
+        expectedBirthDate,
+        manualLicenseNumber,
+        manualExpirationDate,
+        isRenewalCheck,
+      });
 
-      if (!data || data.length < 150) {
-        return res.status(400).json({
-          success: false,
-          isValidDocument: false,
-          isExpired: false,
-          error: 'الصورة الملتقطة فارغة أو تالفة. يرجى التقاط صورة واضحة لرخصة القيادة.',
-        });
-      }
-
-      const prompt = `You are a Senior Computer Vision & Forensic OCR Engineer specifically trained on the ALGERIAN BIOMETRIC DRIVER'S LICENSE:
-Standard: ISO/IEC 7810 ID-1 polycarbonate card (85.60 mm × 53.98 mm, ratio ~1.586 : 1).
-
-INPUT IMAGES PROVIDED:
-1. Full Card Image: Captured frame of the Algerian driver's license.
-${licRoi?.data ? '2. License Number ROI (Field 5): Cropped and Otsu-binarized to remove holographic interference and glare.' : ''}
-${expRoi?.data ? '3. Expiry Date ROI (Field 4b): Cropped and Otsu-binarized to remove glare and show pure date digits.' : ''}
-${ninRoi?.data ? '4. NIN 18-digit ROI (Field 4d): Cropped and Otsu-binarized.' : ''}
-
-TARGETED COORDINATES & FIELDS:
-- FIELD 5 (License Number / رقم الرخصة):
-  Usually engraved in the lower-right area. Formats:
-  * Alphanumeric letter + digits (e.g. "A04201870", "B123456")
-  * Wilaya code format (e.g. "16/04201870" or "09/123456")
-  * Pure numeric (6 to 12 digits, e.g. "04201870")
-- FIELD 4b (Date of Expiry / تاريخ انتهاء الصلاحية):
-  Format: "DD.MM.YYYY" (e.g. "28.04.2034") or "DD/MM/YYYY" or "DD-MM-YYYY".
-- FIELD 4d (NIN / 18 digits):
-  e.g. "100030088009650000".
-- FIELD 1 & 2 (Nom & Prénom / اللقب والإسم):
-  Latin and Arabic names (e.g. "HADJADJ ABDERRAHMANE" / "حجاج عبد الرحمان").
-- FIELD 3 (Date & Lieu de Naissance / تاريخ ومكان الازدياد):
-  Format: "DD.MM.YYYY Place" (e.g. "18.07.2003 أم البواقي" or "18.07.2003 Oum El Bouaghi")
-- FIELD 4a (Date de délivrance / تاريخ الإصدار):
-  Format: "DD.MM.YYYY" (e.g. "28.04.2024")
-- FIELD 4c (Autorité de délivrance / سلطة الإصدار / مكان الإصدار):
-  e.g. "Wilaya d'Alger" or "دائرة بئر مراد رايس" or "09 - Blida"
-
-REAL-WORLD LIVE CAPTURE TOLERANCE (CRITICAL):
-- The driver captures this live with their mobile camera. Glare, reflections from polycarbonate holographic laminate, slight tilts, or minor compression are EXPECTED and NORMAL.
-- DO NOT FALSELY REJECT VALID LICENSES: If you can discern the card structure, text, license number or dates, return isValidDocument: true.
-- Even if some characters have glare or partial blur, extract whatever text is readable.
-- ONLY return isValidDocument: false if the image is NOT a driver's license (e.g. wall, table, hand, face, passport, carte grise, or blank).
-
-Respond ONLY with valid JSON:
-{
-  "isValidDocument": boolean,
-  "rejectionReason": string | null,
-  "rejectionMessage": string | null,
-  "documentSide": "front" | "back" | "unknown",
-  "licenseNumber": string | null,
-  "expirationDate": string | null,
-  "birthDate": string | null,
-  "birthPlace": string | null,
-  "issueDate": string | null,
-  "issueAuthority": string | null,
-  "fullName": string | null,
-  "fullNameAr": string | null,
-  "firstName": string | null,
-  "lastName": string | null,
-  "firstNameAr": string | null,
-  "lastNameAr": string | null,
-  "nationalIdNumber": string | null,
-  "category": string | null
-}`;
-
-      let ocrResult: any = null;
-      let rawVisionText: string = '';
-      let passType: 'structured_json_roi' | 'raw_text_multipass' | 'manual_fallback' = 'structured_json_roi';
-
-      // Assemble multimodal contents including OpenCV ROI patches
-      const visionContents: any[] = [
-        {
-          inlineData: {
-            mimeType,
-            data,
-          },
-        },
-      ];
-
-      if (licRoi?.data) {
-        visionContents.push({
-          inlineData: {
-            mimeType: licRoi.mimeType || 'image/jpeg',
-            data: licRoi.data,
-          },
-        });
-      }
-      if (expRoi?.data) {
-        visionContents.push({
-          inlineData: {
-            mimeType: expRoi.mimeType || 'image/jpeg',
-            data: expRoi.data,
-          },
-        });
-      }
-      if (ninRoi?.data) {
-        visionContents.push({
-          inlineData: {
-            mimeType: ninRoi.mimeType || 'image/jpeg',
-            data: ninRoi.data,
-          },
-        });
-      }
-      visionContents.push(prompt);
-
-      // -----------------------------------------------------------------------
-      // PASS 1: Advanced Bilingual Structured JSON Vision Extraction with ROIs
-      // -----------------------------------------------------------------------
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: visionContents,
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
-
-        if (response.text) {
-          rawVisionText = response.text.trim();
-          const cleanJson = rawVisionText.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim();
-          ocrResult = JSON.parse(cleanJson);
-        }
-      } catch (aiErr) {
-        console.warn('[License OCR Pass 1 Notice]:', aiErr);
-      }
-
-      // -----------------------------------------------------------------------
-      // PASS 2: Multi-Pass Raw Text Fallback (If Pass 1 failed or missed fields)
-      // -----------------------------------------------------------------------
-      if (!ocrResult || !ocrResult.isValidDocument || (!ocrResult.licenseNumber && !ocrResult.expirationDate)) {
-        try {
-          passType = 'raw_text_multipass';
-          const rawOcrPrompt = `Transcribe EVERY word, character, and number visible on this Algerian driver's license (both Arabic and French).
-Focus strictly on:
-- Header: الجمهورية الجزائرية / RÉPUBLIQUE ALGÉRIENNE / رخصة السياقة / PERMIS DE CONDUIRE
-- 1. Nom / اللقب
-- 2. Prénom / الإسم
-- 3. Date de naissance / تاريخ الازدياد
-- 4a. Date délivrance / تاريخ الإصدار
-- 4b. Date expiration / تاريخ انتهاء الصلاحية
-- 4d. NIN / الرقم التعريفي الوطني (18 digits)
-- 5. N° du permis / رقم الرخصة
-- Bottom MRZ (DLDZA...) if visible.
-Output line by line.`;
-
-          const rawResponse = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: [
-              {
-                inlineData: {
-                  mimeType,
-                  data,
-                },
-              },
-              rawOcrPrompt,
-            ],
-          });
-
-          if (rawResponse.text) {
-            const secondaryRawText = rawResponse.text.trim();
-            rawVisionText = rawVisionText
-              ? `${rawVisionText}\n--- PASS 2 RAW TRANSCRIPTION ---\n${secondaryRawText}`
-              : secondaryRawText;
-
-            if (!ocrResult) ocrResult = {};
-
-            // 1. Flexible Algerian License Number regexes
-            const licMatchLetter = secondaryRawText.match(/(?:5[\.\:\-]?\s*|رقم الرخصة[\.\:\-]?\s*|N°[\.\:\-]?\s*)?([A-Z]\s*[0-9]{7,9})/i);
-            const licMatchSlash = secondaryRawText.match(/([0-9]{1,2})\s*[\/\-\.\s]\s*([0-9]{4,10})/);
-            const licMatchDigits = secondaryRawText.match(/(?:5[\.\:\-]?\s*|رخصة[\.\:\-]?\s*)?([0-9]{6,12})/);
-            const ninMatch = secondaryRawText.match(/(?:4d[\.\:\-]?\s*|NIN[\.\:\-]?\s*|التعريفي[\.\:\-]?\s*)?([0-9]{18})/i);
-            const mrzLicMatch = secondaryRawText.match(/DLDZA\s*([A-Z0-9]{8,10})/i);
-
-            if (!ocrResult.licenseNumber) {
-              if (licMatchLetter) ocrResult.licenseNumber = licMatchLetter[1].replace(/\s+/g, '');
-              else if (licMatchSlash) ocrResult.licenseNumber = `${licMatchSlash[1]}/${licMatchSlash[2]}`;
-              else if (mrzLicMatch) ocrResult.licenseNumber = mrzLicMatch[1].replace(/\s+/g, '');
-              else if (licMatchDigits) ocrResult.licenseNumber = licMatchDigits[1];
-              else if (ninMatch) ocrResult.licenseNumber = ninMatch[1];
-            }
-
-            if (!ocrResult.nationalIdNumber && ninMatch) {
-              ocrResult.nationalIdNumber = ninMatch[1];
-            }
-
-            // 2. Flexible Date extraction for Expiry
-            const expMatch = secondaryRawText.match(/(?:4b[\.\:\-]?\s*|expiration[\.\:\-]?\s*|انتهاء[\.\:\-]?\s*|صلاحية[\.\:\-]?\s*)([0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{2,4})/i)
-              || secondaryRawText.match(/([0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{4})/);
-            if (!ocrResult.expirationDate && expMatch) {
-              ocrResult.expirationDate = expMatch[1];
-            }
-
-            // 3. Flexible Date extraction for Birth Date
-            const dobMatch = secondaryRawText.match(/(?:3[\.\:\-]?\s*|naissance[\.\:\-]?\s*|الازدياد[\.\:\-]?\s*|ميلاد[\.\:\-]?\s*)([0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{1,2}[\.\/\-\s][0-9٠-٩]{2,4})/i);
-            if (!ocrResult.birthDate && dobMatch) {
-              ocrResult.birthDate = dobMatch[1];
-            }
-
-            // 4. Document Recognition check
-            const hasLicenseKeywords = /(?:رخصة|السياقة|PERMIS|CONDUIRE|الجزائرية|ALGERIENNE|DLDZA|الجمهورية)/i.test(secondaryRawText);
-            if (hasLicenseKeywords) {
-              ocrResult.isValidDocument = true;
-            }
-          }
-        } catch (rawErr) {
-          console.warn('[License OCR Pass 2 Notice]:', rawErr);
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // Extract dates and license number STRICTLY from OCR Vision results
-      // (NO manual input fallback here: this guarantees empty captures/walls are blocked!)
-      // -----------------------------------------------------------------------
-      const extractedRawLicNum = String(
-        ocrResult?.licenseNumber ||
-        ocrResult?.documentNumber ||
-        ocrResult?.permisNumber ||
-        ocrResult?.nationalIdNumber ||
-        ocrResult?.nin ||
-        ''
-      ).trim();
-
-      const extractedRawExpDate = ocrResult?.expirationDate ? String(ocrResult.expirationDate).trim() : '';
-
-      let parsedExpDate = parseAlgerianDate(extractedRawExpDate);
-      let parsedBirthDate = parseAlgerianDate(ocrResult?.birthDate);
-      let parsedIssueDate = parseAlgerianDate(ocrResult?.issueDate);
-
-      // Clean license number extracted strictly from OCR
-      let cleanLicenseNumber = extractedRawLicNum.replace(/[\s\-\/\.]/g, '').toUpperCase();
-
-      // Combined transcribed text for keyword analysis
-      const combinedTranscribedText = `${rawVisionText} ${ocrResult?.fullName || ''} ${ocrResult?.fullNameAr || ''} ${ocrResult?.licenseNumber || ''} ${extractedRawLicNum}`.trim();
-
-      // -----------------------------------------------------------------------
-      // 1. RELAXED FUZZY & PARTIAL KEYWORD MATCHING
-      // Tolerates glare, holographic distortion, and compression (1-2 misread chars)
-      // -----------------------------------------------------------------------
-      const keywordCheck = checkAlgerianLicenseKeywords(combinedTranscribedText);
-      const containsAlgerianKeywords = keywordCheck.hasKeywords || ocrResult?.isValidDocument === true;
-
-      // Extract raw text lines array for debugging
-      const rawLines = (rawVisionText || '')
-        .split('\n')
-        .map((l) => l.trim())
-        .filter((l) => l.length > 0);
-
-      // Fallback search in raw OCR text if structured pass missed or format varied
-      if (!cleanLicenseNumber && rawVisionText) {
-        const licTextMatch = rawVisionText.match(/(?:5[\.\:\-]?\s*|رقم الرخصة[\.\:\-]?\s*|N°[\.\:\-]?\s*|DLDZA\s*)?([A-Z]?[0-9]{5,18})/i);
-        if (licTextMatch) {
-          cleanLicenseNumber = licTextMatch[1].replace(/[\s\-\/\.]/g, '').toUpperCase();
-          extractedRawLicNum = licTextMatch[1];
-        }
-      }
-
-      if (!parsedExpDate && rawVisionText) {
-        const expTextMatch = rawVisionText.match(/(?:4b[\.\:\-]?\s*|expiration|انتهاء|صلاحية)?\s*[:\.\-]?\s*([0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{1,2}[\.\/\-][0-9٠-٩]{2,4})/i);
-        if (expTextMatch) {
-          parsedExpDate = parseAlgerianDate(expTextMatch[1]);
-        }
-      }
-
-      // Broadened formats for Algerian driver's licenses (5 to 18 digits or alphanumeric)
-      const ALGERIAN_LICENSE_NUMBER_REGEX = /^(?:[A-Z]{1,3}[0-9]{4,12}|[0-9]{1,2}[\/\-\.\s][0-9]{4,10}|[0-9]{5,18}|DLDZA[A-Z0-9]{6,12}|DZ[A-Z0-9]{5,12})$/i;
-      const hasValidNumberFormat =
-        ALGERIAN_LICENSE_NUMBER_REGEX.test(cleanLicenseNumber) ||
-        ALGERIAN_LICENSE_NUMBER_REGEX.test(extractedRawLicNum) ||
-        (cleanLicenseNumber.length >= 5 && cleanLicenseNumber.length <= 18 && /[0-9]/.test(cleanLicenseNumber));
-
-      // 1. REJECT if user captured a clearly foreign official document (e.g. passport or gray card)
-      const isExplicitForeignDocument =
-        ocrResult?.rejectionReason === 'national_id_card' ||
-        ocrResult?.rejectionReason === 'passport' ||
-        ocrResult?.rejectionReason === 'carte_grise';
-
-      if (isExplicitForeignDocument && !containsAlgerianKeywords) {
-        console.warn('[SECURITY GATEKEEPER] Rejected: Foreign document detected:', ocrResult?.rejectionReason);
-        return res.status(400).json({
-          success: false,
-          isValidDocument: false,
-          isExpired: false,
-          debugRawText: rawVisionText,
-          rawLines,
-          rejectionReason: ocrResult?.rejectionReason,
-          error:
-            ocrResult?.rejectionMessage ||
-            'الوثيقة الممسوحة هي وثيقة أخرى وليست رخصة سياقة. يرجى توجيه الكاميرا بدقة نحو بطاقة رخصة القيادة.',
-        });
-      }
-
-      // 2. REJECT RANDOM NON-DOCUMENT OBJECTS (Walls, tables, hands, random papers)
-      // Only reject if NEITHER keywords NOR a license number was found on the image!
-      if (!containsAlgerianKeywords && !cleanLicenseNumber) {
-        console.warn('[SECURITY GATEKEEPER] Rejected: No Algerian license keywords or numbers detected.');
-        return res.status(400).json({
-          success: false,
-          isValidDocument: false,
-          isExpired: false,
-          rawLines,
-          rejectionReason: 'not_a_license',
-          error: 'الصورة الملتقطة لا تمثل رخصة قيادة جزائرية معتمدة (تم رصد جدار أو طاولة أو يد أو جسم غير مطابق). يرجى وضع رخصة السياقة داخل الإطار.',
-          debugRawText: rawVisionText,
-        });
-      }
-
-      // 3. REJECT IF LICENSE NUMBER DOES NOT MATCH OFFICIAL PATTERN
-      if (!cleanLicenseNumber || !hasValidNumberFormat) {
-        console.warn('[SECURITY GATEKEEPER] Rejected: Missing or invalid license number pattern:', cleanLicenseNumber);
-        return res.status(400).json({
-          success: false,
-          isValidDocument: false,
-          isExpired: false,
-          rawLines,
-          rejectionReason: 'invalid_license_number',
-          error: 'تعذر قراءة رقم رخصة القيادة بنمط معتمد. يرجى التأكد من وضوح الحقل 5 وأرقام الرخصة داخل الإطار.',
-          debugRawText: rawVisionText,
-        });
-      }
-
-      // 4. REJECT IF EXPIRY DATE IS MISSING OR INVALID
-      if (!parsedExpDate) {
-        console.warn('[SECURITY GATEKEEPER] Rejected: Missing or invalid expiry date.');
-        return res.status(400).json({
-          success: false,
-          isValidDocument: false,
-          isExpired: false,
-          rawLines,
-          rejectionReason: 'invalid_expiration_date',
-          error: 'تعذر قراءة تاريخ انتهاء صلاحية رخصة القيادة (الحقل 4b). يرجى توجيه الكاميرا بدقة وتثبيت الهاتف.',
-          debugRawText: rawVisionText,
-        });
-      }
-
-      const finalFullName = ocrResult?.fullName || `${ocrResult?.firstName || ''} ${ocrResult?.lastName || ''}`.trim();
-      const finalFullNameAr = ocrResult?.fullNameAr || `${ocrResult?.lastNameAr || ''} ${ocrResult?.firstNameAr || ''}`.trim();
-      const lowConfidence = false;
-
-      // -----------------------------------------------------------------------
-      // 3. LOG RAW OCR OUTPUT FOR DEBUGGING (Printed to server console)
-      // -----------------------------------------------------------------------
       console.log('================================================================');
-      console.log('[OCR DEBUG LOG] --- EXACT EXTRACTED TEXT ARRAY (RAW OCR) ---');
-      console.log('[OCR DEBUG LOG] Timestamp:', new Date().toISOString());
-      console.log('[OCR DEBUG LOG] Multi-Pass Level:', passType);
-      console.log('[OCR DEBUG LOG] Total Extracted Lines:', rawLines.length);
-      console.log('[OCR DEBUG LOG] Text Array:\n', JSON.stringify(rawLines, null, 2));
-      console.log('[OCR DEBUG LOG] Keyword Matches:', keywordCheck.matchedKeywords, '(Score:', keywordCheck.score, ')');
-      console.log('[OCR DEBUG LOG] Parsed License Number:', cleanLicenseNumber, '| Format Valid:', hasValidNumberFormat);
-      console.log('[OCR DEBUG LOG] Parsed Expiration Date:', parsedExpDate);
-      console.log('[OCR DEBUG LOG] Parsed Birth Date:', parsedBirthDate);
-      console.log('[OCR DEBUG LOG] Parsed Full Name (Latin):', finalFullName);
-      console.log('[OCR DEBUG LOG] Parsed Full Name (Arabic):', finalFullNameAr);
-      console.log('================================================================');
-      console.log('[OCR DEBUG LOG] Parsed Birth Date:', parsedBirthDate);
-      console.log('[OCR DEBUG LOG] Parsed Full Name (Latin):', finalFullName);
-      console.log('[OCR DEBUG LOG] Parsed Full Name (Arabic):', finalFullNameAr);
-      console.log('[OCR DEBUG LOG] Low Confidence / Manual Override Allowed:', lowConfidence);
+      console.log('[CLOUD VISION AI LOG] Verification Result:', result.status, '| Approved:', result.isApproved);
+      console.log('[CLOUD VISION AI LOG] Execution Time:', result.processingTimeMs, 'ms');
+      console.log('[CLOUD VISION AI LOG] Extracted Data:\n', JSON.stringify(result.extractedData, null, 2));
       console.log('================================================================');
 
-      let isExpired = false;
-      if (parsedExpDate) {
-        const expDate = new Date(parsedExpDate);
-        const curDate = new Date(currentDateStr);
-        if (!isNaN(expDate.getTime()) && expDate < curDate) {
-          isExpired = true;
-        }
-      }
-
-      const isRenewal = isRenewalCheck === true;
-      if (isExpired && !isRenewal) {
+      if (!result.success || !result.isApproved) {
         return res.status(400).json({
           success: false,
-          isValidDocument: true,
-          isExpired: true,
-          licenseNumber: cleanLicenseNumber,
-          expirationDate: parsedExpDate,
-          error: `رخصة القيادة منتهية الصلاحية (${parsedExpDate || 'تاريخ منته'}). يرجى تقديم وثيقة سارية المفعول.`,
+          isApproved: false,
+          status: result.status,
+          isValidDocument: result.isValidDocument,
+          isExpired: result.isExpired,
+          mismatchType: result.mismatchType,
+          error: result.error,
+          extractedData: result.extractedData,
+          processingTimeMs: result.processingTimeMs,
+          debugRawText: result.debugRawText,
+          rawLines: result.rawLines,
+          crossMatchStatus: result.crossMatchStatus,
         });
       }
 
-      const calculatedAge = calculateDriverAge(parsedBirthDate, currentDateStr);
-
-      // -----------------------------------------------------------------------
-      // STRICT ANTI-FRAUD CROSS-MATCHING: Legal Name & Date of Birth
-      // -----------------------------------------------------------------------
-      let nameMatched = true;
-      let dobMatched = true;
-
-      // 1. Strict Name Verification
-      if (expectedFirstName && expectedLastName) {
-        const nameMatchResult = crossMatchDriverLegalName(
-          expectedFirstName,
-          expectedLastName,
-          ocrResult || {}
-        );
-        nameMatched = nameMatchResult.matched;
-        if (!nameMatched) {
-          console.warn('[SECURITY GATEKEEPER] Strict Name Mismatch rejected:', nameMatchResult.reason);
-          return res.status(400).json({
-            success: false,
-            isValidDocument: true,
-            mismatchType: 'name_mismatch',
-            error: nameMatchResult.reason || `الاسم المسجل في الحساب (${expectedFirstName} ${expectedLastName}) لا يتطابق مع الاسم المستخرج من رخصة القيادة (${finalFullNameAr || finalFullName}). يشترط تطابق الهوية لمنع انتحال الشخصية.`,
-            debugRawText: rawVisionText,
-          });
-        }
-      }
-
-      // 2. Strict DOB Verification
-      if (expectedBirthDate) {
-        if (!parsedBirthDate) {
-          console.warn('[SECURITY GATEKEEPER] Strict DOB Missing on document rejected');
-          return res.status(400).json({
-            success: false,
-            isValidDocument: true,
-            mismatchType: 'dob_mismatch',
-            error: `تعذر استخراج تاريخ الميلاد من رخصة القيادة لمطابقته مع تاريخ ميلادك المسجل (${expectedBirthDate}). يرجى التأكد من وضوح الحقل 3 (Date de naissance / تاريخ الازدياد).`,
-            debugRawText: rawVisionText,
-          });
-        }
-        const dobMatchResult = crossMatchDriverBirthDate(
-          expectedBirthDate,
-          parsedBirthDate
-        );
-        dobMatched = dobMatchResult.matched;
-        if (!dobMatched) {
-          console.warn('[SECURITY GATEKEEPER] Strict DOB Mismatch rejected:', dobMatchResult.reason);
-          return res.status(400).json({
-            success: false,
-            isValidDocument: true,
-            mismatchType: 'dob_mismatch',
-            error: dobMatchResult.reason || `تاريخ ميلاد السائق المسجل (${expectedBirthDate}) لا يتطابق مع تاريخ الميلاد المستخرج من رخصة القيادة (${parsedBirthDate}). يرجى التحقق من مطابقة بيانات حسابك مع وثائقك الرسمية.`,
-            debugRawText: rawVisionText,
-          });
-        }
-      }
-
-      // 3. Strict License Number & Expiry Cross-Check against user manual input if already typed
-      if (manualLicenseNumber && manualLicenseNumber.trim().length > 3) {
-        const cleanManualNum = manualLicenseNumber.replace(/[\s\-\/\.]/g, '').toUpperCase();
-        if (cleanManualNum !== cleanLicenseNumber && !cleanLicenseNumber.includes(cleanManualNum) && !cleanManualNum.includes(cleanLicenseNumber)) {
-          console.warn('[SECURITY GATEKEEPER] Manual license number mismatch:', cleanManualNum, 'vs', cleanLicenseNumber);
-          return res.status(400).json({
-            success: false,
-            isValidDocument: true,
-            mismatchType: 'number_mismatch',
-            error: `رقم رخصة القيادة المدخل يدوياً (${manualLicenseNumber}) لا يتطابق مع الرقم المستخرج آلياً من الوثيقة (${cleanLicenseNumber}). يرجى تصحيح الرقم ليطابق رخصة السياقة تماماً.`,
-            debugRawText: rawVisionText,
-          });
-        }
-      }
-
-      if (manualExpirationDate && manualExpirationDate.trim()) {
-        const parsedManualExp = parseAlgerianDate(manualExpirationDate);
-        if (parsedManualExp && parsedExpDate && parsedManualExp !== parsedExpDate) {
-          console.warn('[SECURITY GATEKEEPER] Manual expiry date mismatch:', parsedManualExp, 'vs', parsedExpDate);
-          return res.status(400).json({
-            success: false,
-            isValidDocument: true,
-            mismatchType: 'expiry_mismatch',
-            error: `تاريخ انتهاء الصلاحية المدخل يدوياً (${manualExpirationDate}) لا يتطابق مع التاريخ المقروء من الوثيقة (${parsedExpDate}). يرجى تصحيح التاريخ.`,
-            debugRawText: rawVisionText,
-          });
-        }
-      }
-
+      // 100% Verified Genuine Algerian Biometric Driver's License
       return res.json({
         success: true,
+        isApproved: true,
+        status: 'green',
         isValidDocument: true,
-        isExpired,
-        licenseNumber: cleanLicenseNumber,
-        expirationDate: parsedExpDate,
-        birthDate: parsedBirthDate,
-        birthPlace: ocrResult?.birthPlace || null,
-        issueDate: parsedIssueDate,
-        issueAuthority: ocrResult?.issueAuthority || null,
-        calculatedAge,
-        fullName: finalFullName,
-        fullNameAr: finalFullNameAr,
-        firstName: ocrResult?.firstNameAr || ocrResult?.firstName || '',
-        lastName: ocrResult?.lastNameAr || ocrResult?.lastName || '',
-        firstNameAr: ocrResult?.firstNameAr || '',
-        lastNameAr: ocrResult?.lastNameAr || '',
-        nationalIdNumber: ocrResult?.nationalIdNumber || null,
-        category: ocrResult?.category || 'B',
-        documentSide: ocrResult?.documentSide || 'front',
-        debugRawText: rawVisionText,
-        multiPassLevel: passType,
-        crossMatchStatus: {
-          nameMatched,
-          dobMatched,
-        },
-        message: 'تم فحص وقراءة رخصة السياقة البيومترية بنجاح ومطابقة بيانات الهوية القانونية 100%',
+        isExpired: false,
+        licenseNumber: result.extractedData.licenseNumber,
+        expirationDate: result.extractedData.expirationDate,
+        birthDate: result.extractedData.birthDate,
+        birthPlace: result.extractedData.birthPlace,
+        issueDate: result.extractedData.issueDate,
+        issueAuthority: result.extractedData.issueAuthority,
+        calculatedAge: result.calculatedAge,
+        fullName: result.extractedData.fullName,
+        fullNameAr: result.extractedData.fullNameAr,
+        firstName: result.extractedData.firstName,
+        lastName: result.extractedData.lastName,
+        firstNameAr: result.extractedData.firstNameAr,
+        lastNameAr: result.extractedData.lastNameAr,
+        nationalIdNumber: result.extractedData.nationalIdNumber,
+        category: result.extractedData.category,
+        documentSide: result.extractedData.documentSide,
+        confidenceScore: result.extractedData.confidenceScore,
+        debugRawText: result.debugRawText,
+        rawLines: result.rawLines,
+        processingTimeMs: result.processingTimeMs,
+        crossMatchStatus: result.crossMatchStatus,
+        message: result.message,
       });
     } catch (err: any) {
-      console.error('[API /api/driver/ocr-license] Error:', err);
-      return res.status(500).json({ error: err.message || 'فشل فحص رخصة القيادة' });
+      console.error('[API /api/driver/ocr-license] Cloud Vision AI Error:', err);
+      return res.status(500).json({ error: err.message || 'فشل فحص رخصة القيادة عبر Cloud Vision AI' });
     }
   });
 

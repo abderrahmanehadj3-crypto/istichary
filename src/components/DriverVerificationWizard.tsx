@@ -38,7 +38,6 @@ import { analyzeFaceBiometrics } from '../utils/faceBiometricsCV';
 import { saveDriverVerification } from '../utils/supabaseSync';
 import { DRIVER_DEFAULT_AVATAR } from '../utils/defaultAvatars';
 import { soundNotifier } from '../utils/audioNotification';
-import { preprocessLicenseFrameForOcr } from '../utils/imagePreprocessingCV';
 
 interface DriverVerificationWizardProps {
   currentUser: UserProfile;
@@ -339,26 +338,16 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       console.warn('[Client pre-check notice]:', e);
     }
 
-    // 2. Strict Server-side Document Forensic Verification & Cross-Matching
+    // 2. Automated Server-Side Cloud Vision AI Verification & Cross-Matching
     try {
-      let processedDataUrl = photoDataUrl;
-      let rois: any = null;
-      try {
-        const prep = await preprocessLicenseFrameForOcr(photoDataUrl);
-        processedDataUrl = prep.processedDataUrl;
-        rois = prep.rois;
-      } catch (cvErr) {
-        console.warn('[CV Preprocessing fallback in scanLicenseOcr]:', cvErr);
-      }
+      setLicenseFrameBorderState('detecting');
+      setFrameFeedbackMessage('جاري إرسال الصورة عالية الدقة إلى Cloud Vision AI للتحقق الآلي والاعتماد الفوري (< 2s)...');
 
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: processedDataUrl,
-          licenseNumberRoiImage: rois?.licenseNumberRoiDataUrl,
-          expiryDateRoiImage: rois?.expiryDateRoiDataUrl,
-          ninRoiImage: rois?.ninRoiDataUrl,
+          image: photoDataUrl,
           manualLicenseNumber: licenseNumber,
           manualExpirationDate: licenseExpiration,
           expectedFirstName: firstName,
@@ -370,7 +359,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       const data = await res.json().catch(() => null);
 
       console.log('====================================================');
-      console.log('[DEBUG scanLicenseOcr] Response:', data);
+      console.log('[DEBUG scanLicenseOcr] Cloud Vision AI Response:', data);
       if (data?.debugRawText) {
         console.log('[DEBUG scanLicenseOcr] Exact Raw Vision Text:\n', data.debugRawText);
       }
@@ -680,32 +669,16 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
   const handleProcessLicenseCapture = async (dataUrl: string) => {
     setLicenseFrameBorderState('detecting');
-    setFrameFeedbackMessage('جاري معالجة الصورة واقتصاص حقول الرخصة (OpenCV ROI & Otsu Binarization)...');
+    setFrameFeedbackMessage('جاري إرسال الصورة إلى Cloud Vision AI للتحقق الآلي والاعتماد الفوري (< 2s)...');
     setIsScanningLicense(true);
     setOcrError(null);
 
     try {
-      // 1. Client-side Computer Vision Pre-processing & ROI Extraction
-      let processedImage = dataUrl;
-      let rois: any = null;
-      try {
-        const preprocessed = await preprocessLicenseFrameForOcr(dataUrl);
-        processedImage = preprocessed.processedDataUrl;
-        rois = preprocessed.rois;
-      } catch (cvErr) {
-        console.warn('[CV Preprocessing fallback]:', cvErr);
-      }
-
-      setFrameFeedbackMessage('جاري فحص الوثيقة ومطابقتها مع القالب البيومتري الجزائري...');
-
       const res = await fetch('/api/driver/ocr-license', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image: processedImage,
-          licenseNumberRoiImage: rois?.licenseNumberRoiDataUrl,
-          expiryDateRoiImage: rois?.expiryDateRoiDataUrl,
-          ninRoiImage: rois?.ninRoiDataUrl,
+          image: dataUrl,
           manualLicenseNumber: licenseNumber,
           manualExpirationDate: licenseExpiration,
           expectedFirstName: firstName,
@@ -718,7 +691,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       const data = await res.json().catch(() => null);
 
       console.log('====================================================');
-      console.log('[CLIENT OCR DEBUG] Multi-pass API Response:', data);
+      console.log('[CLIENT OCR DEBUG] Cloud Vision AI Response:', data);
       if (data?.debugRawText) {
         console.log('[CLIENT OCR DEBUG] Exact Vision Raw Extracted Text:\n' + data.debugRawText);
       }
