@@ -589,18 +589,19 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       setIsFaceCameraActive(true);
 
       // 2. Binding Stream to Video Element
-      if (faceVideoRef.current) {
-        faceVideoRef.current.srcObject = stream;
-        faceVideoRef.current.muted = true;
-        faceVideoRef.current.playsInline = true;
-        faceVideoRef.current.setAttribute('muted', 'true');
-        faceVideoRef.current.setAttribute('playsinline', 'true');
-        faceVideoRef.current.setAttribute('webkit-playsinline', 'true');
+      const video = faceVideoRef.current;
+      if (video) {
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('muted', 'true');
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.srcObject = stream;
         try {
-          await faceVideoRef.current.play();
+          await video.play();
         } catch (playErr) {
-          faceVideoRef.current.onloadedmetadata = () => {
-            faceVideoRef.current?.play().catch(() => {});
+          video.onloadedmetadata = () => {
+            video.play().catch(() => {});
           };
         }
       }
@@ -610,11 +611,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
       setErrorMsg(
         isDenied
-          ? 'تم رفض إذن الكاميرا من المتصفح. يرجى تفعيل إذن الكاميرا للموقع أو استخدام كاميرا الهاتف أدناه.'
-          : 'تعذر تشغيل الكاميرا داخل المتصفح، يمكنك استخدام زر «كاميرا الهاتف» أدناه.'
+          ? 'تم رفض إذن الكاميرا من المتصفح. يرجى تفعيل إذن الكاميرا للموقع، أو يمكنك استخدام خيار «كاميرا الهاتف» أدناه.'
+          : 'تعذر تشغيل كاميرا المتصفح المباشرة. يمكنك استخدام خيار «كاميرا الهاتف» أدناه.'
       );
-      // Seamlessly fallback to native camera file input if permission was rejected
-      triggerFallbackCameraInput();
+      // NOTE: Fallback remains strictly separate on the secondary button and is never triggered automatically.
     }
   };
 
