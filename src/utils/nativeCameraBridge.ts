@@ -39,42 +39,67 @@ export async function startNativeCameraStream(
     throw new Error('WEBVIEW_NO_WEBRTC');
   }
 
-  // Mobile-optimized constraints
-  const constraints: MediaStreamConstraints = {
-    audio: false,
-    video: {
-      facingMode: { ideal: facingMode },
-      width: { ideal: facingMode === 'user' ? 640 : 1280 },
-      height: { ideal: facingMode === 'user' ? 640 : 720 },
-    },
-  };
+  // Release any existing stream on this video element
+  if (videoElement.srcObject instanceof MediaStream) {
+    videoElement.srcObject.getTracks().forEach((track) => track.stop());
+    videoElement.srcObject = null;
+  }
 
+  // Set crucial playback attributes before attaching stream to prevent autoplay block
+  videoElement.muted = true;
+  videoElement.playsInline = true;
+  videoElement.setAttribute('muted', 'true');
+  videoElement.setAttribute('playsinline', 'true');
+  videoElement.setAttribute('webkit-playsinline', 'true');
+
+  let stream: MediaStream | null = null;
+
+  // Tier 1: Ideal facingMode and standard resolution
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    videoElement.srcObject = stream;
-    videoElement.setAttribute('playsinline', 'true');
-    videoElement.setAttribute('webkit-playsinline', 'true');
-    await videoElement.play();
-    return stream;
-  } catch (error: any) {
-    console.warn('[CameraBridge] getUserMedia failed, attempting fallback constraints:', error);
-    
-    // Try basic fallback constraints if specific facingMode was rejected
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: { ideal: facingMode },
+        width: { ideal: facingMode === 'user' ? 640 : 1280 },
+        height: { ideal: facingMode === 'user' ? 640 : 720 },
+      },
+    });
+  } catch (err1: any) {
+    console.warn('[CameraBridge] Tier 1 constraints rejected, trying relaxed facingMode:', err1);
+    // Tier 2: Ideal facingMode only (never exact constraint to avoid OverconstrainedError)
     try {
-      const basicStream = await navigator.mediaDevices.getUserMedia({
+      stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: true,
+        video: { facingMode: { ideal: facingMode } },
       });
-      videoElement.srcObject = basicStream;
-      videoElement.setAttribute('playsinline', 'true');
-      videoElement.setAttribute('webkit-playsinline', 'true');
-      await videoElement.play();
-      return basicStream;
-    } catch (fallbackError: any) {
-      console.error('[CameraBridge] Camera access fully blocked in WebView:', fallbackError);
-      throw fallbackError;
+    } catch (err2: any) {
+      console.warn('[CameraBridge] Tier 2 rejected, trying completely unconstrained video:', err2);
+      // Tier 3: Generic video device
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: true,
+        });
+      } catch (fallbackError: any) {
+        console.error('[CameraBridge] Camera access rejected by browser/OS:', fallbackError);
+        throw fallbackError;
+      }
     }
   }
+
+  videoElement.srcObject = stream;
+
+  // Safe play handling that doesn't reject if loadedmetadata is pending
+  try {
+    await videoElement.play();
+  } catch (playErr) {
+    console.warn('[CameraBridge] Immediate play() waiting for metadata:', playErr);
+    videoElement.onloadedmetadata = () => {
+      videoElement.play().catch((e) => console.warn('[CameraBridge] onloadedmetadata play note:', e));
+    };
+  }
+
+  return stream;
 }
 
 /**

@@ -52,16 +52,30 @@ async function getMediaPipeDetector(): Promise<FaceDetector | null> {
     const vision = await FilesetResolver.forVisionTasks(
       'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
     );
-    mediaPipeFaceDetector = await FaceDetector.createFromOptions(vision, {
-      baseOptions: {
-        modelAssetPath:
-          'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
-        delegate: 'GPU',
-      },
-      runningMode: 'IMAGE',
-      minDetectionConfidence: 0.35,
-    });
-    return mediaPipeFaceDetector;
+    try {
+      mediaPipeFaceDetector = await FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+          delegate: 'GPU',
+        },
+        runningMode: 'IMAGE',
+        minDetectionConfidence: 0.3,
+      });
+      return mediaPipeFaceDetector;
+    } catch (gpuErr) {
+      console.warn('[FaceBiometrics] GPU delegate failed, falling back to CPU:', gpuErr);
+      mediaPipeFaceDetector = await FaceDetector.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath:
+            'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite',
+          delegate: 'CPU',
+        },
+        runningMode: 'IMAGE',
+        minDetectionConfidence: 0.3,
+      });
+      return mediaPipeFaceDetector;
+    }
   } catch (err) {
     console.warn('[FaceBiometrics] MediaPipe tasks-vision lazy init:', err);
     return null;
@@ -336,18 +350,11 @@ export async function analyzeFaceBiometrics(
       const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b;
       const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b;
 
-      // Broad adaptive human skin chromaticity range
+      // Broad adaptive human skin & face chromaticity range (handles warm/cool lighting & varied skin tones)
       const isSkinChrominance =
-        r > 38 &&
-        g > 28 &&
-        b > 18 &&
-        r >= g &&
-        r >= b &&
-        cb >= 65 &&
-        cb <= 145 &&
-        cr >= 120 &&
-        cr <= 185 &&
-        yVal > 28;
+        (r > 40 && g > 25 && b > 15 && (r > b || Math.abs(r - g) > 5) && yVal > 22) ||
+        (cb >= 65 && cb <= 155 && cr >= 115 && cr <= 190 && yVal > 22) ||
+        (r > 70 && g > 50 && b > 35 && r >= g * 0.9 && r >= b * 0.8);
 
       if (isSkinChrominance) {
         skinPixels++;
@@ -367,18 +374,18 @@ export async function analyzeFaceBiometrics(
 
   const skinRatio = skinPixels / totalPixels;
 
-  // If a meaningful skin cluster is present in the oval area (> 4.5% of pixels)
-  if (skinPixels > 450 && skinRatio > 0.045 && maxX > minX && maxY > minY) {
+  // If a face/skin cluster is detected in the oval frame (> 2% of pixels)
+  if (skinPixels > 220 && skinRatio > 0.02 && maxX > minX && maxY > minY) {
     const boxW = Math.max(maxX - minX, 60);
     const boxH = Math.max(maxY - minY, 70);
     const boxCenterX = (minX + maxX) / 2;
     const horizontalOffset = Math.abs(boxCenterX - normW / 2) / (normW / 2);
 
-    const isCentered = horizontalOffset < 0.42;
+    const isCentered = horizontalOffset < 0.48;
     const maxSide = Math.max(leftSkin, rightSkin, 1);
     const minSide = Math.min(leftSkin, rightSkin);
     const asymmetry = (maxSide - minSide) / maxSide;
-    const isPoseStraight = isCentered && asymmetry < 0.55;
+    const isPoseStraight = isCentered && asymmetry < 0.72;
 
     const normBox = {
       x: Math.max(0, minX / normW),

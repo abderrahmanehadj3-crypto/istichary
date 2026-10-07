@@ -264,39 +264,71 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     return () => clearInterval(intervalId);
   }, [isFaceCameraActive]);
 
-  // Real Computer Vision & Biometric Facial Verification
-  const verifyFacePose = async (photoDataUrl: string): Promise<boolean> => {
+  // Strict Server-Side Biometric Facial Verification & Liveness Check (Zero Bypass)
+  const handleProcessFaceCapture = async (dataUrl: string) => {
     setIsCheckingPose(true);
     setFacePoseValid(false);
     setFacePoseWarning(null);
+    setErrorMsg(null);
+
+    // Stop live stream once photo is taken
+    if (faceStreamRef.current) {
+      faceStreamRef.current.getTracks().forEach((t) => t.stop());
+      faceStreamRef.current = null;
+    }
+    setIsFaceCameraActive(false);
+    setIsLiveFaceStraight(false);
+    setLiveFaceDetected(false);
+    setLiveFaceBox(null);
 
     try {
-      const cvResult = await analyzeFaceBiometrics(photoDataUrl);
-      if (cvResult.faceDetected) {
+      // 1. Fast local computer vision check
+      const clientCv = await analyzeFaceBiometrics(dataUrl).catch(() => null);
+
+      // 2. Strict Server-Side AI Biometric Verification (/api/driver/verify-face)
+      const res = await fetch('/api/driver/verify-face', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+      });
+
+      const serverData = await res.json().catch(() => null);
+      console.log('====================================================');
+      console.log('[SERVER FACE VERIFY AI RESPONSE]:', serverData);
+      console.log('====================================================');
+
+      // Strict check: Server-side AI must confirm genuine human face and valid frontal pose
+      const isFaceLegitimate = !!(
+        (serverData?.success === true && serverData?.isValidPose === true) ||
+        (clientCv?.faceDetected && clientCv?.isValidPose && serverData?.success && serverData?.pose === 'frontal_centered')
+      );
+
+      if (isFaceLegitimate) {
+        // Genuine, centered human face confirmed
+        setFacePhoto(dataUrl);
         setFacePoseValid(true);
         setFacePoseWarning(null);
-        setErrorMsg((prev) =>
-          prev && (prev.includes('الوجه') || prev.includes('وضعية') || prev.includes('اكتشاف') || prev.includes('بيومتري'))
-            ? null
-            : prev
-        );
-        setIsCheckingPose(false);
-        return true;
+        setErrorMsg(null);
+        soundNotifier.playBidSound();
+      } else {
+        // STRICT REJECTION: Clear photo so the user cannot bypass!
+        setFacePhoto(null);
+        setFacePoseValid(false);
+        const warnMessage =
+          serverData?.warning ||
+          'لم يتم اكتشاف وجه إنسان حقيقي في الصورة الملتقطة. يرجى توجيه الكاميرا مباشرة نحو وجهك في إضاءة واضحة.';
+        setFacePoseWarning(warnMessage);
+        setErrorMsg(warnMessage);
       }
-
-      // Fallback tolerance for valid capture: confirm face
-      setFacePoseValid(true);
-      setFacePoseWarning(null);
-      setErrorMsg(null);
+    } catch (err: any) {
+      console.error('[handleProcessFaceCapture Exception]:', err);
+      setFacePhoto(null);
+      setFacePoseValid(false);
+      const warnMessage = 'فشل التحقق الأمني من صورة الوجه. يرجى التأكد من اتصال الإنترنت وإعادة المحاولة.';
+      setFacePoseWarning(warnMessage);
+      setErrorMsg(warnMessage);
+    } finally {
       setIsCheckingPose(false);
-      return true;
-    } catch (cvErr) {
-      console.warn('[Client CV Analysis Exception]:', cvErr);
-      setFacePoseValid(true);
-      setFacePoseWarning(null);
-      setErrorMsg(null);
-      setIsCheckingPose(false);
-      return true;
     }
   };
 
@@ -513,28 +545,39 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   };
 
   useEffect(() => {
+    let isCancelled = false;
     if (isFaceCameraActive && faceVideoRef.current && !faceStreamRef.current) {
-      startNativeCameraStream(faceVideoRef.current, 'user')
+      const vid = faceVideoRef.current;
+      startNativeCameraStream(vid, 'user')
         .then((stream) => {
+          if (isCancelled) {
+            stream.getTracks().forEach((t) => t.stop());
+            return;
+          }
           faceStreamRef.current = stream;
         })
         .catch((err) => {
+          if (isCancelled) return;
           console.warn('[Face Camera] WebRTC live stream error:', err);
-          setErrorMsg('تعذر تشغيل الكاميرا داخل المتصفح، يمكنك استخدام زر «كاميرا الهاتف» أدناه.');
+          const isPermDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
+          setErrorMsg(
+            isPermDenied
+              ? 'يرجى منح إذن الكاميرا للمتصفح للمتابعة، أو استخدام زر «كاميرا الهاتف» أدناه.'
+              : 'تعذر تشغيل الكاميرا داخل المتصفح، يمكنك استخدام زر «كاميرا الهاتف» أدناه.'
+          );
         });
     }
+
+    return () => {
+      isCancelled = true;
+    };
   }, [isFaceCameraActive]);
 
   const captureFaceFromVideo = async () => {
+    let capturedDataUrl: string | null = null;
     if (faceVideoRef.current) {
       try {
-        const dataUrl = captureFrameFromVideo(faceVideoRef.current, 0.95, 'user');
-        setFacePhoto(dataUrl);
-        setFacePoseValid(true);
-        setFacePoseWarning(null);
-        setErrorMsg(null);
-        setIsCheckingPose(false);
-        soundNotifier.playBidSound();
+        capturedDataUrl = captureFrameFromVideo(faceVideoRef.current, 0.95, 'user');
       } catch (e) {
         console.error('Capture face error:', e);
       }
@@ -547,6 +590,12 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsLiveFaceStraight(false);
     setLiveFaceDetected(false);
     setLiveFaceBox(null);
+
+    if (capturedDataUrl) {
+      await handleProcessFaceCapture(capturedDataUrl);
+    } else {
+      setErrorMsg('تعذر التقاط صورة من الكاميرا، يرجى المحاولة مرة أخرى.');
+    }
   };
 
   // Launch Native Device Camera directly (Android OS Camera Intent)
@@ -556,14 +605,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       faceStreamRef.current = null;
     }
     setIsFaceCameraActive(false);
+    setIsLiveFaceStraight(false);
+    setLiveFaceDetected(false);
+    setLiveFaceBox(null);
     launchNativeDeviceCamera(
       'user',
       async (dataUrl) => {
-        setFacePhoto(dataUrl);
-        setFacePoseValid(true);
-        setFacePoseWarning(null);
-        setErrorMsg(null);
-        soundNotifier.playBidSound();
+        await handleProcessFaceCapture(dataUrl);
       },
       (errMsg) => {
         setErrorMsg(errMsg);
@@ -815,10 +863,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const handleNextStep = () => {
     setErrorMsg(null);
 
-    // Step 1 Check: Face photo & orientation pose
+    // Step 1 Check: Face photo & biometric verification (Strict Zero-Bypass)
     if (currentStep === 1) {
-      if (!facePhoto) {
-        setErrorMsg(t.facePhotoRequired);
+      if (!facePhoto || facePoseValid !== true) {
+        setErrorMsg(facePoseWarning || t.facePhotoRequired || 'يرجى التقاط صورة واضحة للوجه والتحقق منها بيومترياً للمتابعة');
         return;
       }
     }
@@ -1102,8 +1150,16 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
               <div className="flex flex-col items-center justify-center p-3 rounded-2xl bg-slate-900/60 border border-slate-800/80">
                 {isFaceCameraActive ? (
                   <div className="w-full flex flex-col items-center">
-                    {/* Constrained Responsive Biometric Viewfinder */}
-                    <div className="relative w-full max-w-[280px] sm:max-w-[310px] aspect-[3/4] mx-auto rounded-3xl overflow-hidden bg-slate-950 border-2 border-slate-800 shadow-2xl flex items-center justify-center">
+                    {/* Constrained Responsive Biometric Oval Viewfinder */}
+                    <div
+                      className={`relative w-[230px] h-[300px] sm:w-[260px] sm:h-[330px] mx-auto rounded-[115px] sm:rounded-[130px] overflow-hidden bg-slate-950 border-4 shadow-2xl transition-all duration-300 flex items-center justify-center ${
+                        isLiveFaceStraight
+                          ? 'border-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.5)] ring-4 ring-emerald-500/25'
+                          : liveFaceDetected
+                          ? 'border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.4)] ring-2 ring-cyan-500/20'
+                          : 'border-slate-700 shadow-lg'
+                      }`}
+                    >
                       <video
                         ref={faceVideoRef}
                         autoPlay
@@ -1112,38 +1168,22 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                         className="w-full h-full object-cover scale-x-[-1]"
                       />
 
-                      {/* Biometric Oval Framing Overlay with Cutout Mask */}
-                      <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center p-3">
-                        <svg className="absolute inset-0 w-full h-full" preserveAspectRatio="none">
-                          <defs>
-                            <mask id="face-oval-cutout">
-                              <rect width="100%" height="100%" fill="white" />
-                              <ellipse cx="50%" cy="48%" rx="35%" ry="42%" fill="black" />
-                            </mask>
-                          </defs>
-                          <rect width="100%" height="100%" fill="rgba(2, 6, 23, 0.5)" mask="url(#face-oval-cutout)" />
-                        </svg>
+                      {/* Biometric Scanning Laser Guide */}
+                      <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4">
+                        {/* Dynamic Scanning Laser Bar */}
+                        <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#34d399] animate-pulse" />
 
-                        {/* Glowing Oval Framing Guide */}
-                        <div
-                          className={`relative w-[70%] h-[84%] rounded-full border-2 transition-all duration-300 flex items-center justify-center ${
-                            isLiveFaceStraight
-                              ? 'border-emerald-400 shadow-[0_0_25px_rgba(52,211,153,0.6)] ring-4 ring-emerald-500/20'
-                              : liveFaceDetected
-                              ? 'border-cyan-400/80 shadow-[0_0_15px_rgba(34,211,238,0.4)]'
-                              : 'border-white/50 border-dashed'
-                          }`}
-                        >
-                          {/* Corner Alignment Notches */}
-                          <div className={`absolute top-2 w-7 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400' : 'bg-white/60'}`} />
-                          <div className={`absolute bottom-2 w-7 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400' : 'bg-white/60'}`} />
-                          <div className={`absolute left-2 w-1 h-7 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400' : 'bg-white/60'}`} />
-                          <div className={`absolute right-2 w-1 h-7 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400' : 'bg-white/60'}`} />
+                        {/* Alignment Corner Notches */}
+                        <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
+                          <div className={`absolute top-2 w-8 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
+                          <div className={`absolute bottom-2 w-8 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
+                          <div className={`absolute left-2 w-1 h-8 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
+                          <div className={`absolute right-2 w-1 h-8 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
 
-                          {/* Dynamic Detected Face Bounding Box Indicator */}
+                          {/* Dynamic Face Bounding Box (when detected) */}
                           {liveFaceBox && (
                             <div
-                              className="absolute border-2 border-emerald-400/90 rounded-2xl pointer-events-none transition-all duration-150 shadow-[0_0_12px_rgba(52,211,153,0.5)]"
+                              className="absolute border-2 border-emerald-400/90 rounded-2xl pointer-events-none transition-all duration-150 shadow-[0_0_14px_rgba(52,211,153,0.6)]"
                               style={{
                                 left: `${Math.max(5, Math.min(80, (1 - (liveFaceBox.x + liveFaceBox.width)) * 100))}%`,
                                 top: `${Math.max(5, Math.min(80, liveFaceBox.y * 100))}%`,
@@ -1154,35 +1194,38 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                           )}
                         </div>
 
-                        {/* Floating Status Pill over Video */}
-                        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10">
-                          <span
-                            className={`px-3 py-1 rounded-full text-[10px] font-black shadow-lg flex items-center gap-1.5 backdrop-blur-md transition-all whitespace-nowrap ${
-                              isLiveFaceStraight
-                                ? 'bg-emerald-500 text-slate-950 shadow-emerald-500/30'
-                                : liveFaceDetected
-                                ? 'bg-cyan-500 text-slate-950 animate-pulse'
-                                : 'bg-slate-900/85 text-emerald-300 border border-emerald-500/30'
-                            }`}
-                          >
-                            {isLiveFaceStraight ? (
-                              <>
-                                <CheckCircle2 size={12} />
-                                <span>الوجه محاذى وجاهز للالتقاط ✓</span>
-                              </>
-                            ) : liveFaceDetected ? (
-                              <>
-                                <RefreshCw size={11} className="animate-spin" />
-                                <span>تم رصد الوجه • اضبطه في المنتصف</span>
-                              </>
-                            ) : (
-                              <>
-                                <ScanLine size={12} className="text-emerald-400" />
-                                <span>وجّه وجهك داخل الإطار البيضاوي</span>
-                              </>
-                            )}
-                          </span>
-                        </div>
+                        {/* Bottom Laser Bar */}
+                        <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-60 shadow-[0_0_8px_#22d3ee]" />
+                      </div>
+
+                      {/* Floating Status Pill */}
+                      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-10">
+                        <span
+                          className={`px-3 py-1 rounded-full text-[10px] font-black shadow-lg flex items-center gap-1.5 backdrop-blur-md transition-all whitespace-nowrap ${
+                            isLiveFaceStraight
+                              ? 'bg-emerald-500 text-slate-950 shadow-emerald-500/30'
+                              : liveFaceDetected
+                              ? 'bg-cyan-500 text-slate-950 shadow-cyan-500/20'
+                              : 'bg-slate-900/90 text-emerald-300 border border-emerald-500/30'
+                          }`}
+                        >
+                          {isLiveFaceStraight ? (
+                            <>
+                              <CheckCircle2 size={12} />
+                              <span>الوجه محاذى وجاهز للالتقاط ✓</span>
+                            </>
+                          ) : liveFaceDetected ? (
+                            <>
+                              <RefreshCw size={11} className="animate-spin" />
+                              <span>تم رصد الوجه • جاهز للالتقاط</span>
+                            </>
+                          ) : (
+                            <>
+                              <ScanLine size={12} className="text-emerald-400" />
+                              <span>وجّه وجهك داخل الإطار البيضاوي</span>
+                            </>
+                          )}
+                        </span>
                       </div>
                     </div>
 
@@ -2496,13 +2539,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
             id="btn-driver-wizard-next"
             onClick={handleNextStep}
             disabled={
-              (currentStep === 1 && (!facePhoto || isCheckingPose)) ||
+              (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
               (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false || !!ocrError)) ||
               (currentStep === 5 && (!grayCardPhoto || isScanningGrayCard || grayCardValid === false || !vehiclePlate.trim()))
             }
             className={`px-6 py-2.5 rounded-xl font-black text-xs shadow-lg transition flex items-center gap-1.5 cursor-pointer ${
-              (currentStep === 1 && (!facePhoto || isCheckingPose)) ||
+              (currentStep === 1 && (!facePhoto || facePoseValid !== true || isCheckingPose)) ||
               (currentStep === 2 && calculatedAge < 20) ||
               (currentStep === 4 && (!licenseFront || licenseExpired || isScanningLicense || ocrDocumentValid === false || !!ocrError)) ||
               (currentStep === 5 && (!grayCardPhoto || isScanningGrayCard || grayCardValid === false || !vehiclePlate.trim()))

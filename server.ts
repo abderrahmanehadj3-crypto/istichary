@@ -698,28 +698,36 @@ Respond ONLY with valid JSON:
 }`;
 
       let resultJson: any = null;
-      try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
-          contents: [
-            {
-              inlineData: {
-                mimeType,
-                data,
-              },
-            },
-            prompt,
-          ],
-          config: {
-            responseMimeType: 'application/json',
-          },
-        });
+      const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
 
-        if (response.text) {
-          resultJson = JSON.parse(response.text);
+      for (const modelName of candidateModels) {
+        try {
+          const response = await ai.models.generateContent({
+            model: modelName,
+            contents: [
+              {
+                inlineData: {
+                  mimeType,
+                  data,
+                },
+              },
+              prompt,
+            ],
+            config: {
+              responseMimeType: 'application/json',
+            },
+          });
+
+          if (response.text) {
+            resultJson = JSON.parse(response.text);
+            if (resultJson) {
+              console.log(`[SERVER FACE VERIFY AI] Success via model ${modelName}:`, resultJson);
+              break;
+            }
+          }
+        } catch (aiErr: any) {
+          console.warn(`[SERVER FACE VERIFY AI] Model ${modelName} failover note:`, aiErr?.message || aiErr);
         }
-      } catch (aiErr) {
-        console.warn('[Face Verification AI Notice]:', aiErr);
       }
 
       if (resultJson) {
@@ -730,6 +738,7 @@ Respond ONLY with valid JSON:
             isValidPose: true,
             pose: 'frontal_centered',
             warning: null,
+            reason: resultJson.reason || null,
           });
         }
 
@@ -739,16 +748,17 @@ Respond ONLY with valid JSON:
             ? 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة'
             : 'يرجى جعل الوجه في وضعية مستقيمة ومقابلة للكاميرا تماماً');
 
-        return res.status(400).json({
+        return res.json({
           success: false,
           isValidPose: false,
           pose: resultJson.pose || 'no_face',
           warning: rejectionWarning,
+          reason: resultJson.reason || null,
         });
       }
 
-      // If AI fails or returns empty, strictly reject:
-      return res.status(400).json({
+      // If AI fails or returns empty, strictly reject without bypass:
+      return res.json({
         success: false,
         isValidPose: false,
         pose: 'no_face',
@@ -759,7 +769,7 @@ Respond ONLY with valid JSON:
       return res.status(500).json({
         success: false,
         isValidPose: false,
-        warning: 'لم يتم اكتشاف وجه بوضوح، يرجى إعادة التصوير في إضاءة جيدة',
+        warning: 'فشل فحص الوجه. يرجى إعادة التصوير في إضاءة واضحة ومباشرة.',
       });
     }
   });
