@@ -156,7 +156,7 @@ export function extractJsonFromText(text: string): any {
       issueDate: extractField('issueDate'),
       issueAuthority: extractField('issueAuthority'),
       nationalIdNumber: extractField('nationalIdNumber'),
-      category: extractField('category') || 'B',
+      category: extractField('category') || null,
       documentSide: extractField('documentSide') || 'front',
       allVisibleText: trimmed,
     };
@@ -865,7 +865,6 @@ Respond ONLY with valid JSON matching this schema:
     visionResult?.licenseNumber ||
     visionResult?.documentNumber ||
     visionResult?.permisNumber ||
-    visionResult?.nationalIdNumber ||
     ''
   ).trim();
 
@@ -916,7 +915,7 @@ Respond ONLY with valid JSON matching this schema:
     issueDate: parsedIssueDate,
     issueAuthority: visionResult?.issueAuthority || null,
     nationalIdNumber: visionResult?.nationalIdNumber || null,
-    category: visionResult?.category || 'B',
+    category: visionResult?.category || null,
     documentSide: visionResult?.documentSide || 'front',
     isValidDocument: containsAlgerianKeywords && !!cleanLicenseNumber && hasValidNumberFormat,
     rejectionReason: visionResult?.rejectionReason || null,

@@ -100,6 +100,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   const [ocrDetectedCategory, setOcrDetectedCategory] = useState<string | null>(null);
   const [ocrRawTranscribedText, setOcrRawTranscribedText] = useState<string | null>(null);
   const [showOcrDebugConsole, setShowOcrDebugConsole] = useState<boolean>(false);
+  const [ocrNameMatched, setOcrNameMatched] = useState<boolean | null>(null);
+  const [ocrDobMatched, setOcrDobMatched] = useState<boolean | null>(null);
+  const [isFullAutoApproved, setIsFullAutoApproved] = useState<boolean>(false);
 
   // Anti-Tampering Read-Only OCR Lock States for Gray Card
   const [ocrExtractedPlate, setOcrExtractedPlate] = useState<string | null>(null);
@@ -325,39 +328,68 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       }
       console.log('====================================================');
 
-      // Auto-fill whatever fields were extracted
-      const detectedNumber = data?.licenseNumber || data?.extractedData?.licenseNumber || licenseNumber || '';
-      const detectedExp = data?.expirationDate || data?.extractedData?.expirationDate || licenseExpiration || '';
-      const detectedName = data?.fullName || data?.extractedData?.fullName || null;
-      const detectedNameAr = data?.fullNameAr || data?.extractedData?.fullNameAr || null;
-      const detectedBirthDate = data?.birthDate || data?.extractedData?.birthDate || birthDate || null;
-      const detectedBirthPlace = data?.birthPlace || data?.extractedData?.birthPlace || null;
-      const detectedIssueAuthority = data?.issueAuthority || data?.extractedData?.issueAuthority || null;
-      const detectedIssueDate = data?.issueDate || data?.extractedData?.issueDate || null;
-      const detectedNIN = data?.nationalIdNumber || data?.extractedData?.nationalIdNumber || null;
-      const detectedCategory = data?.category || data?.extractedData?.category || 'B';
+      // Auto-fill whatever fields were extracted directly from OCR (Zero mock fallbacks)
+      const detectedNumber = data?.extractedData?.licenseNumber || data?.licenseNumber || null;
+      const detectedExp = data?.extractedData?.expirationDate || data?.expirationDate || null;
+      const detectedName = data?.extractedData?.fullName || data?.fullName || null;
+      const detectedNameAr = data?.extractedData?.fullNameAr || data?.fullNameAr || null;
+      const detectedFirstName = data?.extractedData?.firstName || data?.firstName || null;
+      const detectedLastName = data?.extractedData?.lastName || data?.lastName || null;
+      const detectedFirstNameAr = data?.extractedData?.firstNameAr || data?.firstNameAr || null;
+      const detectedLastNameAr = data?.extractedData?.lastNameAr || data?.lastNameAr || null;
+      const detectedBirthDate = data?.extractedData?.birthDate || data?.birthDate || null;
+      const detectedBirthPlace = data?.extractedData?.birthPlace || data?.birthPlace || null;
+      const detectedIssueAuthority = data?.extractedData?.issueAuthority || data?.issueAuthority || null;
+      const detectedIssueDate = data?.extractedData?.issueDate || data?.issueDate || null;
+      const detectedNIN = data?.extractedData?.nationalIdNumber || data?.nationalIdNumber || null;
+      const detectedCategory = data?.extractedData?.category || data?.category || null;
 
+      setOcrDetectedNumber(detectedNumber);
       if (detectedNumber) {
-        setOcrDetectedNumber(detectedNumber);
         setLicenseNumber(detectedNumber);
       }
+      setOcrDetectedExpiration(detectedExp);
       if (detectedExp) {
-        setOcrDetectedExpiration(detectedExp);
         setLicenseExpiration(detectedExp);
       }
-      if (detectedName) setOcrDetectedName(detectedName);
-      if (detectedNameAr) setOcrDetectedNameAr(detectedNameAr);
-      if (detectedBirthDate) setOcrDetectedBirthDate(detectedBirthDate);
-      if (detectedBirthPlace) setOcrDetectedBirthPlace(detectedBirthPlace);
-      if (detectedIssueAuthority) setOcrDetectedIssueAuthority(detectedIssueAuthority);
-      if (detectedIssueDate) setOcrDetectedIssueDate(detectedIssueDate);
-      if (detectedNIN) setOcrDetectedNIN(detectedNIN);
-      if (detectedCategory) setOcrDetectedCategory(detectedCategory);
-      if (data?.debugRawText) setOcrRawTranscribedText(data.debugRawText);
+      setOcrDetectedName(detectedName);
+      setOcrDetectedNameAr(detectedNameAr);
+      setOcrDetectedFirstName(detectedFirstName);
+      setOcrDetectedLastName(detectedLastName);
+      setOcrDetectedFirstNameAr(detectedFirstNameAr);
+      setOcrDetectedLastNameAr(detectedLastNameAr);
+      setOcrDetectedBirthDate(detectedBirthDate);
+      setOcrDetectedBirthPlace(detectedBirthPlace);
+      setOcrDetectedIssueAuthority(detectedIssueAuthority);
+      setOcrDetectedIssueDate(detectedIssueDate);
+      setOcrDetectedNIN(detectedNIN);
+      setOcrDetectedCategory(detectedCategory);
+      setOcrRawTranscribedText(data?.debugRawText || null);
 
-      const isFullAutoApproved = data?.success && data?.isApproved && data?.licenseNumber;
+      if (data?.crossMatchStatus) {
+        setOcrNameMatched(data.crossMatchStatus.nameMatched);
+        setOcrDobMatched(data.crossMatchStatus.dobMatched);
+      } else {
+        const hasExtractedName = !!(detectedName || detectedNameAr || detectedFirstName || detectedLastName);
+        if (hasExtractedName && (firstName || lastName)) {
+          const pFirst = (firstName || '').trim().toLowerCase();
+          const pLast = (lastName || '').trim().toLowerCase();
+          const combo = `${detectedName || ''} ${detectedNameAr || ''} ${detectedFirstName || ''} ${detectedLastName || ''}`.toLowerCase();
+          setOcrNameMatched(combo.includes(pFirst) || combo.includes(pLast));
+        } else {
+          setOcrNameMatched(null);
+        }
+        if (detectedBirthDate && birthDate) {
+          setOcrDobMatched(detectedBirthDate === birthDate);
+        } else {
+          setOcrDobMatched(null);
+        }
+      }
 
-      if (isFullAutoApproved) {
+      const fullApproved = !!(data?.success && data?.isApproved && data?.licenseNumber);
+      setIsFullAutoApproved(fullApproved);
+
+      if (fullApproved) {
         setOcrDocumentValid(true);
         setOcrError(null);
         setErrorMsg(null);
@@ -371,7 +403,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setErrorMsg(null);
         setLicenseExpired(data?.isExpired || false);
         setIsManualOverrideEnabled(true);
-        setLicenseOcrMessage('تم حفظ صورة رخصة السياقة بنجاح. يمكنك مراجعة وتأكيد البيانات يدوياً لإتمام الاعتماد.');
+        setLicenseOcrMessage('تم استخراج البيانات المتاحة من رخصة السياقة. يرجى مراجعة وتأكيد البيانات يدوياً لإتمام الاعتماد.');
       }
     } catch (e: any) {
       console.warn('[scanLicenseOcr fallback to manual]:', e);
@@ -628,47 +660,68 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setLicenseBack(dataUrl);
       }
 
-      // Auto-fill whatever fields were extracted
-      const detectedNumber = data?.licenseNumber || data?.extractedData?.licenseNumber || licenseNumber || '';
-      const detectedExp = data?.expirationDate || data?.extractedData?.expirationDate || licenseExpiration || '';
-      const detectedName = data?.fullName || data?.extractedData?.fullName || null;
-      const detectedNameAr = data?.fullNameAr || data?.extractedData?.fullNameAr || null;
-      const detectedFirstName = data?.firstName || data?.extractedData?.firstName || null;
-      const detectedLastName = data?.lastName || data?.extractedData?.lastName || null;
-      const detectedFirstNameAr = data?.firstNameAr || data?.extractedData?.firstNameAr || null;
-      const detectedLastNameAr = data?.lastNameAr || data?.extractedData?.lastNameAr || null;
-      const detectedBirthDate = data?.birthDate || data?.extractedData?.birthDate || birthDate || null;
-      const detectedBirthPlace = data?.birthPlace || data?.extractedData?.birthPlace || null;
-      const detectedIssueAuthority = data?.issueAuthority || data?.extractedData?.issueAuthority || null;
-      const detectedIssueDate = data?.issueDate || data?.extractedData?.issueDate || null;
+      // Auto-fill whatever fields were extracted directly from OCR (Zero mock fallbacks)
+      const detectedNumber = data?.extractedData?.licenseNumber || data?.licenseNumber || null;
+      const detectedExp = data?.extractedData?.expirationDate || data?.expirationDate || null;
+      const detectedName = data?.extractedData?.fullName || data?.fullName || null;
+      const detectedNameAr = data?.extractedData?.fullNameAr || data?.fullNameAr || null;
+      const detectedFirstName = data?.extractedData?.firstName || data?.firstName || null;
+      const detectedLastName = data?.extractedData?.lastName || data?.lastName || null;
+      const detectedFirstNameAr = data?.extractedData?.firstNameAr || data?.firstNameAr || null;
+      const detectedLastNameAr = data?.extractedData?.lastNameAr || data?.lastNameAr || null;
+      const detectedBirthDate = data?.extractedData?.birthDate || data?.birthDate || null;
+      const detectedBirthPlace = data?.extractedData?.birthPlace || data?.birthPlace || null;
+      const detectedIssueAuthority = data?.extractedData?.issueAuthority || data?.issueAuthority || null;
+      const detectedIssueDate = data?.extractedData?.issueDate || data?.issueDate || null;
       const detectedNIN = data?.nationalIdNumber || data?.extractedData?.nationalIdNumber || null;
-      const detectedCategory = data?.category || data?.extractedData?.category || 'B';
+      const detectedCategory = data?.extractedData?.category || data?.category || null;
 
+      setOcrDetectedNumber(detectedNumber);
       if (detectedNumber) {
-        setOcrDetectedNumber(detectedNumber);
         setLicenseNumber(detectedNumber);
       }
+      setOcrDetectedExpiration(detectedExp);
       if (detectedExp) {
-        setOcrDetectedExpiration(detectedExp);
         setLicenseExpiration(detectedExp);
       }
-      if (detectedName) setOcrDetectedName(detectedName);
-      if (detectedNameAr) setOcrDetectedNameAr(detectedNameAr);
-      if (detectedFirstName) setOcrDetectedFirstName(detectedFirstName);
-      if (detectedLastName) setOcrDetectedLastName(detectedLastName);
-      if (detectedFirstNameAr) setOcrDetectedFirstNameAr(detectedFirstNameAr);
-      if (detectedLastNameAr) setOcrDetectedLastNameAr(detectedLastNameAr);
-      if (detectedBirthDate) setOcrDetectedBirthDate(detectedBirthDate);
-      if (detectedBirthPlace) setOcrDetectedBirthPlace(detectedBirthPlace);
-      if (detectedIssueAuthority) setOcrDetectedIssueAuthority(detectedIssueAuthority);
-      if (detectedIssueDate) setOcrDetectedIssueDate(detectedIssueDate);
-      if (detectedNIN) setOcrDetectedNIN(detectedNIN);
-      if (detectedCategory) setOcrDetectedCategory(detectedCategory);
-      if (data?.debugRawText) setOcrRawTranscribedText(data.debugRawText);
+      setOcrDetectedName(detectedName);
+      setOcrDetectedNameAr(detectedNameAr);
+      setOcrDetectedFirstName(detectedFirstName);
+      setOcrDetectedLastName(detectedLastName);
+      setOcrDetectedFirstNameAr(detectedFirstNameAr);
+      setOcrDetectedLastNameAr(detectedLastNameAr);
+      setOcrDetectedBirthDate(detectedBirthDate);
+      setOcrDetectedBirthPlace(detectedBirthPlace);
+      setOcrDetectedIssueAuthority(detectedIssueAuthority);
+      setOcrDetectedIssueDate(detectedIssueDate);
+      setOcrDetectedNIN(detectedNIN);
+      setOcrDetectedCategory(detectedCategory);
+      setOcrRawTranscribedText(data?.debugRawText || null);
 
-      const isFullAutoApproved = data?.success && data?.isApproved && data?.licenseNumber;
+      if (data?.crossMatchStatus) {
+        setOcrNameMatched(data.crossMatchStatus.nameMatched);
+        setOcrDobMatched(data.crossMatchStatus.dobMatched);
+      } else {
+        const hasExtractedName = !!(detectedName || detectedNameAr || detectedFirstName || detectedLastName);
+        if (hasExtractedName && (firstName || lastName)) {
+          const pFirst = (firstName || '').trim().toLowerCase();
+          const pLast = (lastName || '').trim().toLowerCase();
+          const combo = `${detectedName || ''} ${detectedNameAr || ''} ${detectedFirstName || ''} ${detectedLastName || ''}`.toLowerCase();
+          setOcrNameMatched(combo.includes(pFirst) || combo.includes(pLast));
+        } else {
+          setOcrNameMatched(null);
+        }
+        if (detectedBirthDate && birthDate) {
+          setOcrDobMatched(detectedBirthDate === birthDate);
+        } else {
+          setOcrDobMatched(null);
+        }
+      }
 
-      if (isFullAutoApproved) {
+      const fullApproved = !!(data?.success && data?.isApproved && data?.licenseNumber);
+      setIsFullAutoApproved(fullApproved);
+
+      if (fullApproved) {
         setLicenseFrameBorderState('valid');
         setOcrDocumentValid(true);
         setOcrError(null);
@@ -687,7 +740,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         setLicenseExpired(data?.isExpired || false);
         setIsManualOverrideEnabled(true);
         setFrameFeedbackMessage('✓ تم التقاط رخصة السياقة بنجاح — يرجى مراجعة وتأكيد البيانات أدناه');
-        setLicenseOcrMessage('تم حفظ صورة رخصة السياقة بنجاح. يمكنك مراجعة وتأكيد البيانات يدوياً لإتمام الاعتماد.');
+        setLicenseOcrMessage('تم استخراج البيانات المتاحة من رخصة السياقة. يرجى مراجعة وتأكيد البيانات يدوياً لإتمام الاعتماد.');
         soundNotifier.playBidSound();
       }
 
@@ -822,7 +875,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
       // 1. Expiry check on date
       const expDate = new Date(activeExp);
-      const curDate = new Date('2026-10-04');
+      const curDate = new Date();
       if (isNaN(expDate.getTime()) || expDate < curDate) {
         setLicenseExpired(true);
         setErrorMsg(`رخصة القيادة منتهية الصلاحية (${activeExp}). يُشترط تقديم رخصة سارية المفعول لإتمام تسجيل كابتن جديد.`);
@@ -1681,36 +1734,68 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     </div>
                     <div>
                       <h4 className="font-black text-xs sm:text-sm text-emerald-300 font-['Cairo'] flex items-center gap-1.5">
-                        <span>بطاقة المعاينة والتحقق الآلي من بيانات رخصة السياقة</span>
-                        <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+                        <span>بطاقة المعاينة والتحقق من بيانات رخصة السياقة</span>
+                        {isFullAutoApproved && <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />}
                       </h4>
                       <p className="text-[10px] text-slate-400">
-                        استخراج حقيقي مباشر عبر الذكاء الاصطناعي 100% (Zero Mock • Real-Time Vision OCR)
+                        استخراج بصري حقيقي عبر Cloud Vision AI (قراءة حية للوثيقة البيومترية)
                       </p>
                     </div>
                   </div>
-                  <span className="shrink-0 text-[10px] font-black bg-emerald-500/20 text-emerald-300 px-2.5 py-1 rounded-full border border-emerald-500/40 shadow-sm">
-                    رخصة بيومترية معتمدة ✓
+                  <span
+                    className={`shrink-0 text-[10px] font-black px-2.5 py-1 rounded-full border shadow-sm ${
+                      isFullAutoApproved
+                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                        : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    }`}
+                  >
+                    {isFullAutoApproved ? 'رخصة بيومترية معتمدة ✓' : 'مراجعة وتأكيد البيانات'}
                   </span>
                 </div>
 
-                {/* 4 Mandatory Extracted Fields (Full Name, DOB, Place of Issue, License Number & Expiry) */}
+                {/* 4 Core Fields (Direct Binding to Real OCR Output - No Fake Placeholders) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
                   {/* Field 1: Extracted Full Name */}
                   <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between">
                     <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
                       <span className="font-semibold text-slate-300">1. الاسم الكامل المستخرج:</span>
-                      <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
-                        مطابق للحساب ✓
-                      </span>
+                      {ocrDetectedNameAr || ocrDetectedName || ocrDetectedFirstName || ocrDetectedLastName ? (
+                        ocrNameMatched === true ? (
+                          <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
+                            مطابق للحساب ✓
+                          </span>
+                        ) : ocrNameMatched === false ? (
+                          <span className="text-[9px] bg-amber-500/15 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
+                            يتطلب تدقيق
+                          </span>
+                        ) : (
+                          <span className="text-[9px] bg-cyan-500/15 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30 font-bold">
+                            مستخرج من الوثيقة
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[9px] bg-rose-500/15 text-rose-300 px-1.5 py-0.5 rounded border border-rose-500/30 font-bold">
+                          غير مقروء بالصورة
+                        </span>
+                      )}
                     </div>
                     <div className="space-y-0.5">
-                      <p className="text-sm font-black text-white font-['Cairo']">
-                        {ocrDetectedNameAr || ocrDetectedName || `${ocrDetectedLastName || ''} ${ocrDetectedFirstName || ''}`.trim() || '—'}
-                      </p>
-                      {ocrDetectedName && (
-                        <p className="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wide">
-                          {ocrDetectedName}
+                      {ocrDetectedNameAr || ocrDetectedName || ocrDetectedFirstName || ocrDetectedLastName ? (
+                        <>
+                          <p className="text-sm font-black text-white font-['Cairo']">
+                            {ocrDetectedNameAr ||
+                              ocrDetectedName ||
+                              `${ocrDetectedLastName || ''} ${ocrDetectedFirstName || ''}`.trim()}
+                          </p>
+                          {ocrDetectedName && (
+                            <p className="text-[11px] font-mono font-bold text-slate-300 uppercase tracking-wide">
+                              {ocrDetectedName}
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="text-xs text-slate-500 font-semibold italic">
+                          لم يتم استخراج الاسم من الصورة — يرجى إدخاله يدوياً أدناه
                         </p>
                       )}
                     </div>
@@ -1720,16 +1805,38 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between">
                     <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
                       <span className="font-semibold text-slate-300">2. تاريخ الميلاد المستخرج:</span>
-                      <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
-                        تطابق تام ✓
-                      </span>
+                      {ocrDetectedBirthDate ? (
+                        ocrDobMatched === true ? (
+                          <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
+                            تطابق تام ✓
+                          </span>
+                        ) : ocrDobMatched === false ? (
+                          <span className="text-[9px] bg-amber-500/15 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-bold">
+                            غير مطابق للمسجل
+                          </span>
+                        ) : (
+                          <span className="text-[9px] bg-cyan-500/15 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30 font-bold">
+                            مستخرج من الوثيقة
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[9px] bg-rose-500/15 text-rose-300 px-1.5 py-0.5 rounded border border-rose-500/30 font-bold">
+                          غير مقروء بالصورة
+                        </span>
+                      )}
                     </div>
                     <div>
-                      <p className="text-sm font-black font-mono text-emerald-400">
-                        {ocrDetectedBirthDate || '—'}
-                      </p>
+                      {ocrDetectedBirthDate ? (
+                        <p className="text-sm font-black font-mono text-emerald-400">
+                          {ocrDetectedBirthDate}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-500 font-semibold italic">
+                          لم يتم استخراج تاريخ الميلاد من الصورة
+                        </p>
+                      )}
                       {ocrDetectedBirthPlace && (
-                        <p className="text-[10px] text-slate-400 truncate">
+                        <p className="text-[10px] text-slate-400 truncate mt-0.5">
                           مكان الازدياد: {ocrDetectedBirthPlace}
                         </p>
                       )}
@@ -1739,14 +1846,20 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   {/* Field 3: Extracted Place of Issue / Authority */}
                   <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between">
                     <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                      <span className="font-semibold text-slate-300">3. مكان وسلطة الإصدار:</span>
-                      <span className="text-[9px] bg-cyan-500/15 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30 font-bold">
-                        سلطة معتمدة
-                      </span>
+                      <span className="font-semibold text-slate-300">3. سلطة وتاريخ الإصدار:</span>
+                      {ocrDetectedIssueAuthority || ocrDetectedIssueDate ? (
+                        <span className="text-[9px] bg-cyan-500/15 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-500/30 font-bold">
+                          مستخرج
+                        </span>
+                      ) : (
+                        <span className="text-[9px] bg-slate-700/60 text-slate-400 px-1.5 py-0.5 rounded border border-slate-600/30 font-bold">
+                          غير محدد
+                        </span>
+                      )}
                     </div>
                     <div>
                       <p className="text-xs font-bold text-slate-100">
-                        {ocrDetectedIssueAuthority || ocrDetectedBirthPlace || 'الجمهورية الجزائرية الديمقراطية الشعبية'}
+                        {ocrDetectedIssueAuthority || ocrDetectedBirthPlace || 'غير مقروء في الصورة'}
                       </p>
                       {ocrDetectedIssueDate && (
                         <p className="text-[10px] text-slate-400 mt-0.5 font-mono">
@@ -1760,50 +1873,85 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                   <div className="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 flex flex-col justify-between">
                     <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
                       <span className="font-semibold text-slate-300">4. رقم الرخصة والصلاحية:</span>
-                      <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
-                        سارية المفعول ✓
-                      </span>
+                      {ocrDetectedExpiration ? (
+                        !licenseExpired ? (
+                          <span className="text-[9px] bg-emerald-500/15 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">
+                            سارية المفعول ✓
+                          </span>
+                        ) : (
+                          <span className="text-[9px] bg-rose-500/15 text-rose-300 px-1.5 py-0.5 rounded border border-rose-500/30 font-bold">
+                            منتهية الصلاحية
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-[9px] bg-slate-700/60 text-slate-400 px-1.5 py-0.5 rounded border border-slate-600/30 font-bold">
+                          غير مقروء
+                        </span>
+                      )}
                     </div>
                     <div className="space-y-0.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-slate-400">رقم الرخصة:</span>
-                        <span className="font-mono text-xs font-black text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
-                          {ocrDetectedNumber || '—'}
-                        </span>
+                        {ocrDetectedNumber ? (
+                          <span className="font-mono text-xs font-black text-amber-300 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                            {ocrDetectedNumber}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 italic">غير مقروء بالصورة</span>
+                        )}
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-slate-400">انتهاء الصلاحية:</span>
-                        <span className="font-mono text-xs font-bold text-emerald-400">
-                          {ocrDetectedExpiration || '—'}
-                        </span>
+                        {ocrDetectedExpiration ? (
+                          <span className="font-mono text-xs font-bold text-emerald-400">
+                            {ocrDetectedExpiration}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 italic">غير مقروء بالصورة</span>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {/* Additional Extracted Details Pill Grid (NIN & Category) */}
-                <div className="grid grid-cols-2 gap-2 text-[10px] pt-0.5">
-                  {ocrDetectedCategory && (
-                    <div className="px-2.5 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800/80 flex items-center justify-between">
-                      <span className="text-slate-400 font-semibold">صنف رخصة القيادة:</span>
-                      <strong className="text-amber-300 font-black font-mono">الصنف ({ocrDetectedCategory})</strong>
-                    </div>
-                  )}
-                  {ocrDetectedNIN && (
-                    <div className="px-2.5 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800/80 flex items-center justify-between">
-                      <span className="text-slate-400 font-semibold">الرقم التعريفي (NIN):</span>
-                      <strong className="text-slate-300 font-mono text-[10px] truncate max-w-[130px]">{ocrDetectedNIN}</strong>
-                    </div>
-                  )}
-                </div>
+                {(ocrDetectedCategory || ocrDetectedNIN) && (
+                  <div className="grid grid-cols-2 gap-2 text-[10px] pt-0.5">
+                    {ocrDetectedCategory && (
+                      <div className="px-2.5 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800/80 flex items-center justify-between">
+                        <span className="text-slate-400 font-semibold">صنف رخصة القيادة:</span>
+                        <strong className="text-amber-300 font-black font-mono">
+                          الصنف ({ocrDetectedCategory})
+                        </strong>
+                      </div>
+                    )}
+                    {ocrDetectedNIN && (
+                      <div className="px-2.5 py-1.5 rounded-xl bg-slate-900/70 border border-slate-800/80 flex items-center justify-between">
+                        <span className="text-slate-400 font-semibold">الرقم التعريفي (NIN):</span>
+                        <strong className="text-slate-300 font-mono text-[10px] truncate max-w-[130px]">
+                          {ocrDetectedNIN}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Security Verification Confirmation Note */}
-                <div className="flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-950/70 p-2.5 rounded-xl border border-emerald-500/30">
-                  <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
-                  <span className="leading-tight">
-                    تطابق أمني 100%: تم التحقق من سلامة البصمة الأمنية للرخصة ومطابقة الاسم الكامل وتاريخ الميلاد المسجل في الحساب مع الوثيقة الرسمية بدون أي تزييف أو تلاعب.
-                  </span>
-                </div>
+                {isFullAutoApproved ? (
+                  <div className="flex items-center gap-2 text-[10px] text-emerald-300 bg-emerald-950/70 p-2.5 rounded-xl border border-emerald-500/30">
+                    <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+                    <span className="leading-tight">
+                      تطابق أمني 100%: تم التحقق من سلامة البصمة الأمنية للرخصة ومطابقة الاسم وتاريخ الميلاد المسجل في الحساب مع الوثيقة الرسمية بدون أي تزييف.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-[10px] text-amber-300 bg-amber-950/50 p-2.5 rounded-xl border border-amber-500/30">
+                    <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                    <span className="leading-tight">
+                      يرجى مراجعة وتأكيد البيانات: تم استخراج المعلومات المتاحة أعلاه. يمكنك مراجعة وتعديل أي حقول غير مقروءة في الأسفل لإتمام التحقق.
+                    </span>
+                  </div>
+                )}
 
                 {/* Developer Override / Exact Raw Vision Text Console (Collapsible) */}
                 {ocrRawTranscribedText && (
