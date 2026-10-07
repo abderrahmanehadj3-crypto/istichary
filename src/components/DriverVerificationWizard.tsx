@@ -533,8 +533,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     }
   };
 
-  // Face Camera (Live in-app stream with real-time pose detector, with fallback to Native OS Camera)
-  const startFaceCamera = () => {
+  // Face Camera (Explicit WebRTC Permission Request & Live Stream Initializer)
+  const startFaceCamera = async () => {
     setErrorMsg(null);
     setFacePoseWarning(null);
     setIsLiveFaceStraight(false);
@@ -542,58 +542,105 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setLiveFaceBox(null);
     setLivePoseWarning('وجّه وجهك داخل الإطار البيضاوي');
     setIsFaceCameraActive(true);
+
+    try {
+      // 1. Implementing Proper WebRTC Permission Request
+      if (faceStreamRef.current) {
+        faceStreamRef.current.getTracks().forEach((track) => track.stop());
+        faceStreamRef.current = null;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('متصفحك لا يدعم الوصول المباشر لكاميرا الويب.');
+      }
+
+      // Explicit call to request browser camera permission
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user' },
+          audio: false,
+        });
+      } catch (modeErr) {
+        console.warn('[Face Camera] facingMode: "user" constraint rejected, falling back to video: true', modeErr);
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
+
+      faceStreamRef.current = stream;
+
+      // 2. Binding Stream to Video Element
+      if (faceVideoRef.current) {
+        faceVideoRef.current.srcObject = stream;
+        faceVideoRef.current.muted = true;
+        faceVideoRef.current.playsInline = true;
+        faceVideoRef.current.setAttribute('muted', 'true');
+        faceVideoRef.current.setAttribute('playsinline', 'true');
+        faceVideoRef.current.setAttribute('webkit-playsinline', 'true');
+        try {
+          await faceVideoRef.current.play();
+        } catch (playErr) {
+          faceVideoRef.current.onloadedmetadata = () => {
+            faceVideoRef.current?.play().catch(() => {});
+          };
+        }
+      }
+    } catch (err: any) {
+      console.warn('[Face Camera Permission Error]:', err);
+      const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
+      setErrorMsg(
+        isDenied
+          ? 'تم رفض إذن الكاميرا من المتصفح. يرجى تفعيل إذن الكاميرا للموقع أو استخدام زر كاميرا الهاتف.'
+          : (err?.message || 'تعذر تشغيل الكاميرا داخل المتصفح، يمكنك استخدام زر «كاميرا الهاتف» أدناه.')
+      );
+    }
   };
 
+  // Auto-launch Face Camera when entering Step 1
   useEffect(() => {
-    let isCancelled = false;
-    if (isFaceCameraActive && faceVideoRef.current && !faceStreamRef.current) {
-      const vid = faceVideoRef.current;
-      startNativeCameraStream(vid, 'user')
-        .then((stream) => {
-          if (isCancelled) {
-            stream.getTracks().forEach((t) => t.stop());
-            return;
-          }
-          faceStreamRef.current = stream;
-        })
-        .catch((err) => {
-          if (isCancelled) return;
-          console.warn('[Face Camera] WebRTC live stream error:', err);
-          const isPermDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
-          setErrorMsg(
-            isPermDenied
-              ? 'يرجى منح إذن الكاميرا للمتصفح للمتابعة، أو استخدام زر «كاميرا الهاتف» أدناه.'
-              : 'تعذر تشغيل الكاميرا داخل المتصفح، يمكنك استخدام زر «كاميرا الهاتف» أدناه.'
-          );
-        });
-    }
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [isFaceCameraActive]);
-
-  const captureFaceFromVideo = async () => {
-    let capturedDataUrl: string | null = null;
-    if (faceVideoRef.current) {
-      try {
-        capturedDataUrl = captureFrameFromVideo(faceVideoRef.current, 0.95, 'user');
-      } catch (e) {
-        console.error('Capture face error:', e);
-      }
-    }
-    if (faceStreamRef.current) {
+    if (currentStep === 1 && !facePhoto && !faceStreamRef.current) {
+      startFaceCamera();
+    } else if (currentStep !== 1 && faceStreamRef.current) {
       faceStreamRef.current.getTracks().forEach((t) => t.stop());
       faceStreamRef.current = null;
+      setIsFaceCameraActive(false);
     }
-    setIsFaceCameraActive(false);
-    setIsLiveFaceStraight(false);
-    setLiveFaceDetected(false);
-    setLiveFaceBox(null);
+  }, [currentStep, facePhoto]);
 
-    if (capturedDataUrl) {
+  const captureFaceFromVideo = async () => {
+    const video = faceVideoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      setErrorMsg('تأكد من تشغيل الكاميرا المباشرة ووضوح الصورة قبل الالتقاط.');
+      return;
+    }
+
+    try {
+      // 3. Strict Real Face Snapshot from Active Video Canvas
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('فشل معالجة لقطة الكاميرا عبر Canvas');
+      }
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const capturedDataUrl = canvas.toDataURL('image/jpeg', 0.95);
+
+      if (faceStreamRef.current) {
+        faceStreamRef.current.getTracks().forEach((t) => t.stop());
+        faceStreamRef.current = null;
+      }
+      setIsFaceCameraActive(false);
+      setIsLiveFaceStraight(false);
+      setLiveFaceDetected(false);
+      setLiveFaceBox(null);
+
       await handleProcessFaceCapture(capturedDataUrl);
-    } else {
+    } catch (e: any) {
+      console.error('Capture face error:', e);
       setErrorMsg('تعذر التقاط صورة من الكاميرا، يرجى المحاولة مرة أخرى.');
     }
   };
@@ -1161,7 +1208,13 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                       }`}
                     >
                       <video
-                        ref={faceVideoRef}
+                        ref={(el) => {
+                          faceVideoRef.current = el;
+                          if (el && faceStreamRef.current && el.srcObject !== faceStreamRef.current) {
+                            el.srcObject = faceStreamRef.current;
+                            el.play().catch(() => {});
+                          }
+                        }}
                         autoPlay
                         playsInline
                         muted
