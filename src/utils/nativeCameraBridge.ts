@@ -34,6 +34,16 @@ export async function startNativeCameraStream(
   videoElement: HTMLVideoElement,
   facingMode: 'user' | 'environment' = 'user'
 ): Promise<MediaStream> {
+  // Check Secure Context (HTTPS or localhost)
+  if (
+    typeof window !== 'undefined' &&
+    window.isSecureContext === false &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    throw new Error('SECURE_CONTEXT_REQUIRED');
+  }
+
   // Check if getUserMedia is available
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     throw new Error('WEBVIEW_NO_WEBRTC');

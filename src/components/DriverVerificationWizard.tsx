@@ -560,6 +560,16 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setLivePoseWarning('وجّه وجهك داخل الإطار البيضاوي');
 
     try {
+      // Check Secure Context requirement for WebRTC
+      if (
+        typeof window !== 'undefined' &&
+        window.isSecureContext === false &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+      ) {
+        throw new Error('SECURE_CONTEXT_REQUIRED');
+      }
+
       // 1. User-Triggered Permission Request
       if (faceStreamRef.current) {
         faceStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -609,9 +619,12 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       console.warn('[Face Camera Permission Error]:', err);
       setIsFaceCameraActive(false);
       const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
+      const isSecureContextError = err?.message === 'SECURE_CONTEXT_REQUIRED';
       setErrorMsg(
-        isDenied
-          ? 'تم رفض إذن الكاميرا من المتصفح. يرجى تفعيل إذن الكاميرا للموقع، أو يمكنك استخدام خيار «كاميرا الهاتف» أدناه.'
+        isSecureContextError
+          ? 'يتطلب تشغيل كاميرا المتصفح اتصالاً آمناً (HTTPS). يرجى فتح الرابط عبر HTTPS أو استخدام زر «كاميرا الهاتف» أدناه.'
+          : isDenied
+          ? 'تم رفض إذن الكاميرا من المتصفح أو التطبيق. يرجى تفعيل إذن الكاميرا في إعدادات التطبيق/المتصفح، أو استخدام خيار «كاميرا الهاتف» أدناه.'
           : 'تعذر تشغيل كاميرا المتصفح المباشرة. يمكنك استخدام خيار «كاميرا الهاتف» أدناه.'
       );
       // NOTE: Fallback remains strictly separate on the secondary button and is never triggered automatically.
