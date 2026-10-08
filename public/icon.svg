@@ -1,0 +1,26 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" rx="104" fill="#000000"/>
+  <rect x="16" y="16" width="480" height="480" rx="92" stroke="#00D589" stroke-width="4" stroke-opacity="0.25"/>
+  <g transform="translate(64, 64) scale(3.2)">
+    <!-- Speed Wind Streaks -->
+    <path d="M8 38H32M4 48H26M10 60H34M14 72H28" stroke="#00D589" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+    <path d="M18 42H38M12 54H30" stroke="#10B981" stroke-width="3.5" stroke-linecap="round" opacity="0.6"/>
+    <!-- Delivery Box -->
+    <rect x="34" y="26" width="28" height="28" rx="6" fill="#00D589" transform="rotate(-12 34 26)"/>
+    <path d="M46 36C46 33.79 47.79 32 50 32C52.21 32 54 33.79 54 36C54 39.5 50 43 50 43C50 43 46 39.5 46 36Z" fill="#020617"/>
+    <circle cx="50" cy="36" r="1.5" fill="#00D589"/>
+    <!-- Driver Figure & Helmet -->
+    <circle cx="68" cy="32" r="9" fill="#00D589"/>
+    <path d="M68 28H76C77.5 28 78 29.5 77 31L73 34H66L68 28Z" fill="#020617"/>
+    <path d="M58 44L68 40L78 48L64 56L56 50Z" fill="#10B981"/>
+    <!-- Motorcycle Body -->
+    <path d="M46 68L62 58L78 52L88 56L94 66L82 72L64 74Z" fill="#00D589"/>
+    <!-- Wheels -->
+    <circle cx="36" cy="80" r="15" fill="#020617" stroke="#00D589" stroke-width="5"/>
+    <circle cx="36" cy="80" r="6" fill="#00D589"/>
+    <circle cx="88" cy="80" r="15" fill="#020617" stroke="#00D589" stroke-width="5"/>
+    <circle cx="88" cy="80" r="6" fill="#00D589"/>
+    <!-- Headlight beam -->
+    <path d="M92 60L112 54M94 65L116 64M92 70L112 74" stroke="#34D399" stroke-width="3" stroke-linecap="round" opacity="0.9"/>
+  </g>
+</svg>

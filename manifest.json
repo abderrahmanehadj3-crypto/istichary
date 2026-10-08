@@ -1,0 +1,57 @@
+{
+  "id": "/",
+  "name": "Sari3",
+  "short_name": "Sari3",
+  "description": "Sari3 - منصة وتطبيق التوصيل السريع الذكي ونظام التفاوض المباشر في الجزائر",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "lang": "ar",
+  "dir": "rtl",
+  "categories": ["business", "shopping", "logistics", "travel"],
+  "icons": [
+    {
+      "src": "/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "طلب توصيل فوري",
+      "short_name": "طلب توصيل",
+      "description": "إنشاء طلب توصيل جديد للزبائن",
+      "url": "/?role=customer",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "لوحة السائق",
+      "short_name": "السائق",
+      "description": "الدخول المباشر إلى لوحة قيادة السائق والطلبات المتاحة",
+      "url": "/?role=driver",
+      "icons": [{ "src": "/pwa-192x192.png", "sizes": "192x192" }]
+    }
+  ]
+}

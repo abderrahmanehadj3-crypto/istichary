@@ -1503,6 +1503,20 @@ Respond ONLY with valid JSON:
   });
 
   // -------------------------------------------------------------------------
+  // PWA Manifest Endpoint (PWABuilder & Mobile Scanner Detection)
+  // -------------------------------------------------------------------------
+  app.get(['/manifest.json', '/manifest.webmanifest'], (_req: Request, res: Response) => {
+    const manifestPath = path.resolve(__dirname, 'public', 'manifest.json');
+    res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    if (fs.existsSync(manifestPath)) {
+      return res.sendFile(manifestPath);
+    }
+    const rootManifest = path.resolve(__dirname, 'manifest.json');
+    return res.sendFile(rootManifest);
+  });
+
+  // -------------------------------------------------------------------------
   // Vite Middleware / Static Serving
   // -------------------------------------------------------------------------
   if (process.env.NODE_ENV === 'production') {
