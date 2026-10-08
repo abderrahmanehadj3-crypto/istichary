@@ -234,7 +234,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
     const intervalId = setInterval(async () => {
       const video = faceVideoRef.current;
-      if (!video || video.readyState < 2 || !video.videoWidth) return;
+      if (!video || !video.videoWidth || !video.videoHeight) return;
 
       try {
         const cv = await analyzeFaceBiometrics(video);
@@ -246,11 +246,6 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           if (cv.isValidPose) {
             setIsLiveFaceStraight(true);
             setLivePoseWarning(null);
-            setErrorMsg((prev) =>
-              prev && (prev.includes('الوجه') || prev.includes('وضعية') || prev.includes('اكتشاف') || prev.includes('بيومتري'))
-                ? null
-                : prev
-            );
           } else {
             setIsLiveFaceStraight(false);
             setLivePoseWarning(cv.errorMessage || 'اضبط استقامة الوجه في منتصف الإطار البيضاوي');
@@ -262,7 +257,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
           setLivePoseWarning(cv.errorMessage || 'وجّه وجهك داخل الإطار البيضاوي في إضاءة واضحة');
         }
       } catch (err) {}
-    }, 280);
+    }, 220);
 
     return () => clearInterval(intervalId);
   }, [isFaceCameraActive]);
@@ -570,52 +565,28 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     }
 
     try {
-      // Check Secure Context requirement for WebRTC
-      if (
-        typeof window !== 'undefined' &&
-        window.isSecureContext === false &&
-        window.location.hostname !== 'localhost' &&
-        window.location.hostname !== '127.0.0.1'
-      ) {
-        throw new Error('SECURE_CONTEXT_REQUIRED');
-      }
-
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('UNSUPPORTED_MEDIA_DEVICES');
       }
 
-      // Explicit call in direct response to user gesture with explicit constraints
+      // Explicit direct call in response to user gesture with { video: { facingMode: 'user' } }
       let stream: MediaStream;
       try {
-        // Tier 1: User requested explicit constraints (facingMode: 'user', 1280x720)
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: { facingMode: 'user' },
           audio: false,
         });
-      } catch (tier1Err: any) {
-        const t1Name = tier1Err?.name;
-        if (t1Name === 'NotAllowedError' || t1Name === 'PermissionDeniedError' || t1Name === 'SecurityError') {
-          throw tier1Err;
+      } catch (primaryErr: any) {
+        const pName = primaryErr?.name;
+        if (pName === 'NotAllowedError' || pName === 'PermissionDeniedError' || pName === 'SecurityError') {
+          throw primaryErr;
         }
-        console.warn('[Face Camera] Tier 1 rejected, trying relaxed facingMode:', tier1Err);
-        try {
-          // Tier 2: Ideal facingMode
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false,
-          });
-        } catch (tier2Err: any) {
-          const t2Name = tier2Err?.name;
-          if (t2Name === 'NotAllowedError' || t2Name === 'PermissionDeniedError' || t2Name === 'SecurityError') {
-            throw tier2Err;
-          }
-          console.warn('[Face Camera] Tier 2 rejected, trying completely unconstrained video: true', tier2Err);
-          // Tier 3: Unconstrained video device
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
-        }
+        console.warn('[Face Camera] facingMode "user" rejected, trying relaxed video: true', primaryErr);
+        // Fallback: unconstrained video device
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
       }
 
       faceStreamRef.current = stream;
@@ -1327,13 +1298,11 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     {/* Constrained Responsive Biometric Oval Viewfinder */}
                     <div
                       className={`relative w-[230px] h-[300px] sm:w-[260px] sm:h-[330px] mx-auto rounded-[115px] sm:rounded-[130px] overflow-hidden bg-slate-950 border-4 shadow-2xl transition-all duration-300 flex items-center justify-center ${
-                        isFaceCameraActive && isLiveFaceStraight
-                          ? 'border-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.5)] ring-4 ring-emerald-500/25'
-                          : isFaceCameraActive && liveFaceDetected
-                          ? 'border-cyan-400 shadow-[0_0_20px_rgba(34,211,238,0.4)] ring-2 ring-cyan-500/20'
-                          : isFaceCameraActive
-                          ? 'border-emerald-500/50 shadow-lg'
-                          : 'border-slate-800 shadow-md'
+                        !isFaceCameraActive
+                          ? 'border-slate-800 shadow-md'
+                          : isLiveFaceStraight
+                          ? 'border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.85)] ring-4 ring-emerald-500/35'
+                          : 'border-rose-500 shadow-[0_0_30px_rgba(244,63,94,0.7)] ring-4 ring-rose-500/30'
                       }`}
                     >
                       {/* Active HTML5 Video Element - Permanently in DOM, ready to receive MediaStream */}
@@ -1430,17 +1399,21 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                       {isFaceCameraActive && (
                         <>
                           <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4">
-                            <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#34d399] animate-pulse" />
+                            <div className={`w-full h-0.5 bg-gradient-to-r from-transparent ${isLiveFaceStraight ? 'via-emerald-400 shadow-[0_0_10px_#34d399]' : 'via-rose-500 shadow-[0_0_10px_#f43f5e]'} to-transparent animate-pulse`} />
 
                             <div className="relative w-full h-full flex items-center justify-center pointer-events-none">
-                              <div className={`absolute top-2 w-8 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
-                              <div className={`absolute bottom-2 w-8 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
-                              <div className={`absolute left-2 w-1 h-8 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
-                              <div className={`absolute right-2 w-1 h-8 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-white/50'}`} />
+                              <div className={`absolute top-2 w-8 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'}`} />
+                              <div className={`absolute bottom-2 w-8 h-1 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'}`} />
+                              <div className={`absolute left-2 w-1 h-8 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'}`} />
+                              <div className={`absolute right-2 w-1 h-8 rounded-full transition-colors ${isLiveFaceStraight ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-500 shadow-[0_0_8px_#f43f5e]'}`} />
 
                               {liveFaceBox && (
                                 <div
-                                  className="absolute border-2 border-emerald-400/90 rounded-2xl pointer-events-none transition-all duration-150 shadow-[0_0_14px_rgba(52,211,153,0.6)]"
+                                  className={`absolute border-2 rounded-2xl pointer-events-none transition-all duration-150 ${
+                                    isLiveFaceStraight
+                                      ? 'border-emerald-400/90 shadow-[0_0_14px_rgba(52,211,153,0.7)]'
+                                      : 'border-rose-400/90 shadow-[0_0_14px_rgba(244,63,94,0.6)]'
+                                  }`}
                                   style={{
                                     left: `${Math.max(5, Math.min(80, (1 - (liveFaceBox.x + liveFaceBox.width)) * 100))}%`,
                                     top: `${Math.max(5, Math.min(80, liveFaceBox.y * 100))}%`,
@@ -1451,7 +1424,7 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                               )}
                             </div>
 
-                            <div className="w-full h-0.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent opacity-60 shadow-[0_0_8px_#22d3ee]" />
+                            <div className={`w-full h-0.5 bg-gradient-to-r from-transparent ${isLiveFaceStraight ? 'via-emerald-400 shadow-[0_0_8px_#34d399]' : 'via-rose-500 shadow-[0_0_8px_#f43f5e]'} to-transparent opacity-60`} />
                           </div>
 
                           {/* Floating Status Pill */}
@@ -1460,25 +1433,18 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                               className={`px-3 py-1 rounded-full text-[10px] font-black shadow-lg flex items-center gap-1.5 backdrop-blur-md transition-all whitespace-nowrap ${
                                 isLiveFaceStraight
                                   ? 'bg-emerald-500 text-slate-950 shadow-emerald-500/30'
-                                  : liveFaceDetected
-                                  ? 'bg-cyan-500 text-slate-950 shadow-cyan-500/20'
-                                  : 'bg-slate-900/90 text-emerald-300 border border-emerald-500/30'
+                                  : 'bg-rose-600 text-white shadow-rose-600/30 animate-pulse'
                               }`}
                             >
                               {isLiveFaceStraight ? (
                                 <>
                                   <CheckCircle2 size={12} />
-                                  <span>الوجه محاذى وجاهز للالتقاط ✓</span>
-                                </>
-                              ) : liveFaceDetected ? (
-                                <>
-                                  <RefreshCw size={11} className="animate-spin" />
-                                  <span>تم رصد الوجه • جاهز للالتقاط</span>
+                                  <span>تم رصد الوجه بنجاح • جاهز للالتقاط ✓</span>
                                 </>
                               ) : (
                                 <>
-                                  <ScanLine size={12} className="text-emerald-400" />
-                                  <span>وجّه وجهك داخل الإطار البيضاوي</span>
+                                  <AlertCircle size={12} />
+                                  <span>{livePoseWarning || 'وجّه وجهك داخل الإطار البيضاوي'}</span>
                                 </>
                               )}
                             </span>
@@ -1492,18 +1458,20 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                       <div className="flex flex-col gap-2 w-full max-w-xs items-center mt-3">
                         <button
                           type="button"
+                          id="btn-capture-face-biometric"
+                          disabled={!isLiveFaceStraight}
                           onClick={captureFaceFromVideo}
-                          className={`w-full py-3 px-4 rounded-2xl font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2 cursor-pointer ${
+                          className={`w-full py-3.5 px-4 rounded-2xl font-black text-xs sm:text-sm shadow-xl transition flex items-center justify-center gap-2 ${
                             isLiveFaceStraight
-                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/25 active:scale-95'
-                              : 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 shadow-emerald-600/20 active:scale-95'
+                              ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/35 cursor-pointer active:scale-95'
+                              : 'bg-slate-800 text-slate-500 border border-slate-700/50 cursor-not-allowed opacity-60'
                           }`}
                         >
                           <Camera size={16} />
                           <span>
                             {isLiveFaceStraight
                               ? 'التقاط صورة التحقق الآن (محاذاة 100% ✓)'
-                              : 'التقاط صورة التحقق الآن (التقاط فوري)'}
+                              : 'بانتظار رصد الوجه داخل الإطار للتفعيل...'}
                           </span>
                         </button>
 

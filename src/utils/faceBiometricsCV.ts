@@ -263,10 +263,9 @@ export async function analyzeFaceBiometrics(
   // ---------------------------------------------------------------------------
   // 3. TIER 2: MEDIAPIPE TASKS-VISION FACE DETECTOR (BlazeFace Short-Range)
   // ---------------------------------------------------------------------------
-  try {
-    const mpDetector = await getMediaPipeDetector();
-    if (mpDetector) {
-      const mpResult = mpDetector.detect(canvas);
+  if (mediaPipeFaceDetector) {
+    try {
+      const mpResult = mediaPipeFaceDetector.detect(canvas);
       if (mpResult && mpResult.detections && mpResult.detections.length > 0) {
         const topDetection = mpResult.detections[0];
         const box = topDetection.boundingBox;
@@ -302,9 +301,12 @@ export async function analyzeFaceBiometrics(
           };
         }
       }
+    } catch (mpErr) {
+      console.warn('[FaceBiometrics] MediaPipe detection note:', mpErr);
     }
-  } catch (mpErr) {
-    console.warn('[FaceBiometrics] MediaPipe detection note:', mpErr);
+  } else {
+    // Non-blocking background loader so this frame falls through instantly to Tier 3 Adaptive CV
+    getMediaPipeDetector().catch(() => {});
   }
 
   // ---------------------------------------------------------------------------
