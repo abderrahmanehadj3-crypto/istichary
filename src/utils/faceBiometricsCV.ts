@@ -84,12 +84,7 @@ async function getMediaPipeDetector(): Promise<FaceDetector | null> {
   }
 }
 
-// Trigger background preload on first script evaluation in browser
-if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    getMediaPipeDetector().catch(() => {});
-  }, 1000);
-}
+// MediaPipe is strictly lazy-loaded on-demand when camera is active (NO startup background preload)
 
 function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {

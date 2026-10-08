@@ -64,17 +64,21 @@ export async function startNativeCameraStream(
 
   let stream: MediaStream | null = null;
 
-  // Tier 1: Ideal facingMode and standard resolution
+  // Tier 1: User requested explicit constraints (width 1280, height 720)
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
-        facingMode: { ideal: facingMode },
-        width: { ideal: facingMode === 'user' ? 640 : 1280 },
-        height: { ideal: facingMode === 'user' ? 640 : 720 },
+        facingMode: facingMode === 'user' ? 'user' : { ideal: 'environment' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       },
     });
   } catch (err1: any) {
+    const errName = err1?.name || '';
+    if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError' || errName === 'SecurityError') {
+      throw err1;
+    }
     console.warn('[CameraBridge] Tier 1 constraints rejected, trying relaxed facingMode:', err1);
     // Tier 2: Ideal facingMode only (never exact constraint to avoid OverconstrainedError)
     try {
@@ -83,6 +87,10 @@ export async function startNativeCameraStream(
         video: { facingMode: { ideal: facingMode } },
       });
     } catch (err2: any) {
+      const err2Name = err2?.name || '';
+      if (err2Name === 'NotAllowedError' || err2Name === 'PermissionDeniedError' || err2Name === 'SecurityError') {
+        throw err2;
+      }
       console.warn('[CameraBridge] Tier 2 rejected, trying completely unconstrained video:', err2);
       // Tier 3: Generic video device
       try {

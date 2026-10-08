@@ -66,6 +66,8 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     currentUser.driverDetails?.publicAvatarUrl || DRIVER_DEFAULT_AVATAR
   );
   const [isFaceCameraActive, setIsFaceCameraActive] = useState<boolean>(false);
+  const [cameraPermissionBlocked, setCameraPermissionBlocked] = useState<boolean>(false);
+  const [cameraBlockedReason, setCameraBlockedReason] = useState<'denied' | 'security' | 'unsupported' | 'other' | null>(null);
   const faceVideoRef = useRef<HTMLVideoElement | null>(null);
   const faceStreamRef = useRef<MediaStream | null>(null);
   const faceFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -553,11 +555,19 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
   // CRITICAL: Must only be invoked via explicit user action (button click) to ensure browser grants permission prompt
   const startFaceCamera = async () => {
     setErrorMsg(null);
+    setCameraPermissionBlocked(false);
+    setCameraBlockedReason(null);
     setFacePoseWarning(null);
     setIsLiveFaceStraight(false);
     setLiveFaceDetected(false);
     setLiveFaceBox(null);
     setLivePoseWarning('وجّه وجهك داخل الإطار البيضاوي');
+
+    // Release any previous stream tracks cleanly before requesting new stream
+    if (faceStreamRef.current) {
+      faceStreamRef.current.getTracks().forEach((track) => track.stop());
+      faceStreamRef.current = null;
+    }
 
     try {
       // Check Secure Context requirement for WebRTC
@@ -570,33 +580,35 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         throw new Error('SECURE_CONTEXT_REQUIRED');
       }
 
-      // 1. User-Triggered Permission Request
-      if (faceStreamRef.current) {
-        faceStreamRef.current.getTracks().forEach((track) => track.stop());
-        faceStreamRef.current = null;
-      }
-
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('متصفحك لا يدعم الوصول المباشر لكاميرا الويب.');
+        throw new Error('UNSUPPORTED_MEDIA_DEVICES');
       }
 
-      // Explicit call in direct response to user gesture with robust tiered constraints
+      // Explicit call in direct response to user gesture with explicit constraints
       let stream: MediaStream;
       try {
-        // Tier 1: Ideal user facing mode (never exact to avoid OverconstrainedError)
+        // Tier 1: User requested explicit constraints (facingMode: 'user', 1280x720)
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 640 } },
+          video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false,
         });
-      } catch (tier1Err) {
-        console.warn('[Face Camera] Tier 1 rejected, trying relaxed facingMode "user":', tier1Err);
+      } catch (tier1Err: any) {
+        const t1Name = tier1Err?.name;
+        if (t1Name === 'NotAllowedError' || t1Name === 'PermissionDeniedError' || t1Name === 'SecurityError') {
+          throw tier1Err;
+        }
+        console.warn('[Face Camera] Tier 1 rejected, trying relaxed facingMode:', tier1Err);
         try {
-          // Tier 2: facingMode "user" string
+          // Tier 2: Ideal facingMode
           stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user' },
+            video: { facingMode: { ideal: 'user' }, width: { ideal: 1280 }, height: { ideal: 720 } },
             audio: false,
           });
-        } catch (tier2Err) {
+        } catch (tier2Err: any) {
+          const t2Name = tier2Err?.name;
+          if (t2Name === 'NotAllowedError' || t2Name === 'PermissionDeniedError' || t2Name === 'SecurityError') {
+            throw tier2Err;
+          }
           console.warn('[Face Camera] Tier 2 rejected, trying completely unconstrained video: true', tier2Err);
           // Tier 3: Unconstrained video device
           stream = await navigator.mediaDevices.getUserMedia({
@@ -608,8 +620,10 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
 
       faceStreamRef.current = stream;
       setIsFaceCameraActive(true);
+      setCameraPermissionBlocked(false);
+      setCameraBlockedReason(null);
 
-      // 2. Binding Stream to Video Element
+      // 2. Binding Stream to Video Element safely
       const video = faceVideoRef.current;
       if (video) {
         video.muted = true;
@@ -619,7 +633,15 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         video.setAttribute('webkit-playsinline', 'true');
         video.srcObject = stream;
         try {
-          await video.play();
+          const playPromise = video.play();
+          if (playPromise !== undefined) {
+            playPromise.catch((playErr) => {
+              console.warn('[Face Camera] Immediate play error handled:', playErr);
+              video.onloadedmetadata = () => {
+                video.play().catch((e) => console.warn('[Face Camera] onloadedmetadata play note:', e));
+              };
+            });
+          }
         } catch (playErr) {
           video.onloadedmetadata = () => {
             video.play().catch(() => {});
@@ -633,21 +655,22 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
       const errName = err?.name || '';
       const isNotAllowed = errName === 'NotAllowedError' || errName === 'PermissionDeniedError';
       const isSecurity = errName === 'SecurityError' || err?.message === 'SECURE_CONTEXT_REQUIRED';
-      const isAbort = errName === 'AbortError';
-      const isOverconstrained = errName === 'OverconstrainedError';
+      const isUnsupported = err?.message === 'UNSUPPORTED_MEDIA_DEVICES';
 
+      setCameraPermissionBlocked(true);
       if (isSecurity) {
-        setErrorMsg('يتطلب تشغيل كاميرا المتصفح اتصالاً آمناً (HTTPS). يرجى فتح الرابط عبر HTTPS أو استخدام زر «كاميرا الهاتف» أدناه.');
+        setCameraBlockedReason('security');
+        setErrorMsg('يتطلب تشغيل كاميرا المتصفح المباشرة اتصالاً آمناً (HTTPS). يمكنك استخدام زر «كاميرا الهاتف» أدناه.');
       } else if (isNotAllowed) {
-        setErrorMsg('تم رفض إذن الكاميرا من المتصفح أو التطبيق. يرجى تفعيل إذن الكاميرا في إعدادات المتصفح/التطبيق، أو استخدام خيار «كاميرا الهاتف» أدناه.');
-      } else if (isAbort) {
-        setErrorMsg('تمت مقاطعة طلب إذن الكاميرا، يرجى النقر على «تفعيل الكاميرا الآن» مرة أخرى.');
-      } else if (isOverconstrained) {
-        setErrorMsg('الكاميرا الأمامية غير متاحة بدقة معينة. يرجى استخدام زر «كاميرا الهاتف» أدناه.');
+        setCameraBlockedReason('denied');
+        setErrorMsg('تم رفض إذن الكاميرا من المتصفح أو التطبيق. انقر على «إعادة طلب الإذن» أو استخدم «كاميرا الهاتف» أدناه.');
+      } else if (isUnsupported) {
+        setCameraBlockedReason('unsupported');
+        setErrorMsg('المتصفح أو الحاوية لا تدعم الكاميرا الحية المباشرة. استخدم كاميرا الهاتف للمتابعة.');
       } else {
-        setErrorMsg('تعذر تشغيل كاميرا المتصفح المباشرة. يمكنك استخدام خيار «كاميرا الهاتف» أدناه للمتابعة بسلاسة.');
+        setCameraBlockedReason('other');
+        setErrorMsg('تعذر تشغيل كاميرا المتصفح المباشرة. يمكنك إعادة المحاولة أو استخدام «كاميرا الهاتف» أدناه.');
       }
-      // NOTE: Fallback remains strictly separate on the secondary button and is never triggered automatically.
     }
   };
 
@@ -717,13 +740,31 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     );
   };
 
-  // Start embedded license viewfinder camera
-  const startEmbeddedLicenseCamera = (side: 'front' | 'back' = 'front') => {
+  // Start embedded license viewfinder camera (strictly user-triggered gesture)
+  const startEmbeddedLicenseCamera = async (side: 'front' | 'back' = 'front') => {
     setLicenseScanSide(side);
     setLicenseFrameBorderState('neutral');
     setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة جيدة');
     setOcrError(null);
     setIsEmbeddedLicenseCameraActive(true);
+
+    if (licenseStreamRef.current) {
+      licenseStreamRef.current.getTracks().forEach((t) => t.stop());
+      licenseStreamRef.current = null;
+    }
+
+    const videoEl = licenseVideoRef.current;
+    if (videoEl) {
+      try {
+        const stream = await startNativeCameraStream(videoEl, 'environment');
+        licenseStreamRef.current = stream;
+        setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة');
+      } catch (err: any) {
+        console.warn('[License Camera Stream] WebRTC failed, falling back:', err);
+        setLicenseFrameBorderState('rejected');
+        setFrameFeedbackMessage('تعذر فتح الكاميرا المباشرة. يمكنك استخدام زر كاميرا الهاتف بالأسفل.');
+      }
+    }
   };
 
   const stopEmbeddedLicenseCamera = () => {
@@ -734,27 +775,9 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     setIsEmbeddedLicenseCameraActive(false);
   };
 
-  // Mount/unmount embedded camera stream for Step 4
+  // Safe stream cleanup when stepping away from Step 4 (NO auto-launch on mount)
   useEffect(() => {
-    if (currentStep === 4 && isEmbeddedLicenseCameraActive && licenseVideoRef.current && !licenseStreamRef.current) {
-      startNativeCameraStream(licenseVideoRef.current, 'environment')
-        .then((stream) => {
-          licenseStreamRef.current = stream;
-          setFrameFeedbackMessage('وجّه رخصة السياقة داخل المستطيل في إضاءة واضحة');
-        })
-        .catch((err) => {
-          console.warn('[License Camera Stream] WebRTC failed, falling back:', err);
-          setLicenseFrameBorderState('rejected');
-          setFrameFeedbackMessage('تعذر فتح الكاميرا المباشرة. يرجى منح إذن الكاميرا للمتصفح.');
-        });
-    }
-  }, [currentStep, isEmbeddedLicenseCameraActive]);
-
-  // Auto-launch camera when entering Step 4
-  useEffect(() => {
-    if (currentStep === 4 && !licenseFront) {
-      startEmbeddedLicenseCamera('front');
-    } else if (currentStep !== 4) {
+    if (currentStep !== 4) {
       stopEmbeddedLicenseCamera();
     }
   }, [currentStep]);
@@ -1324,37 +1347,82 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                         }`}
                       />
 
-                      {/* Explicit User-Triggered Permission & Activation Overlay */}
+                      {/* Explicit User-Triggered Permission & Activation Overlay / Permission Recovery UI */}
                       {!isFaceCameraActive && (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-950 text-center space-y-3 z-10">
-                          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner">
-                            <Camera size={28} />
-                          </div>
-                          <div>
-                            <p className="text-xs font-black text-white">إطار التحقق البيومتري للوجه</p>
-                            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
-                              اضغط بالأسفل لمنح الإذن وتشغيل الكاميرا المباشرة
-                            </p>
-                          </div>
-                          <div className="w-full max-w-[200px] space-y-2 pt-1">
-                            <button
-                              type="button"
-                              id="btn-user-activate-camera"
-                              onClick={startFaceCamera}
-                              className="w-full py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 cursor-pointer active:scale-95"
-                            >
-                              <Camera size={14} />
-                              <span>تفعيل الكاميرا الآن</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={triggerFallbackCameraInput}
-                              className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 font-bold text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
-                            >
-                              <Smartphone size={13} className="text-emerald-400" />
-                              <span>كاميرا الهاتف البديلة</span>
-                            </button>
-                          </div>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-950 text-center space-y-2.5 z-10">
+                          {cameraPermissionBlocked ? (
+                            <>
+                              <div className="w-12 h-12 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center shadow-lg shadow-amber-500/10 animate-pulse">
+                                <AlertCircle size={26} />
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-amber-300">
+                                  {cameraBlockedReason === 'security'
+                                    ? 'مطلوب اتصال آمن (HTTPS)'
+                                    : cameraBlockedReason === 'unsupported'
+                                    ? 'الكاميرا المباشرة غير مدعومة'
+                                    : 'إذن الكاميرا محجوب أو بانتظار التأكيد'}
+                                </p>
+                                <p className="text-[10px] text-slate-300 mt-1 leading-relaxed px-1">
+                                  {cameraBlockedReason === 'security'
+                                    ? 'يتطلب المتصفح HTTPS لتشغيل WebRTC. استخدم كاميرا الهاتف أدناه.'
+                                    : cameraBlockedReason === 'unsupported'
+                                    ? 'المتصفح لا يدعم WebRTC. استخدم كاميرا الهاتف للمتابعة فوراً.'
+                                    : 'انقر على الزر بالأسفل لمنح الإذن، أو اضغط على أيقونة القفل 🔒 لتفعيل الكاميرا.'}
+                                </p>
+                              </div>
+                              <div className="w-full max-w-[210px] space-y-2 pt-1">
+                                <button
+                                  type="button"
+                                  id="btn-user-retry-camera"
+                                  onClick={startFaceCamera}
+                                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 cursor-pointer active:scale-95"
+                                >
+                                  <RefreshCw size={13} />
+                                  <span>إعادة طلب إذن الكاميرا الآن</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={triggerFallbackCameraInput}
+                                  className="w-full py-2 px-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-md cursor-pointer active:scale-95"
+                                >
+                                  <Smartphone size={14} className="text-slate-950" />
+                                  <span>كاميرا الهاتف (تجاوز فوري)</span>
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 flex items-center justify-center shadow-inner">
+                                <Camera size={28} />
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-white">إطار التحقق البيومتري للوجه</p>
+                                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                                  اضغط بالأسفل لمنح الإذن وتشغيل الكاميرا المباشرة
+                                </p>
+                              </div>
+                              <div className="w-full max-w-[200px] space-y-2 pt-1">
+                                <button
+                                  type="button"
+                                  id="btn-user-activate-camera"
+                                  onClick={startFaceCamera}
+                                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs transition flex items-center justify-center gap-1.5 shadow-lg shadow-emerald-500/25 cursor-pointer active:scale-95"
+                                >
+                                  <Camera size={14} />
+                                  <span>تفعيل الكاميرا الآن</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={triggerFallbackCameraInput}
+                                  className="w-full py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 font-bold text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
+                                >
+                                  <Smartphone size={13} className="text-emerald-400" />
+                                  <span>كاميرا الهاتف البديلة</span>
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
 
@@ -1811,17 +1879,20 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
                     : 'border-2 border-dashed border-slate-700'
                 }`}
               >
-                {/* Active Live Video Stream inside the Frame */}
+                {/* Permanently Mounted Video Element for ID-1 Frame (Ready for Immediate User Gesture) */}
+                <video
+                  ref={licenseVideoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className={`w-full h-full object-cover ${
+                    isEmbeddedLicenseCameraActive ? 'block' : 'opacity-0 absolute pointer-events-none'
+                  }`}
+                />
+
+                {/* Active Live Video Stream HUD inside the Frame */}
                 {isEmbeddedLicenseCameraActive ? (
                   <>
-                    <video
-                      ref={licenseVideoRef}
-                      autoPlay
-                      playsInline
-                      muted
-                      className="w-full h-full object-cover"
-                    />
-
                     {/* HUD Alignment Frame & Corner Brackets */}
                     <div className="absolute inset-3 border border-white/20 rounded-xl pointer-events-none flex flex-col justify-between p-2.5">
                       {/* Top Corner Markers & Side indicator */}
