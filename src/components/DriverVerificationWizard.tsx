@@ -629,15 +629,24 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
     } catch (err: any) {
       console.warn('[Face Camera Permission Error]:', err);
       setIsFaceCameraActive(false);
-      const isDenied = err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError';
-      const isSecureContextError = err?.message === 'SECURE_CONTEXT_REQUIRED';
-      setErrorMsg(
-        isSecureContextError
-          ? 'يتطلب تشغيل كاميرا المتصفح اتصالاً آمناً (HTTPS). يرجى فتح الرابط عبر HTTPS أو استخدام زر «كاميرا الهاتف» أدناه.'
-          : isDenied
-          ? 'تم رفض إذن الكاميرا من المتصفح أو التطبيق. يرجى تفعيل إذن الكاميرا في إعدادات التطبيق/المتصفح، أو استخدام خيار «كاميرا الهاتف» أدناه.'
-          : 'تعذر تشغيل كاميرا المتصفح المباشرة. يمكنك استخدام خيار «كاميرا الهاتف» أدناه.'
-      );
+
+      const errName = err?.name || '';
+      const isNotAllowed = errName === 'NotAllowedError' || errName === 'PermissionDeniedError';
+      const isSecurity = errName === 'SecurityError' || err?.message === 'SECURE_CONTEXT_REQUIRED';
+      const isAbort = errName === 'AbortError';
+      const isOverconstrained = errName === 'OverconstrainedError';
+
+      if (isSecurity) {
+        setErrorMsg('يتطلب تشغيل كاميرا المتصفح اتصالاً آمناً (HTTPS). يرجى فتح الرابط عبر HTTPS أو استخدام زر «كاميرا الهاتف» أدناه.');
+      } else if (isNotAllowed) {
+        setErrorMsg('تم رفض إذن الكاميرا من المتصفح أو التطبيق. يرجى تفعيل إذن الكاميرا في إعدادات المتصفح/التطبيق، أو استخدام خيار «كاميرا الهاتف» أدناه.');
+      } else if (isAbort) {
+        setErrorMsg('تمت مقاطعة طلب إذن الكاميرا، يرجى النقر على «تفعيل الكاميرا الآن» مرة أخرى.');
+      } else if (isOverconstrained) {
+        setErrorMsg('الكاميرا الأمامية غير متاحة بدقة معينة. يرجى استخدام زر «كاميرا الهاتف» أدناه.');
+      } else {
+        setErrorMsg('تعذر تشغيل كاميرا المتصفح المباشرة. يمكنك استخدام خيار «كاميرا الهاتف» أدناه للمتابعة بسلاسة.');
+      }
       // NOTE: Fallback remains strictly separate on the secondary button and is never triggered automatically.
     }
   };
