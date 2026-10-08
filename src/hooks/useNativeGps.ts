@@ -25,25 +25,18 @@ export interface UseNativeGpsReturn {
 }
 
 /**
- * Checks if a geolocation error is caused by an Android screen overlay,
+ * Checks if a geolocation error is caused specifically by an Android screen overlay,
  * chat bubble (e.g. Messenger chat heads), or tapjacking security block.
+ * Only flags overlay when explicit overlay/tapjacking keywords are reported by the OS.
  */
 export function isScreenOverlayError(err: any): boolean {
   if (!err) return false;
-  // Android error code 1: PERMISSION_DENIED (frequently triggered when screen overlay blocks touch or permission)
-  if (err.code === 1 || err.code === (window as any).GeolocationPositionError?.PERMISSION_DENIED) {
-    return true;
-  }
   const msg = String(err.message || '').toLowerCase();
   return (
     msg.includes('overlay') ||
     msg.includes('bubble') ||
-    msg.includes('permission') ||
-    msg.includes('denied') ||
-    msg.includes('blocked') ||
     msg.includes('obscured') ||
-    msg.includes('tapjacking') ||
-    msg.includes('not allowed')
+    msg.includes('tapjacking')
   );
 }
 
@@ -197,15 +190,14 @@ export function useNativeGps(autoStart: boolean = false): UseNativeGpsReturn {
         finish(null, 'denied');
       };
 
-      // Strict 3-second timeout: unconditionally dismiss loading state if no response within 3s
+      // Strict 3.5-second safety timer: auto-dismiss loading state if no response
       const safetyTimer = setTimeout(() => {
-        console.warn('[useNativeGps] Strict 3s timeout reached, auto-dismissing location loading');
-        const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '');
+        console.warn('[useNativeGps] Geolocation timeout reached, falling back to network or manual selection');
         finish(null, 'denied', {
-          isOverlay: isAndroid,
-          errorMsg: 'Location timeout (potential screen overlay)',
+          isOverlay: false,
+          errorMsg: 'انتهت مهلة تحديد الموقع الجغرافي. يمكنك اختيار الولاية يدوياً.',
         });
-      }, 3000);
+      }, 3500);
 
       // If already bypassed and NOT forcing a real prompt, return target coordinates immediately
       if (isGpsBypassed() && !forceRealPrompt) {

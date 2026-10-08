@@ -580,19 +580,30 @@ export const DriverVerificationWizard: React.FC<DriverVerificationWizardProps> =
         throw new Error('متصفحك لا يدعم الوصول المباشر لكاميرا الويب.');
       }
 
-      // Explicit call in direct response to user gesture
+      // Explicit call in direct response to user gesture with robust tiered constraints
       let stream: MediaStream;
       try {
+        // Tier 1: Ideal user facing mode (never exact to avoid OverconstrainedError)
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user' },
+          video: { facingMode: { ideal: 'user' }, width: { ideal: 640 }, height: { ideal: 640 } },
           audio: false,
         });
-      } catch (modeErr) {
-        console.warn('[Face Camera] facingMode: "user" constraint rejected, trying unconstrained video: true', modeErr);
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false,
-        });
+      } catch (tier1Err) {
+        console.warn('[Face Camera] Tier 1 rejected, trying relaxed facingMode "user":', tier1Err);
+        try {
+          // Tier 2: facingMode "user" string
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user' },
+            audio: false,
+          });
+        } catch (tier2Err) {
+          console.warn('[Face Camera] Tier 2 rejected, trying completely unconstrained video: true', tier2Err);
+          // Tier 3: Unconstrained video device
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
       }
 
       faceStreamRef.current = stream;
