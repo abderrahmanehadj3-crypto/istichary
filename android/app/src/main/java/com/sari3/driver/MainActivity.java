@@ -2,12 +2,16 @@ package com.sari3.driver;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.view.View;
 import android.webkit.GeolocationPermissions;
 import android.webkit.PermissionRequest;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
@@ -28,8 +32,12 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private static final int PERMISSION_REQUEST_CODE = 100;
-    
-    // CRITICAL FIX: Ensure clean HTTPS URL string without markdown brackets
+    private static final int FILE_CHOOSER_REQUEST_CODE = 200;
+
+    // Callback used for WebView file picker and camera photo upload
+    private ValueCallback<Uri[]> mFilePathCallback;
+
+    // Sari3 Application Web URL
     private final String WEB_URL = "https://tichary.vercel.app";
 
     private final String[] REQUIRED_PERMISSIONS = new String[]{
@@ -46,10 +54,10 @@ public class MainActivity extends AppCompatActivity {
 
         webView = findViewById(R.id.webview);
 
-        // 1. Configure WebView Settings & WebChromeClient for WebRTC & GPS
+        // 1. Configure WebView Settings & WebChromeClient
         configureWebView();
 
-        // 2. Check and request native OS permissions before loading or concurrently
+        // 2. Check and request native OS permissions (Camera and Location)
         checkAndRequestPermissions();
 
         // 3. Load the Sari3 web frontend
@@ -77,8 +85,8 @@ public class MainActivity extends AppCompatActivity {
         webSettings.setUseWideViewPort(true);
         webSettings.setLoadWithOverviewMode(true);
         webSettings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        
-        // Strict HTTPS context (prevents security errors blocking getUserMedia)
+
+        // Strict HTTPS context
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         }
@@ -93,19 +101,61 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // WebChromeClient: Dynamically Grant WebRTC Camera and Geolocation Prompts
+        // WebChromeClient: WebRTC Camera, Geolocation, and Native File Chooser / Camera Intent
         webView.setWebChromeClient(new WebChromeClient() {
 
-            // 1. WebRTC Camera & Microphone Hardware Grant
+            // 1. Native File Chooser & Camera Intent for <input type="file">
+            @Override
+            public boolean onShowFileChooser(
+                    WebView webView,
+                    ValueCallback<Uri[]> filePathCallback,
+                    FileChooserParams fileChooserParams) {
+
+                // Cancel any previous pending callback to prevent lockups
+                if (mFilePathCallback != null) {
+                    mFilePathCallback.onReceiveValue(null);
+                    mFilePathCallback = null;
+                }
+                mFilePathCallback = filePathCallback;
+
+                try {
+                    // Try default intent created by fileChooserParams first
+                    Intent intent = fileChooserParams.createIntent();
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST_CODE);
+                } catch (Exception e) {
+                    // Fallback to gallery chooser + camera capture
+                    try {
+                        Intent galleryIntent = new Intent(Intent.ACTION_GET_CONTENT);
+                        galleryIntent.addCategory(Intent.CATEGORY_OPENABLE);
+                        galleryIntent.setType("image/*");
+
+                        Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+
+                        Intent chooserIntent = new Intent(Intent.ACTION_CHOOSER);
+                        chooserIntent.putExtra(Intent.EXTRA_INTENT, galleryIntent);
+                        chooserIntent.putExtra(Intent.EXTRA_TITLE, "التقط صورة أو اختر من المعرض");
+                        chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{cameraIntent});
+
+                        startActivityForResult(chooserIntent, FILE_CHOOSER_REQUEST_CODE);
+                    } catch (Exception ex) {
+                        if (mFilePathCallback != null) {
+                            mFilePathCallback.onReceiveValue(null);
+                            mFilePathCallback = null;
+                        }
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            // 2. WebRTC Live Camera & Microphone Grant
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 runOnUiThread(() -> {
-                    // Check if native Android CAMERA permission is already granted
                     if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA)
                             == PackageManager.PERMISSION_GRANTED) {
                         request.grant(request.getResources());
                     } else {
-                        // Request native permissions, then grant once user accepts
                         ActivityCompat.requestPermissions(
                                 MainActivity.this,
                                 new String[]{Manifest.permission.CAMERA},
@@ -116,17 +166,44 @@ public class MainActivity extends AppCompatActivity {
                 });
             }
 
-            // 2. Geolocation Web API Prompt Grant (CRITICAL: Fixes GPS inside WebView)
+            // 3. Geolocation Web API Prompt Grant
             @Override
             public void onGeolocationPermissionsShowPrompt(
                     final String origin,
                     final GeolocationPermissions.Callback callback) {
                 runOnUiThread(() -> {
-                    // Grant geolocation to origin and remember
                     callback.invoke(origin, true, false);
                 });
             }
         });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        // Handle file chooser result (Photo taken or Gallery image selected)
+        if (requestCode == FILE_CHOOSER_REQUEST_CODE) {
+            if (mFilePathCallback == null) return;
+
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null) {
+                String dataString = data.getDataString();
+                if (dataString != null) {
+                    results = new Uri[]{Uri.parse(dataString)};
+                } else if (data.getClipData() != null) {
+                    int count = data.getClipData().getItemCount();
+                    results = new Uri[count];
+                    for (int i = 0; i < count; i++) {
+                        results[i] = data.getClipData().getItemAt(i).getUri();
+                    }
+                }
+            }
+
+            // Send selected URI to the WebView and clear callback
+            mFilePathCallback.onReceiveValue(results);
+            mFilePathCallback = null;
+        }
     }
 
     private void checkAndRequestPermissions() {
